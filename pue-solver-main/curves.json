@@ -1,0 +1,66 @@
+{
+    "curves_1d": {
+        "UPS_EFF_1": {
+            "x_name": "load_ratio",
+            "y_name": "efficiency",
+            "method": "pchip",
+            "points": [
+                [
+                    0.2,
+                    0.94
+                ],
+                [
+                    0.5,
+                    0.96
+                ],
+                [
+                    1.0,
+                    0.955
+                ]
+            ]
+        }
+    },
+    "cop_surfaces": {
+        "CH_COP_SURF_1": {
+            "interpolation_oat": "linear",
+            "oat_slices": [
+                {
+                    "oat_c": 25,
+                    "method": "pchip",
+                    "points": [
+                        [
+                            0.3,
+                            6.2
+                        ],
+                        [
+                            0.6,
+                            5.9
+                        ],
+                        [
+                            1.0,
+                            5.6
+                        ]
+                    ]
+                },
+                {
+                    "oat_c": 35,
+                    "method": "pchip",
+                    "points": [
+                        [
+                            0.3,
+                            5.6
+                        ],
+                        [
+                            0.6,
+                            5.2
+                        ],
+                        [
+                            1.0,
+                            4.8
+                        ]
+                    ]
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>PUE Solver Dev v0.3</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+            max-width: 1100px;
+            margin: 22px auto;
+            padding: 0 14px;
+            background: #fafafa;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 260px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            box-sizing: border-box;
+            background: #fff;
+        }
+
+        .card {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 14px;
+            background: #fff;
+        }
+
+        /* 通用 row：默认两列（用于 输入/输出 JSON） */
+        .row {
+            display: grid;
+            grid-template-columns: minmax(520px, 1fr) minmax(520px, 1fr);
+            gap: 14px;
+            align-items: start;
+        }
+
+        @media (max-width: 1150px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ✅ 方案B：UPS/COP 专用区域强制单列（上下排列） */
+        .row-1col {
+            grid-template-columns: 1fr !important;
+        }
+
+        button {
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: none;
+            cursor: pointer;
+            background: #2563eb;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+        .muted {
+            color: #6b7280;
+        }
+
+        pre {
+            background: #111827;
+            color: #f9fafb;
+            padding: 10px;
+            border-radius: 10px;
+            overflow: auto;
+            max-height: 220px;
+            margin: 0;
+        }
+
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        .panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 10px;
+            background: #fff;
+        }
+
+        .panelTitle {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 6px;
+        }
+
+        /* canvas 统一外观 */
+        canvas {
+            width: 100%;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        /* UPS 卡片内部：左宽右窄更舒服 */
+        .upsInner {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 12px;
+            align-items: start;
+        }
+
+        @media (max-width: 980px) {
+            .upsInner {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ✅ COP：上大下小布局 */
+        .copOuter {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 14px;
+            align-items: start;
+        }
+
+        /* COP 下半部分：左输入 + 右 slice */
+        .copBottom {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 12px;
+            align-items: start;
+        }
+
+        @media (max-width: 1100px) {
+            .copBottom {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ✅ COP Surface 视图：高度放大（你要更大就改这里） */
+        .copSurfaceBox {
+            width: 100%;
+            height: 720px;
+            /* 你要更大：改 780px / 860px 都可以 */
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            background: #fff;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <h1 style="margin:0 0 6px 0;">PUE Solver Dev v0.3（VS Code + Live Server + Pyodide）</h1>
+    <p class="muted" style="margin:0 0 14px 0;">
+        你现在可以在 VS Code 里修改 <code>solver.py</code> / <code>ui.js</code>，保存后浏览器自动刷新并生效。
+    </p>
+
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;">曲线库（curves.json）</h3>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button id="btnPickCurves">打开 curves.json（可写回）</button>
+            <button id="btnSaveCurves">保存回 curves.json</button>
+            <button id="btnExportCurves">导出 curves.json（下载）</button>
+            <span class="muted" id="curvesStatus">未选择文件（将使用内存库 + 导出下载）</span>
+        </div>
+    </div>
+
+    <!-- ✅ 方案B：UPS 在上、COP 在下 -->
+    <div class="row row-1col">
+
+        <!-- ================= UPS ================= -->
+        <div class="card">
+            <h2 style="margin:0 0 10px 0;">UPS 1D 曲线编辑器（η = f(load_ratio)）</h2>
+
+            <div class="upsInner">
+                <div>
+                    <div class="muted">Curve ID</div>
+                    <input id="upsCurveId" value="UPS_EFF_1" />
+
+                    <div class="muted" style="margin-top:10px;">Method</div>
+                    <select id="upsMethod">
+                        <option value="pchip" selected>pchip（推荐）</option>
+                        <option value="linear">linear</option>
+                    </select>
+
+                    <div class="muted" style="margin-top:10px;">点坐标（每行：x,y）</div>
+                    <textarea id="upsPoints" style="min-height:140px;">0.2,0.94
+0.5,0.96
+1.0,0.955</textarea>
+
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button id="btnUpsPreview">预览曲线</button>
+                        <button id="btnUpsSave">保存到曲线库</button>
+                    </div>
+                    <div class="muted" id="upsMsg" style="margin-top:8px;"></div>
+                </div>
+
+                <div class="panel">
+                    <div class="panelTitle">Curve preview</div>
+                    <canvas id="upsChart" height="260"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= COP ================= -->
+        <div class="card">
+            <h2 style="margin:0 0 10px 0;">Chiller COP 2D（按 OAT 切片：COP = f(PLR, OAT)）</h2>
+
+            <div class="copOuter">
+                <!-- (1) 大 Surface -->
+                <div class="panel">
+                    <div class="panelTitle">COP surface preview (PLR × OAT)</div>
+                    <div id="copSurface3d" class="copSurfaceBox"></div>
+                    <div id="copSurfaceHint" class="hint"></div>
+                </div>
+
+                <!-- (2) 下方：左输入 + 右 slice -->
+                <div class="copBottom">
+                    <!-- 左：控件 -->
+                    <div class="panel">
+                        <div class="muted">Surface ID</div>
+                        <input id="copSurfId" value="CH_COP_SURF_1" />
+
+                        <div class="muted" style="margin-top:10px;">当前切片 OAT（°C）</div>
+                        <input id="copOat" value="25" />
+
+                        <div class="muted" style="margin-top:10px;">Slice Method</div>
+                        <select id="copMethod">
+                            <option value="pchip" selected>pchip（推荐）</option>
+                            <option value="linear">linear</option>
+                        </select>
+
+                        <div class="muted" style="margin-top:10px;">切片点坐标（每行：plr,cop）</div>
+                        <textarea id="copPoints" style="min-height:160px;">0.3,6.2
+0.6,5.9
+1.0,5.6</textarea>
+
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button id="btnCopPreview">预览切片</button>
+                            <button id="btnCopAddSlice">添加/覆盖切片</button>
+                            <button id="btnCopClear">清空曲面</button>
+                        </div>
+
+                        <div class="muted" id="copMsg" style="margin-top:8px;"></div>
+                        <div class="muted" id="copSlices" style="margin-top:8px;"></div>
+                    </div>
+
+                    <!-- 右：slice preview -->
+                    <div class="panel">
+                        <div class="panelTitle">Slice preview (COP = f(PLR) @ OAT)</div>
+                        <canvas id="copChart" height="320"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ================= Run ================= -->
+    <div class="card">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button id="btnRun" disabled>Run</button>
+            <span id="status" class="muted">正在加载 Pyodide…</span>
+            <span class="muted">（如果长时间卡住：检查网络能否访问 pyodide CDN）</span>
+        </div>
+    </div>
+
+    <!-- ================= IO（仍然两列） ================= -->
+    <div class="row">
+        <div class="card">
+            <h3 style="margin:0 0 10px 0;">输入 JSON</h3>
+            <textarea id="jsonInput"></textarea>
+        </div>
+
+        <div class="card">
+            <h3 style="margin:0 0 10px 0;">输出 JSON</h3>
+            <textarea id="jsonOutput" readonly></textarea>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;">Log</h3>
+        <pre id="log"></pre>
+    </div>
+
+    <!-- Pyodide -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <!-- App -->
+    <script src="./ui.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-dragdata@2.3.1"></script>
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+    <script src="./editor.js"></script>
+
+</body>
+
+</html>
