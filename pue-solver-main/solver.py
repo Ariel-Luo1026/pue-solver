@@ -7,6 +7,7 @@
 # Pyodide-friendly: no external deps.
 
 from math import isfinite
+from copy import deepcopy
 
 # -------------------------
 # helpers
@@ -309,19 +310,53 @@ def _compute_ups_loss(input_obj, curve_lib, p_it_kw):
         out_rows.append({"ups_id": ups_id, "input_kw": est_pin, "output_kw": est_pout, "loss_kw": loss, "method": f"curve({curve_ref})" if curve_ref else "default_eff"})
     return total_loss, out_rows
 
-def _compute_transformer_loss(input_obj):
-    # trust provided total_loss_kw
+def _compute_transformer_loss(input_obj, curve_lib, p_it_kw=0.0, power_output_kw=0.0):
+    # direct loss provided or estimate from transformer efficiency curves
     tr = input_obj.get("transformers", [])
     if not isinstance(tr, list):
         return 0.0, []
     rows = []
     total = 0.0
+    curves_1d = (curve_lib or {}).get("curves_1d", {}) if isinstance(curve_lib, dict) else {}
+    raw_curves = (curve_lib or {}).get("raw_curves", {}) if isinstance(curve_lib, dict) else {}
     for t in tr:
-        if not isinstance(t, dict): 
+        if not isinstance(t, dict):
             continue
-        loss = _num(t.get("total_loss_kw"), 0.0)
+        loss = _num(t.get("total_loss_kw"), None)
+        if loss is None:
+            eff = None
+            curve_ref = t.get("efficiency_curve_ref") or t.get("curve_ref") or t.get("transformer_curve_ref")
+            if curve_ref and isinstance(curve_ref, str):
+                if curve_ref in curves_1d:
+                    pts = curves_1d[curve_ref].get("points", [])
+                    method = curves_1d[curve_ref].get("method", "linear")
+                    load_ratio = _num(t.get("load_ratio"), None)
+                    if load_ratio is None:
+                        load_ratio = _num(t.get("rated_load_ratio"), None)
+                    if load_ratio is None:
+                        load_ratio = 1.0
+                    eff = _num(eval_curve_1d(pts, load_ratio, method), None)
+                elif curve_ref in raw_curves:
+                    load_ratio = _num(t.get("load_ratio"), None)
+                    if load_ratio is None:
+                        load_ratio = 1.0
+                    eff = _num(_curve_value({"raw_curves": raw_curves}, curve_ref, load_ratio, None), None)
+            if eff is None:
+                eff_pct = _num(t.get("efficiency_percent"), None)
+                if eff_pct is not None and eff_pct > 1.0:
+                    eff = eff_pct / 100.0
+                else:
+                    eff = eff_pct
+            if eff is None or eff <= 0:
+                eff = None
+            if eff is not None and power_output_kw is not None and power_output_kw > 0:
+                loss = max(0.0, float(power_output_kw) * (1.0 / float(eff) - 1.0))
+            else:
+                loss = 0.0
+        else:
+            loss = float(loss)
         total += loss
-        rows.append({"transformer_id": t.get("transformer_id","TR"), "loss_kw": loss})
+        rows.append({"transformer_id": t.get("transformer_id", "TR"), "loss_kw": loss})
     return total, rows
 
 
@@ -656,6 +691,455 @@ def _compute_heat_reuse_credit(input_obj):
     credit = exported if enabled else 0.0
     return credit, {"enabled": enabled, "exported_heat_kw": exported, "recovered_heat_kw": recovered}
 
+
+def _build_1d_curve_points(curve):
+    pts = []
+    data = curve.get("data", [])
+    if not isinstance(data, list):
+        return pts
+    for row in data:
+        if isinstance(row, dict):
+            x = _num(row.get(curve.get("x_axis")), None)
+            y = _num(row.get(curve.get("output")), None)
+        elif isinstance(row, (list, tuple)) and len(row) >= 2:
+            x = _num(row[0], None)
+            y = _num(row[1], None)
+        else:
+            continue
+        if x is None or y is None:
+            continue
+        pts.append([x, y])
+    return pts
+
+
+def _extract_2d_points(curve):
+    points = []
+    data = curve.get("data", [])
+    if not isinstance(data, list):
+        return points
+    x_axis = curve.get("x_axis")
+    y_axis = curve.get("y_axis")
+    output = curve.get("output")
+    if not x_axis or not y_axis or not output:
+        return points
+    for row in data:
+        if isinstance(row, dict):
+            x = _num(row.get(x_axis), None)
+            y = _num(row.get(y_axis), None)
+            z = _num(row.get(output), None)
+        elif isinstance(row, (list, tuple)) and len(row) >= 3:
+            x = _num(row[0], None)
+            y = _num(row[1], None)
+            z = _num(row[2], None)
+        else:
+            continue
+        if x is None or y is None or z is None:
+            continue
+        points.append([x, y, z])
+    return points
+
+
+def _build_cop_surface_from_2d_curve(curve):
+    points = _extract_2d_points(curve)
+    if len(points) == 0:
+        return None
+    grouped = {}
+    for x, y, z in points:
+        grouped.setdefault(x, []).append([y, z])
+    slices = []
+    for x in sorted(grouped.keys()):
+        pts = sorted(grouped[x], key=lambda item: item[0])
+        slices.append({"oat_c": x, "method": "pchip", "points": pts})
+    return {"interpolation_oat": "linear", "oat_slices": slices}
+
+
+def _build_sparse_2d_points(curve):
+    x_axis = curve.get("x_axis")
+    y_axis = curve.get("y_axis")
+    output = curve.get("output") or (curve.get("outputs", [None])[0] if isinstance(curve.get("outputs"), list) else None)
+    if not x_axis or not y_axis or not output:
+        return []
+    points = []
+    for row in curve.get("data", []) if isinstance(curve.get("data", []), list) else []:
+        if not isinstance(row, dict):
+            continue
+        x = _num(row.get(x_axis), None)
+        y = _num(row.get(y_axis), None)
+        z = _num(row.get(output), None)
+        if x is None or y is None or z is None:
+            continue
+        points.append([x, y, z])
+    return points
+
+
+def _eval_sparse_2d_points(curve, x, y):
+    pts = _build_sparse_2d_points(curve)
+    if len(pts) == 0 or x is None or y is None:
+        return 0.0
+    x = float(x)
+    y = float(y)
+    interp = str(curve.get("interpolation", "linear_scattered_or_nearest")).lower()
+    if any(abs(px - x) < 1e-9 and abs(py - y) < 1e-9 for px, py, _ in pts):
+        for px, py, pz in pts:
+            if abs(px - x) < 1e-9 and abs(py - y) < 1e-9:
+                return float(pz)
+    if "nearest" in interp:
+        best = min(pts, key=lambda item: (item[0] - x) ** 2 + (item[1] - y) ** 2)
+        return float(best[2])
+    weights = []
+    total = 0.0
+    for px, py, pz in pts:
+        dist2 = (px - x) ** 2 + (py - y) ** 2
+        w = 1.0 / (dist2 + 1e-6)
+        weights.append((w, pz))
+        total += w
+    if total <= 0.0:
+        return float(pts[0][2])
+    return float(sum(w * pz for w, pz in weights) / total)
+
+
+def _parse_equipment_curve(curve):
+    if not isinstance(curve, dict):
+        return None
+    parsed = {
+        "type": str(curve.get("type", "")).lower(),
+        "x_axis": curve.get("x_axis"),
+        "y_axis": curve.get("y_axis"),
+        "interpolation": curve.get("interpolation", "linear"),
+        "data": curve.get("data", [])
+    }
+    outputs = curve.get("outputs")
+    if isinstance(outputs, list) and len(outputs) > 0:
+        parsed["outputs"] = outputs
+        parsed["output"] = curve.get("output") or outputs[0]
+    else:
+        parsed["output"] = curve.get("output")
+    return parsed
+
+
+def _normalize_equipment_curve_library(equipment_curves):
+    normalized = {"curves_1d": {}, "cop_surfaces": {}, "raw_curves": {}}
+    if not isinstance(equipment_curves, dict):
+        return normalized
+    for item_key, item in equipment_curves.items():
+        if not isinstance(item, dict):
+            continue
+        curve = item.get("curve")
+        if not isinstance(curve, dict):
+            continue
+        curve_id = curve.get("curve_id") or item_key
+        parsed_curve = _parse_equipment_curve(curve)
+        if not parsed_curve:
+            continue
+        normalized["raw_curves"][curve_id] = parsed_curve
+        ctype = parsed_curve.get("type", "").lower()
+        if ctype == "1d_lookup_table" and curve_id not in normalized["curves_1d"]:
+            normalized["curves_1d"][curve_id] = {
+                "x_name": parsed_curve.get("x_axis"),
+                "y_name": parsed_curve.get("output"),
+                "method": parsed_curve.get("interpolation", "linear"),
+                "points": _build_1d_curve_points(parsed_curve)
+            }
+        if ctype == "2d_lookup_table" and parsed_curve.get("output", "").lower() == "cop" and curve_id not in normalized["cop_surfaces"]:
+            surface = _build_cop_surface_from_2d_curve(parsed_curve)
+            if surface is not None:
+                normalized["cop_surfaces"][curve_id] = surface
+    return normalized
+
+
+def _normalize_curve_library(curve_lib):
+    if not isinstance(curve_lib, dict):
+        return {"curves_1d": {}, "cop_surfaces": {}, "raw_curves": {}}
+    normalized = {"curves_1d": {}, "cop_surfaces": {}, "raw_curves": {}}
+    if isinstance(curve_lib.get("curves_1d"), dict):
+        normalized["curves_1d"] = curve_lib.get("curves_1d", {})
+        normalized["raw_curves"].update(curve_lib.get("curves_1d", {}))
+    if isinstance(curve_lib.get("cop_surfaces"), dict):
+        normalized["cop_surfaces"] = curve_lib.get("cop_surfaces", {})
+        normalized["raw_curves"].update(curve_lib.get("cop_surfaces", {}))
+    if isinstance(curve_lib.get("curves"), dict):
+        normalized["raw_curves"].update(curve_lib.get("curves", {}))
+        for name, curve in curve_lib.get("curves", {}).items():
+            if not isinstance(curve, dict):
+                continue
+            ctype = str(curve.get("type", "")).lower()
+            if ctype == "1d_lookup_table" and name not in normalized["curves_1d"]:
+                normalized["curves_1d"][name] = {
+                    "x_name": curve.get("x_axis"),
+                    "y_name": curve.get("output"),
+                    "method": curve.get("interpolation", "linear"),
+                    "points": _build_1d_curve_points(curve)
+                }
+            if ctype == "2d_lookup_table" and curve.get("output", "").lower() == "cop" and name not in normalized["cop_surfaces"]:
+                surface = _build_cop_surface_from_2d_curve(curve)
+                if surface is not None:
+                    normalized["cop_surfaces"][name] = surface
+    if isinstance(curve_lib.get("equipment_curves"), dict):
+        eq_norm = _normalize_equipment_curve_library(curve_lib.get("equipment_curves"))
+        normalized["raw_curves"].update(eq_norm.get("raw_curves", {}))
+        normalized["curves_1d"].update(eq_norm.get("curves_1d", {}))
+        normalized["cop_surfaces"].update(eq_norm.get("cop_surfaces", {}))
+    return normalized
+
+
+def _eval_quadratic_curve(curve, x):
+    coeffs = curve.get("coefficients", [])
+    if not isinstance(coeffs, list) or len(coeffs) < 3:
+        return 0.0
+    a = _num(coeffs[0], 0.0)
+    b = _num(coeffs[1], 0.0)
+    c = _num(coeffs[2], 0.0)
+    return float(a + b * x + c * x * x)
+
+
+def _eval_curve_2d_generic(curve, x, y):
+    points = _extract_2d_points(curve)
+    if len(points) == 0 or x is None or y is None:
+        return 0.0
+    slices = {}
+    for px, py, pz in points:
+        slices.setdefault(px, []).append([py, pz])
+    sorted_x = sorted(slices.items(), key=lambda item: item[0])
+    if len(sorted_x) == 0:
+        return 0.0
+    method = str(curve.get("interpolation", "bilinear_or_pchip")).lower()
+    method_y = "pchip" if "pchip" in method else "linear"
+    if x <= sorted_x[0][0]:
+        return float(eval_curve_1d(slices[sorted_x[0][0]], y, method_y))
+    if x >= sorted_x[-1][0]:
+        return float(eval_curve_1d(slices[sorted_x[-1][0]], y, method_y))
+    for i in range(len(sorted_x) - 1):
+        x0, pts0 = sorted_x[i]
+        x1, pts1 = sorted_x[i + 1]
+        if x0 <= x <= x1:
+            z0 = float(eval_curve_1d(pts0, y, method_y))
+            z1 = float(eval_curve_1d(pts1, y, method_y))
+            if abs(x1 - x0) < 1e-12:
+                return z0
+            t = (x - x0) / (x1 - x0)
+            return float(z0 + t * (z1 - z0))
+    return float(eval_curve_1d(slices[sorted_x[-1][0]], y, method_y))
+
+
+def _curve_value(curve_lib, curve_ref, x=None, y=None):
+    if not curve_ref or not isinstance(curve_ref, str) or not isinstance(curve_lib, dict):
+        return None
+    raw_curves = curve_lib.get("raw_curves", {})
+    if curve_ref in raw_curves:
+        curve = raw_curves[curve_ref]
+        if not isinstance(curve, dict):
+            return None
+        ctype = str(curve.get("type", "")).lower()
+        if ctype == "1d_lookup_table":
+            pts = _build_1d_curve_points(curve)
+            return _num(eval_curve_1d(pts, x, curve.get("interpolation", "linear")), None)
+        if ctype == "quadratic_curve":
+            return _num(_eval_quadratic_curve(curve, x), None)
+        if ctype == "2d_lookup_table":
+            if x is None or y is None:
+                return None
+            return _num(_eval_curve_2d_generic(curve, x, y), None)
+        if ctype == "sparse_2d_points":
+            if x is None or y is None:
+                return None
+            return _num(_eval_sparse_2d_points(curve, x, y), None)
+        if isinstance(curve.get("points"), list):
+            return _num(eval_curve_1d(curve.get("points", []), x, curve.get("method", "linear")), None)
+        if isinstance(curve.get("oat_slices"), list) and x is not None and y is not None:
+            return _num(eval_cop_surface(curve, y, x), None)
+    return None
+
+
+def _build_legacy_auxiliary_control(aux_loads):
+    control = {}
+    if not isinstance(aux_loads, dict):
+        return control
+    control["lighting_power_kw"] = _num(aux_loads.get("lighting_kW"), 0.0)
+    control["security_power_kw"] = _num(aux_loads.get("security_kW"), 0.0)
+    control["other_aux_power_kw"] = _num(aux_loads.get("controls_kW"), 0.0) + _num(aux_loads.get("misc_kW"), 0.0)
+    return control
+
+
+def _compute_constant_or_load_ratio(item):
+    if not isinstance(item, dict):
+        return 0.0
+    rated = _num(item.get("rated_power_kW"), None)
+    if rated is None:
+        return 0.0
+    load_ratio = _num(item.get("load_ratio"), None)
+    if load_ratio is None:
+        load_ratio = 1.0
+    load_ratio = _clamp(load_ratio, 0.0, 1.0)
+    return float(rated * load_ratio)
+
+
+def _build_legacy_input_for_project(input_obj, it_load_kw=0.0, oat_c=None, wet_bulb_c=None, rh=None):
+    if not isinstance(input_obj, dict):
+        return {}
+    legacy = {}
+    curve_lib = _normalize_curve_library(input_obj.get("curve_library", None) or input_obj.get("curveLib", None) or {})
+    legacy["curve_library"] = curve_lib
+
+    equipment = input_obj.get("equipment", {}) if isinstance(input_obj.get("equipment", {}), dict) else {}
+    cooling_system = input_obj.get("cooling_system", {}) if isinstance(input_obj.get("cooling_system", {}), dict) else {}
+    selected_mode = str(cooling_system.get("selected_mode", "")).strip()
+    free_cooling = cooling_system.get("free_cooling", {}) if isinstance(cooling_system.get("free_cooling", {}), dict) else {}
+
+    ups_list = []
+    ups_obj = equipment.get("electrical", {}).get("UPS") if isinstance(equipment.get("electrical", {}), dict) else None
+    if isinstance(ups_obj, dict) and ups_obj.get("enabled", False):
+        ups_entry = {"ups_id": "UPS"}
+        curve_ref = ups_obj.get("curve_ref")
+        if isinstance(curve_ref, str) and curve_ref:
+            ups_entry["efficiency_curve_ref"] = curve_ref
+        if ups_obj.get("efficiency_percent") is not None:
+            ups_entry["efficiency_percent"] = ups_obj.get("efficiency_percent")
+        load_percent = _num(ups_obj.get("load_percent"), None)
+        if load_percent is not None:
+            ups_entry["load_percent"] = load_percent
+        ups_list.append(ups_entry)
+    if ups_list:
+        legacy["ups"] = ups_list
+
+    transformers = []
+    electrical = equipment.get("electrical", {}) if isinstance(equipment.get("electrical", {}), dict) else {}
+    for key in ["MV_transformer", "LV_transformer"]:
+        tr_obj = electrical.get(key)
+        if isinstance(tr_obj, dict) and tr_obj.get("enabled", False):
+            tentry = {"transformer_id": key}
+            curve_ref = tr_obj.get("curve_ref")
+            if isinstance(curve_ref, str) and curve_ref:
+                tentry["efficiency_curve_ref"] = curve_ref
+            if tr_obj.get("efficiency_percent") is not None:
+                tentry["efficiency_percent"] = tr_obj.get("efficiency_percent")
+            if tr_obj.get("rated_power_kW") is not None:
+                tentry["rated_power_kw"] = tr_obj.get("rated_power_kW")
+            if tr_obj.get("load_ratio") is not None:
+                tentry["load_ratio"] = tr_obj.get("load_ratio")
+            transformers.append(tentry)
+    if transformers:
+        legacy["transformers"] = transformers
+
+    cooling = {}
+    cooling_equipment = equipment.get("cooling", {}) if isinstance(equipment.get("cooling", {}), dict) else {}
+    if isinstance(cooling_equipment.get("chiller"), dict) and cooling_equipment.get("chiller", {}).get("enabled", False):
+        ch = cooling_equipment.get("chiller", {})
+        ch_entry = {"chiller_id": "CH-1", "enabled": True}
+        if ch.get("curve_ref"):
+            ch_entry["cop_curve_ref"] = ch.get("curve_ref")
+        cap = _num(ch.get("capacity_kw"), None)
+        if cap is None:
+            cap = _num(ch.get("rated_capacity_kw"), None)
+        if cap is None or cap <= 0:
+            cap = max(100.0, float(it_load_kw or 0.0))
+        ch_entry["capacity_kw"] = cap
+        legacy["chillers"] = [ch_entry]
+    elif isinstance(cooling_equipment.get("ACC"), dict) and cooling_equipment.get("ACC", {}).get("enabled", False):
+        acc = cooling_equipment.get("ACC", {})
+        if selected_mode == "ACC_integrated_air_cooled_chiller" or selected_mode == "acc_integrated_air_cooled_chiller":
+            ch_entry = {"chiller_id": "ACC-1", "enabled": True}
+            if acc.get("curve_ref"):
+                ch_entry["cop_curve_ref"] = acc.get("curve_ref")
+            ch_entry["capacity_kw"] = max(100.0, float(it_load_kw or 0.0))
+            legacy["chillers"] = [ch_entry]
+    if cooling:
+        cooling["oat_c"] = _num(oat_c, 25.0)
+        legacy["cooling"] = cooling
+
+    cooling_towers = []
+    if isinstance(cooling_equipment.get("dry_cooler"), dict) and cooling_equipment.get("dry_cooler", {}).get("enabled", False):
+        dry = cooling_equipment.get("dry_cooler", {})
+        fan_ref = dry.get("fan_power_curve_ref")
+        fan_power = None
+        if fan_ref:
+            fan_power = _curve_value(curve_lib, fan_ref, 1.0, None)
+        if fan_power is None:
+            fan_power = 0.0
+        cooling_towers.append({"fan_power_kw": float(fan_power), "pump_power_kw": 0.0})
+    if isinstance(cooling_equipment.get("closed_cooling_tower"), dict) and cooling_equipment.get("closed_cooling_tower", {}).get("enabled", False):
+        cct = cooling_equipment.get("closed_cooling_tower", {})
+        cooling_towers.append({"fan_power_kw": _num(cct.get("fan_power_kw"), 0.0), "pump_power_kw": _num(cct.get("pump_power_kw"), 0.0)})
+    if cooling_towers:
+        legacy["cooling_towers"] = cooling_towers
+
+    pumps = []
+    if isinstance(cooling_equipment.get("pumps"), dict) and cooling_equipment.get("pumps", {}).get("enabled", False):
+        pumps_obj = cooling_equipment.get("pumps", {})
+        pentry = {}
+        if pumps_obj.get("curve_ref"):
+            flow_ratio = 1.0
+            if it_load_kw is not None and _num(input_obj.get("project", {}).get("it_load", {}).get("design_it_load_kW"), None):
+                design = _num(input_obj.get("project", {}).get("it_load", {}).get("design_it_load_kW"), 0.0)
+                if design > 0:
+                    flow_ratio = _clamp(float(it_load_kw) / design, 0.0, 1.0)
+            value = _curve_value(curve_lib, pumps_obj.get("curve_ref"), flow_ratio, None)
+            pentry["power_kw"] = float(value or 0.0)
+        pumps.append(pentry)
+    if pumps:
+        legacy["pumps"] = pumps
+
+    if isinstance(cooling_equipment.get("CDU"), dict) and cooling_equipment.get("CDU", {}).get("enabled", False):
+        cdu_power = _compute_constant_or_load_ratio(cooling_equipment.get("CDU", {}))
+        if cdu_power > 0:
+            legacy.setdefault("control", {}).setdefault("other_aux_power_kw", 0.0)
+            legacy["control"]["other_aux_power_kw"] += float(cdu_power)
+    if isinstance(cooling_equipment.get("FWU"), dict) and cooling_equipment.get("FWU", {}).get("enabled", False):
+        fwu_power = _compute_constant_or_load_ratio(cooling_equipment.get("FWU", {}))
+        if fwu_power > 0:
+            legacy.setdefault("control", {}).setdefault("other_aux_power_kw", 0.0)
+            legacy["control"]["other_aux_power_kw"] += float(fwu_power)
+
+    aux_control = _build_legacy_auxiliary_control(equipment.get("auxiliary_loads", {}))
+    if aux_control:
+        legacy.setdefault("control", {}).update(aux_control)
+
+    legacy.setdefault("power", {})["total_it_power_kw"] = float(it_load_kw)
+    legacy.setdefault("environmental_conditions", {})["outdoor_temp_c"] = _num(oat_c, 25.0)
+    if wet_bulb_c is not None:
+        legacy["environmental_conditions"]["wet_bulb_temp_c"] = _num(wet_bulb_c, 0.0)
+    if rh is not None:
+        legacy["environmental_conditions"]["relative_humidity_percent"] = _num(rh, 0.0)
+    return legacy
+
+
+def _validate_project_input(input_obj, hourly_count=None):
+    checks = {}
+    warnings = []
+    project = input_obj.get("project", {}) if isinstance(input_obj.get("project", {}), dict) else {}
+    weather = input_obj.get("weather", {}) if isinstance(input_obj.get("weather", {}), dict) else {}
+    curve_lib = input_obj.get("curve_library", {}) if isinstance(input_obj.get("curve_library", {}), dict) else {}
+    hourly_it_load = project.get("it_load", {}).get("hourly_it_load_kW", []) if isinstance(project.get("it_load", {}), dict) else []
+    dry_bulb = weather.get("hourly_data", {}).get("dry_bulb_C", []) if isinstance(weather.get("hourly_data", {}), dict) else []
+    curves = curve_lib.get("curves", {}) if isinstance(curve_lib.get("curves", {}), dict) else {}
+    curves_1d = curve_lib.get("curves_1d", {}) if isinstance(curve_lib.get("curves_1d", {}), dict) else {}
+    cop_surfaces = curve_lib.get("cop_surfaces", {}) if isinstance(curve_lib.get("cop_surfaces", {}), dict) else {}
+    checks["8760_weather_length_check"] = len(dry_bulb) == len(hourly_it_load) and len(dry_bulb) > 0
+    checks["8760_IT_load_length_check"] = len(hourly_it_load) > 0
+    checks["curve_data_not_empty_check"] = any(
+        (isinstance(curve, dict) and bool(curve.get("data") or curve.get("points")))
+        for curve in list(curves.values()) + list(curves_1d.values()) + list(cop_surfaces.values())
+    )
+    selected_mode = input_obj.get("cooling_system", {}).get("selected_mode", "")
+    equipment = input_obj.get("equipment", {}) if isinstance(input_obj.get("equipment", {}), dict) else {}
+    enabled = equipment.get("cooling", {}) if isinstance(equipment.get("cooling", {}), dict) else {}
+    mode_ok = True
+    if selected_mode == "ACC_integrated_air_cooled_chiller" and not isinstance(enabled.get("ACC"), dict):
+        mode_ok = False
+    if selected_mode == "centrifugal_chiller_plus_dry_cooler" and not isinstance(enabled.get("dry_cooler"), dict):
+        mode_ok = False
+    if selected_mode == "centrifugal_chiller_plus_closed_cooling_tower" and not isinstance(enabled.get("closed_cooling_tower"), dict):
+        mode_ok = False
+    checks["selected_cooling_mode_equipment_check"] = mode_ok
+    if not checks["8760_weather_length_check"]:
+        warnings.append("hourly IT load and weather data lengths mismatch or missing")
+    if not checks["curve_data_not_empty_check"]:
+        warnings.append("curve data appears missing or empty")
+    if not mode_ok:
+        warnings.append("selected cooling mode equipment is not fully defined or enabled")
+    if hourly_count is not None and len(hourly_it_load) != hourly_count:
+        warnings.append("provided hourly counts do not match expected 8760 length")
+    return {"checks": checks, "warnings": warnings}
+
 # -------------------------
 # Main compute
 # -------------------------
@@ -672,15 +1156,18 @@ def compute_pue_v04(input_obj):
     curve_lib = input_obj.get("curve_library", None)
     if curve_lib is None:
         curve_lib = input_obj.get("curveLib", None)  # tolerate alt key
+    if curve_lib is None and isinstance(input_obj.get("equipment_curves"), dict):
+        curve_lib = {"equipment_curves": input_obj.get("equipment_curves")}
     if curve_lib is None:
         curve_lib = {"curves_1d": {}, "cop_surfaces": {}}
+    curve_lib = _normalize_curve_library(curve_lib)
 
     # IT power
     p_it, p_it_src = _compute_it_power(input_obj)
 
     # power chain losses
     ups_loss, ups_rows = _compute_ups_loss(input_obj, curve_lib, p_it)
-    tr_loss, tr_rows = _compute_transformer_loss(input_obj)
+    tr_loss, tr_rows = _compute_transformer_loss(input_obj, curve_lib, p_it, p_it + ups_loss)
     power_dist_loss = ups_loss + tr_loss
 
     # Compute non-chiller powers first, because cooling heat load uses them as heat sources.
@@ -835,6 +1322,142 @@ def compute_pue_v04(input_obj):
     if facility_validation is not None:
         result["_facility_validation"] = facility_validation
 
+    return result
+
+
+def compute_pue_project(input_obj):
+    """
+    input_obj: dict in the project schema
+    returns: dict with hourly, annual, peak, and validation summaries
+    """
+    if not isinstance(input_obj, dict):
+        return {"error": "input is not an object"}
+
+    project = input_obj.get("project", {}) if isinstance(input_obj.get("project", {}), dict) else {}
+    weather = input_obj.get("weather", {}) if isinstance(input_obj.get("weather", {}), dict) else {}
+    it_load = project.get("it_load", {}) if isinstance(project.get("it_load", {}), dict) else {}
+    hourly_it_load = it_load.get("hourly_it_load_kW", []) if isinstance(it_load.get("hourly_it_load_kW", []), list) else []
+    weather_data = weather.get("hourly_data", {}) if isinstance(weather.get("hourly_data", {}), dict) else {}
+    dry_bulb = weather_data.get("dry_bulb_C", []) if isinstance(weather_data.get("dry_bulb_C", []), list) else []
+    wet_bulb = weather_data.get("wet_bulb_C", []) if isinstance(weather_data.get("wet_bulb_C", []), list) else []
+    rel_humidity = weather_data.get("relative_humidity_percent", []) if isinstance(weather_data.get("relative_humidity_percent", []), list) else []
+    hour_index = weather_data.get("hour_index", []) if isinstance(weather_data.get("hour_index", []), list) else []
+
+    validation = _validate_project_input(input_obj)
+    result = {
+        "project": project,
+        "weather": weather,
+        "validation": validation,
+        "hourly_results": [],
+        "annual_results": {},
+        "peak_results": {}
+    }
+
+    if len(hourly_it_load) == 0 or len(dry_bulb) == 0:
+        # fallback to a single design snapshot
+        it_kw = _num(project.get("design_it_load_kW"), 0.0)
+        oat_c = _num(project.get("location", {}).get("design_dry_bulb_C"), None)
+        wet_c = _num(project.get("location", {}).get("design_wet_bulb_C"), None)
+        input_hour = _build_legacy_input_for_project(input_obj, it_load_kw=it_kw, oat_c=oat_c, wet_bulb_c=wet_c)
+        out = compute_pue_v04(input_hour)
+        result["hourly_results"] = [
+            {
+                "hour_index": 0,
+                "dry_bulb_C": oat_c,
+                "wet_bulb_C": wet_c,
+                "relative_humidity_percent": None,
+                "IT_load_kW": it_kw,
+                "cooling_power_kW": out.get("_breakdown_v04", {}).get("cooling_kw"),
+                "electrical_loss_kW": out.get("_breakdown_v04", {}).get("power_distribution_loss_kw"),
+                "auxiliary_power_kW": out.get("_breakdown_v04", {}).get("aux_kw", 0.0) + out.get("_breakdown_v04", {}).get("other_kw", 0.0),
+                "total_facility_power_kW": out.get("power", {}).get("total_facility_power_kw"),
+                "hourly_PUE": out.get("power", {}).get("pue_instant")
+            }
+        ]
+        it_energy = it_kw
+        facility_energy = out.get("power", {}).get("total_facility_power_kw", 0.0)
+        cooling_energy = out.get("_breakdown_v04", {}).get("cooling_kw", 0.0)
+        electrical_loss_energy = out.get("_breakdown_v04", {}).get("power_distribution_loss_kw", 0.0)
+        auxiliary_energy = out.get("_breakdown_v04", {}).get("aux_kw", 0.0) + out.get("_breakdown_v04", {}).get("other_kw", 0.0)
+        annual_pue = facility_energy / it_energy if it_energy > 0 else None
+        result["annual_results"] = {
+            "annual_average_PUE": annual_pue,
+            "annual_IT_energy_kWh": it_energy,
+            "annual_facility_energy_kWh": facility_energy,
+            "annual_cooling_energy_kWh": cooling_energy,
+            "annual_electrical_loss_kWh": electrical_loss_energy,
+            "annual_auxiliary_energy_kWh": auxiliary_energy
+        }
+        result["peak_results"] = {
+            "peak_PUE": out.get("power", {}).get("pue_instant"),
+            "peak_hour_index": 0,
+            "peak_outdoor_dry_bulb_C": oat_c,
+            "peak_outdoor_wet_bulb_C": wet_c,
+            "peak_IT_load_kW": it_kw,
+            "peak_total_facility_power_kW": facility_energy
+        }
+        validation["checks"]["PUE_greater_than_1_check"] = annual_pue is None or annual_pue > 1.0
+        validation["checks"]["peak_hour_consistency_check"] = True
+        result["validation"] = validation
+        return result
+
+    n = max(len(hourly_it_load), len(dry_bulb))
+    for i in range(n):
+        it_kw = _num(hourly_it_load[i], 0.0) if i < len(hourly_it_load) else 0.0
+        oat_c = _num(dry_bulb[i], None)
+        wet_c = _num(wet_bulb[i], None) if i < len(wet_bulb) else None
+        rh_val = _num(rel_humidity[i], None) if i < len(rel_humidity) else None
+        idx = hour_index[i] if i < len(hour_index) else i
+        input_hour = _build_legacy_input_for_project(input_obj, it_load_kw=it_kw, oat_c=oat_c, wet_bulb_c=wet_c, rh=rh_val)
+        out = compute_pue_v04(input_hour)
+        breakdown = out.get("_breakdown_v04", {})
+        pue = out.get("power", {}).get("pue_instant")
+        result["hourly_results"].append({
+            "hour_index": idx,
+            "dry_bulb_C": oat_c,
+            "wet_bulb_C": wet_c,
+            "relative_humidity_percent": rh_val,
+            "IT_load_kW": it_kw,
+            "cooling_power_kW": breakdown.get("cooling_kw", 0.0),
+            "electrical_loss_kW": breakdown.get("power_distribution_loss_kw", 0.0),
+            "auxiliary_power_kW": breakdown.get("aux_kw", 0.0) + breakdown.get("other_kw", 0.0),
+            "total_facility_power_kW": out.get("power", {}).get("total_facility_power_kw", 0.0),
+            "hourly_PUE": pue
+        })
+
+    annual_it = sum(item.get("IT_load_kW", 0.0) for item in result["hourly_results"])
+    annual_facility = sum(item.get("total_facility_power_kW", 0.0) for item in result["hourly_results"])
+    annual_cooling = sum(item.get("cooling_power_kW", 0.0) for item in result["hourly_results"])
+    annual_loss = sum(item.get("electrical_loss_kW", 0.0) for item in result["hourly_results"])
+    annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
+    annual_pue = annual_facility / annual_it if annual_it > 0 else None
+    peak = max(result["hourly_results"], key=lambda x: x.get("total_facility_power_kW", 0.0))
+    result["annual_results"] = {
+        "annual_average_PUE": annual_pue,
+        "annual_IT_energy_kWh": annual_it,
+        "annual_facility_energy_kWh": annual_facility,
+        "annual_cooling_energy_kWh": annual_cooling,
+        "annual_electrical_loss_kWh": annual_loss,
+        "annual_auxiliary_energy_kWh": annual_aux
+    }
+    result["peak_results"] = {
+        "peak_PUE": peak.get("hourly_PUE"),
+        "peak_hour_index": peak.get("hour_index"),
+        "peak_outdoor_dry_bulb_C": peak.get("dry_bulb_C"),
+        "peak_outdoor_wet_bulb_C": peak.get("wet_bulb_C"),
+        "peak_IT_load_kW": peak.get("IT_load_kW"),
+        "peak_total_facility_power_kW": peak.get("total_facility_power_kW")
+    }
+    validation["checks"]["PUE_greater_than_1_check"] = annual_pue is None or annual_pue > 1.0
+    if isinstance(weather.get("design_peak_hour_method"), str) and weather.get("design_peak_hour_method").lower() == "highest_dry_bulb_hour":
+        max_dry = max(range(len(dry_bulb)), key=lambda j: _num(dry_bulb[j], -1.0)) if len(dry_bulb) > 0 else None
+        expected_peak = hour_index[max_dry] if max_dry is not None and max_dry < len(hour_index) else max_dry
+        validation["checks"]["peak_hour_consistency_check"] = expected_peak == peak.get("hour_index")
+        if not validation["checks"]["peak_hour_consistency_check"]:
+            validation["warnings"].append("peak hour PUE does not match highest dry bulb hour")
+    else:
+        validation["checks"]["peak_hour_consistency_check"] = True
+    result["validation"] = validation
     return result
 
 

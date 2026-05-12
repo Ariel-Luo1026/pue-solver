@@ -1,0 +1,178 @@
+{
+  "schema_version": "pue_curve.v0.1",
+  "curve_package": "mechanical_equipment_load_curves_default",
+  "source": {
+    "type": "engineering_default_assumptions",
+    "description": "Default pump, fan, dry-cooler, cooling-tower, CDU and FWU load curves.",
+    "warning": "Replace with vendor curves or project-specific selections when available."
+  },
+  "curves": {
+    "pump_power_vs_flow_ratio": {
+      "type": "cubic_affinity_curve",
+      "input": "flow_ratio",
+      "output": "power_ratio",
+      "formula": "power_ratio = minimum_power_ratio + (1 - minimum_power_ratio) * flow_ratio^3",
+      "minimum_power_ratio": 0.15,
+      "valid_range": {
+        "min": 0.3,
+        "max": 1.0
+      },
+      "sample_points": [
+        {
+          "flow_ratio": 0.3,
+          "power_ratio": 0.173
+        },
+        {
+          "flow_ratio": 0.5,
+          "power_ratio": 0.256
+        },
+        {
+          "flow_ratio": 0.75,
+          "power_ratio": 0.509
+        },
+        {
+          "flow_ratio": 1.0,
+          "power_ratio": 1.0
+        }
+      ]
+    },
+    "fan_power_vs_speed_ratio": {
+      "type": "cubic_affinity_curve",
+      "input": "fan_speed_ratio",
+      "output": "power_ratio",
+      "formula": "power_ratio = minimum_power_ratio + (1 - minimum_power_ratio) * fan_speed_ratio^3",
+      "minimum_power_ratio": 0.1,
+      "valid_range": {
+        "min": 0.25,
+        "max": 1.0
+      },
+      "sample_points": [
+        {
+          "fan_speed_ratio": 0.25,
+          "power_ratio": 0.114
+        },
+        {
+          "fan_speed_ratio": 0.5,
+          "power_ratio": 0.213
+        },
+        {
+          "fan_speed_ratio": 0.75,
+          "power_ratio": 0.48
+        },
+        {
+          "fan_speed_ratio": 1.0,
+          "power_ratio": 1.0
+        }
+      ]
+    },
+    "dry_cooler_fan_power_vs_heat_rejection_ratio": {
+      "type": "lookup_table",
+      "x_axis": "heat_rejection_ratio",
+      "output": "fan_power_ratio",
+      "interpolation": "linear",
+      "data": [
+        {
+          "heat_rejection_ratio": 0.25,
+          "fan_power_ratio": 0.12
+        },
+        {
+          "heat_rejection_ratio": 0.5,
+          "fan_power_ratio": 0.25
+        },
+        {
+          "heat_rejection_ratio": 0.75,
+          "fan_power_ratio": 0.55
+        },
+        {
+          "heat_rejection_ratio": 1.0,
+          "fan_power_ratio": 1.0
+        }
+      ]
+    },
+    "cooling_tower_fan_power_vs_heat_rejection_ratio": {
+      "type": "lookup_table",
+      "x_axis": "heat_rejection_ratio",
+      "output": "fan_power_ratio",
+      "interpolation": "linear",
+      "data": [
+        {
+          "heat_rejection_ratio": 0.25,
+          "fan_power_ratio": 0.1
+        },
+        {
+          "heat_rejection_ratio": 0.5,
+          "fan_power_ratio": 0.22
+        },
+        {
+          "heat_rejection_ratio": 0.75,
+          "fan_power_ratio": 0.5
+        },
+        {
+          "heat_rejection_ratio": 1.0,
+          "fan_power_ratio": 1.0
+        }
+      ]
+    },
+    "CDU_power_vs_IT_load_ratio": {
+      "type": "lookup_table",
+      "x_axis": "IT_load_ratio",
+      "output": "power_ratio",
+      "interpolation": "linear",
+      "data": [
+        {
+          "IT_load_ratio": 0.25,
+          "power_ratio": 0.35
+        },
+        {
+          "IT_load_ratio": 0.5,
+          "power_ratio": 0.55
+        },
+        {
+          "IT_load_ratio": 0.75,
+          "power_ratio": 0.78
+        },
+        {
+          "IT_load_ratio": 1.0,
+          "power_ratio": 1.0
+        }
+      ]
+    },
+    "FWU_fan_power_vs_airflow_ratio": {
+      "type": "cubic_affinity_curve",
+      "input": "airflow_ratio",
+      "output": "fan_power_ratio",
+      "formula": "fan_power_ratio = minimum_power_ratio + (1 - minimum_power_ratio) * airflow_ratio^3",
+      "minimum_power_ratio": 0.2,
+      "valid_range": {
+        "min": 0.3,
+        "max": 1.0
+      },
+      "sample_points": [
+        {
+          "airflow_ratio": 0.3,
+          "fan_power_ratio": 0.222
+        },
+        {
+          "airflow_ratio": 0.5,
+          "fan_power_ratio": 0.3
+        },
+        {
+          "airflow_ratio": 0.75,
+          "fan_power_ratio": 0.538
+        },
+        {
+          "airflow_ratio": 1.0,
+          "fan_power_ratio": 1.0
+        }
+      ]
+    }
+  },
+  "default_mapping": {
+    "primary_chilled_water_pump": "pump_power_vs_flow_ratio",
+    "condenser_water_pump": "pump_power_vs_flow_ratio",
+    "dry_cooler_fan": "dry_cooler_fan_power_vs_heat_rejection_ratio",
+    "cooling_tower_fan": "cooling_tower_fan_power_vs_heat_rejection_ratio",
+    "CDU": "CDU_power_vs_IT_load_ratio",
+    "FWU": "FWU_fan_power_vs_airflow_ratio"
+  }
+}
