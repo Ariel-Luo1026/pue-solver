@@ -1,0 +1,12 @@
+{
+  "schema_version": "pue.timeseries.it_load.v1",
+  "type": "annual_it_load",
+  "units": {
+    "hour_index": "1-8760",
+    "hourly_it_load_kW": "kW"
+  },
+  "data": {
+    "hour_index": [1, 2, 3, 4],
+    "hourly_it_load_kW": [520, 520, 610, 740]
+  }
+}

@@ -1,5 +1,4 @@
 // editor.js
-let upsChart = null;
 let copChart = null;
 let curvesFileHandle = null;
 
@@ -8,6 +7,7 @@ function getLib() {
     if (!window.curveLib) window.curveLib = { curves_1d: {}, cop_surfaces: {} };
     if (!window.curveLib.curves_1d) window.curveLib.curves_1d = {};
     if (!window.curveLib.cop_surfaces) window.curveLib.cop_surfaces = {};
+    if (!window.curveLib.curves) window.curveLib.curves = {};
     return window.curveLib;
 }
 
@@ -38,6 +38,8 @@ function ensureLinearScales(pointsXY) {
 }
 
 function buildChart(canvasId, rawPts, smoothPts, title, xLabel, yLabel) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
     const rawXY = rawPts.map(p => ({ x: p[0], y: p[1] }));
     const smoothXY = smoothPts.map(p => ({ x: p[0], y: p[1] }));
     const { minX, maxX } = ensureLinearScales(smoothXY.length ? smoothXY : rawXY);
@@ -60,9 +62,9 @@ function buildChart(canvasId, rawPts, smoothPts, title, xLabel, yLabel) {
                     showLine: false,
                     pointRadius: 5,
                     parsing: false,
-                    dragData: true,
-                    dragX: true,
-                    dragY: true
+                    dragData: false,
+                    dragX: false,
+                    dragY: false
                 }
             ]
         },
@@ -97,14 +99,8 @@ function buildChart(canvasId, rawPts, smoothPts, title, xLabel, yLabel) {
         }
     };
 
-    const ctx = document.getElementById(canvasId);
-    if (canvasId === "upsChart") {
-        if (upsChart) upsChart.destroy();
-        upsChart = new Chart(ctx, config);
-    } else {
-        if (copChart) copChart.destroy();
-        copChart = new Chart(ctx, config);
-    }
+    if (copChart) copChart.destroy();
+    copChart = new Chart(ctx, config);
 }
 
 async function smooth1D(points, method) {
@@ -202,8 +198,9 @@ function syncCopFromChart() {
 
 function refreshSliceList() {
     const lib = getLib();
-    const sid = document.getElementById("copSurfId").value.trim();
+    const sid = getSelectedCopSurfaceId();
     const el = document.getElementById("copSlices");
+    if (!el) return;
     const surf = lib.cop_surfaces[sid];
     if (!surf || !surf.oat_slices || surf.oat_slices.length === 0) {
         el.textContent = "当前切片列表：空";
@@ -211,6 +208,66 @@ function refreshSliceList() {
     }
     const oats = surf.oat_slices.map(s => s.oat_c).sort((a, b) => a - b);
     el.textContent = "当前切片列表（OAT）： " + oats.join("°C, ") + "°C";
+}
+
+function getSelectedCopSurfaceId() {
+    const select = document.getElementById("copSurfaceSelect");
+    if (select && select.value) return select.value;
+    const legacy = document.getElementById("copSurfId");
+    if (legacy && legacy.value) return legacy.value.trim();
+    const lib = getLib();
+    return Object.keys(lib.cop_surfaces || {})[0] || "";
+}
+
+function populateCopSurfaceSelect() {
+    const select = document.getElementById("copSurfaceSelect");
+    if (!select) return;
+    const previous = window.preferredCopSurfaceId || select.value;
+    const lib = getLib();
+    const ids = Object.keys(lib.cop_surfaces || {});
+    select.innerHTML = "";
+    if (ids.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "未找到 cop_surfaces 曲面";
+        select.appendChild(opt);
+        return;
+    }
+    ids.forEach((id) => {
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = id;
+        select.appendChild(opt);
+    });
+    if (ids.includes(previous)) select.value = previous;
+    window.preferredCopSurfaceId = "";
+}
+
+async function renderSelectedCopSurface() {
+    populateCopSurfaceSelect();
+    const sid = getSelectedCopSurfaceId();
+    const msg = document.getElementById("copMsg");
+    if (!sid) {
+        clearCopSurfaceCanvas("曲线库中没有可展示的 COP 曲面");
+        if (msg) msg.textContent = "请通过 curves.json 或标准化冷水机曲线加载 COP 曲面。";
+        return;
+    }
+    renderCopSurfacePreview(sid);
+    refreshSliceList();
+    await renderCopSlicePreviewFromSurface(sid);
+    if (msg) msg.textContent = `当前展示曲面：${sid}`;
+}
+
+async function renderCopSlicePreviewFromSurface(surfaceId) {
+    const lib = getLib();
+    const surf = lib.cop_surfaces?.[surfaceId];
+    if (!surf || !Array.isArray(surf.oat_slices) || surf.oat_slices.length === 0) return;
+    const slices = surf.oat_slices.slice().sort((a, b) => a.oat_c - b.oat_c);
+    const mid = slices[Math.floor(slices.length / 2)];
+    const pts = (mid.points || []).slice().sort((a, b) => a[0] - b[0]);
+    if (pts.length < 2) return;
+    const smooth = await smooth1D(pts, mid.method || "linear");
+    buildChart("copChart", pts, smooth, `COP slice @ ${mid.oat_c}°C`, "PLR", "COP");
 }
 
 function copAddOrReplaceSlice() {
@@ -304,25 +361,28 @@ function exportCurvesDownload() {
 
 // ---------- init ----------
 function bindEditorEvents() {
-    document.getElementById("btnUpsPreview").onclick = upsPreview;
-    document.getElementById("btnUpsSave").onclick = upsSaveToLib;
+    const pick = document.getElementById("btnPickCurves");
+    const save = document.getElementById("btnSaveCurves");
+    const exp = document.getElementById("btnExportCurves");
+    const select = document.getElementById("copSurfaceSelect");
+    const reload = document.getElementById("btnCopReloadSurface");
 
-    document.getElementById("btnCopPreview").onclick = copPreview;
-    document.getElementById("btnCopAddSlice").onclick = copAddOrReplaceSlice;
-    document.getElementById("btnCopClear").onclick = copClearSurface;
+    if (pick) pick.onclick = async () => {
+        await pickCurvesFile();
+        renderSelectedCopSurface();
+    };
+    if (save) save.onclick = saveCurvesFile;
+    if (exp) exp.onclick = exportCurvesDownload;
+    if (select) select.onchange = renderSelectedCopSurface;
+    if (reload) reload.onclick = renderSelectedCopSurface;
 
-    document.getElementById("btnPickCurves").onclick = pickCurvesFile;
-    document.getElementById("btnSaveCurves").onclick = saveCurvesFile;
-    document.getElementById("btnExportCurves").onclick = exportCurvesDownload;
-
-    refreshSliceList();
-    const sid = document.getElementById("copSurfId").value.trim();
-    renderCopSurfacePreview(sid);
+    renderSelectedCopSurface();
 
 }
 
 // 给 ui.js 调用
 window.initCurveEditors = bindEditorEvents;
+window.renderSelectedCopSurface = renderSelectedCopSurface;
 
 // ==============================
 // COP 2D surface preview (heatmap)

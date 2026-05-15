@@ -39,58 +39,54 @@ def main():
     # Add electrical curves
     if "curves" in electrical_curves:
         for curve_id, curve_data in electrical_curves["curves"].items():
-            equipment_curves[curve_id] = curve_data
+            equipment_curves[curve_id] = {"curve": curve_data}
     
     # Add mechanical curves
     if "curves" in mechanical_curves:
         for curve_id, curve_data in mechanical_curves["curves"].items():
-            equipment_curves[curve_id] = curve_data
+            equipment_curves[curve_id] = {"curve": curve_data}
     
     # Add cooling curves
     if "curve" in cooling_curves:
         curve_id = cooling_curves["curve"].get("curve_id", "chiller_COP_H_vs_load")
-        equipment_curves[curve_id] = cooling_curves["curve"]
+        equipment_curves[curve_id] = cooling_curves
     
     print(f"\n✓ Consolidated {len(equipment_curves)} equipment curves")
     print(f"  Curves: {', '.join(list(equipment_curves.keys())[:5])}{'...' if len(equipment_curves) > 5 else ''}")
     
     # Extract weather and IT load arrays
-    hourly_weather = weather_data.get("hourly_data", [])
-    hourly_it_load = it_load_data.get("hourly_data", [])
+    weather_hourly_data = weather_data.get("hourly_data", {})
+    it_load_hourly_profile = it_load_data.get("hourly_profile", [])
     
-    dry_bulb = [h.get("dry_bulb_C") for h in hourly_weather]
-    wet_bulb = [h.get("wet_bulb_C") for h in hourly_weather]
-    rel_humidity = [h.get("relative_humidity_percent") for h in hourly_weather]
-    it_load = [h.get("load_kW") for h in hourly_it_load]
+    dry_bulb = weather_hourly_data.get("dry_bulb_C", [])
+    wet_bulb = weather_hourly_data.get("wet_bulb_C", [])
+    rel_humidity = weather_hourly_data.get("relative_humidity_percent", [])
+    it_load = [h["IT_load_kW"] for h in it_load_hourly_profile]
     
     print(f"\n✓ Extracted 8760 hourly weather records")
     print(f"✓ Extracted 8760 hourly IT load records")
     print(f"  Dry bulb range: {min([x for x in dry_bulb if x is not None]):.1f}°C to {max([x for x in dry_bulb if x is not None]):.1f}°C")
     print(f"  IT load range: {min([x for x in it_load if x is not None]):.1f} kW to {max([x for x in it_load if x is not None]):.1f} kW")
     
-    # Build complete project input
+    # Build complete project input in the expected format
     project_input = {
         "project": {
             "name": "Cazaux France PUE Analysis with Equipment Curves",
             "description": "8760-hour annual calculation with mechanical, electrical, and cooling system curves",
             "location": "Cazaux, France",
-            "calculation_mode": "project_8760"
+            "calculation_mode": "project_8760",
+            "it_load": {
+                "hourly_it_load_kW": it_load
+            },
+            "facility_config": {
+                "design_it_load_kW": 1000,
+                "selected_cooling_mode": "active_cooling",
+                "selected_it_cooling_mode": "crac_precision_cooling"
+            }
         },
-        "facility_config": {
-            "design_it_load_kW": 1000,
-            "selected_cooling_mode": "active_cooling",
-            "selected_it_cooling_mode": "crac_precision_cooling"
-        },
+        "weather": weather_data,
         "curve_library": {
             "equipment_curves": equipment_curves
-        },
-        "weather_data": {
-            "dry_bulb_C": dry_bulb,
-            "wet_bulb_C": wet_bulb,
-            "relative_humidity_percent": rel_humidity
-        },
-        "hourly_it_load": {
-            "load_kW": it_load
         }
     }
     
@@ -126,7 +122,7 @@ def main():
     print(f"   Peak PUE:                {peak.get('peak_PUE', 'N/A'):.3f}")
     print(f"   Peak Hour Index:         {peak.get('peak_hour_index', 'N/A')}")
     print(f"   Peak Outdoor Temp:       {peak.get('peak_outdoor_dry_bulb_C', 'N/A'):.1f}°C")
-    print(f"   Peak Outdoor Wet Bulb:   {peak.get('peak_outdoor_wet_bulb_C', 'N/A'):.1f}°C")
+    print(f"   Peak Outdoor Wet Bulb:   {peak.get('peak_outdoor_wet_bulb_C', 'N/A')}°C")
     print(f"   Peak IT Load:            {peak.get('peak_IT_load_kW', 0):.1f} kW")
     print(f"   Peak Total Facility Power: {peak.get('peak_total_facility_power_kW', 0):.1f} kW")
     

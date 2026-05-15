@@ -1,0 +1,21 @@
+{
+  "schema_version": "pue.curve.dry_cooler.v1",
+  "type": "dry_cooler_performance",
+  "rated_power_kW": 45,
+  "curves": [
+    {
+      "curve_id": "dry_cooler_power_vs_load",
+      "x_axis": "load_ratio",
+      "output": "power_kW",
+      "interpolation": "linear",
+      "points": [[0.2, 6], [0.4, 13], [0.6, 23], [0.8, 34], [1.0, 45]]
+    },
+    {
+      "curve_id": "dry_cooler_leaving_water_temp_vs_oat",
+      "x_axis": "outdoor_dry_bulb_C",
+      "output": "leaving_water_C",
+      "interpolation": "linear",
+      "points": [[-10, 8], [0, 11], [10, 16], [20, 23], [30, 32], [40, 42]]
+    }
+  ]
+}

@@ -1333,6 +1333,16 @@ def compute_pue_project(input_obj):
     if not isinstance(input_obj, dict):
         return {"error": "input is not an object"}
 
+    # curve library passed from UI (recommended)
+    curve_lib = input_obj.get("curve_library", None)
+    if curve_lib is None:
+        curve_lib = input_obj.get("curveLib", None)  # tolerate alt key
+    if curve_lib is None and isinstance(input_obj.get("equipment_curves"), dict):
+        curve_lib = {"equipment_curves": input_obj.get("equipment_curves")}
+    if curve_lib is None:
+        curve_lib = {"curves_1d": {}, "cop_surfaces": {}}
+    curve_lib = _normalize_curve_library(curve_lib)
+
     project = input_obj.get("project", {}) if isinstance(input_obj.get("project", {}), dict) else {}
     weather = input_obj.get("weather", {}) if isinstance(input_obj.get("weather", {}), dict) else {}
     it_load = project.get("it_load", {}) if isinstance(project.get("it_load", {}), dict) else {}
@@ -1342,6 +1352,57 @@ def compute_pue_project(input_obj):
     wet_bulb = weather_data.get("wet_bulb_C", []) if isinstance(weather_data.get("wet_bulb_C", []), list) else []
     rel_humidity = weather_data.get("relative_humidity_percent", []) if isinstance(weather_data.get("relative_humidity_percent", []), list) else []
     hour_index = weather_data.get("hour_index", []) if isinstance(weather_data.get("hour_index", []), list) else []
+    design_it_load = _num(it_load.get("design_it_load_kW"), None)
+    if design_it_load is None or design_it_load <= 0:
+        design_it_load = max([_num(v, 0.0) for v in hourly_it_load], default=0.0)
+    if design_it_load <= 0:
+        design_it_load = _num(project.get("design_it_load_kW"), 0.0)
+    aux_cfg = project.get("auxiliary_loads", {}) if isinstance(project.get("auxiliary_loads", {}), dict) else {}
+    aux_coeff = _num(aux_cfg.get("auxiliary_fixed_load_coefficient"), None)
+    if aux_coeff is None:
+        aux_coeff = _num(aux_cfg.get("auxiliary_fixed_load_ratio"), None)
+    if aux_coeff is None:
+        aux_coeff = _num(_get(input_obj, ["equipment", "auxiliary_loads", "auxiliary_fixed_load_coefficient"], None), None)
+    if aux_coeff is None:
+        aux_coeff = 0.005
+    aux_coeff = _clamp(float(aux_coeff), 0.0, 1.0)
+
+    dry_cooler_cfg = _get(input_obj, ["equipment", "cooling", "dry_cooler"], {})
+    if not isinstance(dry_cooler_cfg, dict):
+        dry_cooler_cfg = {}
+    dry_cooler_curve_ref = dry_cooler_cfg.get("power_curve_ref") or dry_cooler_cfg.get("curve_ref") or "dry_cooler_power_vs_load"
+    dry_cooler_leaving_water_ref = (
+        dry_cooler_cfg.get("leaving_water_temp_curve_ref")
+        or dry_cooler_cfg.get("outlet_water_temp_curve_ref")
+        or dry_cooler_cfg.get("condenser_water_temp_curve_ref")
+        or "dry_cooler_leaving_water_temp_vs_oat"
+    )
+    dry_cooler_rated_power_kw = _num(dry_cooler_cfg.get("rated_power_kW"), None)
+    if dry_cooler_rated_power_kw is None:
+        dry_cooler_rated_power_kw = _num(dry_cooler_cfg.get("rated_power_kw"), None)
+    if dry_cooler_rated_power_kw is None:
+        dry_cooler_rated_power_kw = 0.03 * float(design_it_load or 0.0)
+    dry_cooler_approach_c = _num(dry_cooler_cfg.get("approach_C"), None)
+    if dry_cooler_approach_c is None:
+        dry_cooler_approach_c = _num(dry_cooler_cfg.get("approach_c"), None)
+    if dry_cooler_approach_c is None:
+        dry_cooler_approach_c = 5.0
+
+    chiller_cfg = _get(input_obj, ["equipment", "cooling", "chiller"], {})
+    if not isinstance(chiller_cfg, dict):
+        chiller_cfg = {}
+    chiller_curve_ref = chiller_cfg.get("curve_ref") or chiller_cfg.get("cop_curve_ref") or "chiller_COP_H_vs_load"
+
+    fan_cfg = _get(input_obj, ["equipment", "cooling", "fans"], {})
+    if not isinstance(fan_cfg, dict):
+        fan_cfg = {}
+    fan_curve_ref = fan_cfg.get("power_curve_ref") or fan_cfg.get("curve_ref") or "terminal_fan_power_vs_it_load"
+    fan_rated_power_kw = _num(fan_cfg.get("rated_power_kW"), None)
+    if fan_rated_power_kw is None:
+        fan_rated_power_kw = _num(fan_cfg.get("rated_power_kw"), None)
+    if fan_rated_power_kw is None:
+        fan_rated_power_kw = 0.02 * float(design_it_load or 0.0)
+    fans_enabled = bool(fan_cfg.get("enabled", False))
 
     validation = _validate_project_input(input_obj)
     result = {
@@ -1408,26 +1469,112 @@ def compute_pue_project(input_obj):
         wet_c = _num(wet_bulb[i], None) if i < len(wet_bulb) else None
         rh_val = _num(rel_humidity[i], None) if i < len(rel_humidity) else None
         idx = hour_index[i] if i < len(hour_index) else i
-        input_hour = _build_legacy_input_for_project(input_obj, it_load_kw=it_kw, oat_c=oat_c, wet_bulb_c=wet_c, rh=rh_val)
-        out = compute_pue_v04(input_hour)
-        breakdown = out.get("_breakdown_v04", {})
-        pue = out.get("power", {}).get("pue_instant")
+
+        # Direct calculation using curve_lib with simplified assumptions
+        # Assume standard electrical chain: UPS + transformers
+        ups_eff = _curve_value(curve_lib, "UPS_efficiency_double_conversion", it_kw / 1000.0)
+        if ups_eff is None or ups_eff <= 0 or ups_eff > 1:
+            ups_eff = 0.95  # Default 95% efficiency
+        ups_loss = (1.0 - ups_eff) * it_kw  # Loss = (1 - efficiency) * input_power
+
+        # Transformer losses (simplified - assume one transformer)
+        mv_tr_eff = _curve_value(curve_lib, "MV_transformer_efficiency", it_kw / 1000.0)
+        if mv_tr_eff is None or mv_tr_eff <= 0 or mv_tr_eff > 1:
+            mv_tr_eff = 0.98  # Default 98% efficiency
+        mv_tr_loss = (1.0 - mv_tr_eff) * (it_kw + ups_loss)
+
+        lv_tr_eff = _curve_value(curve_lib, "LV_transformer_efficiency", it_kw / 1000.0)
+        if lv_tr_eff is None or lv_tr_eff <= 0 or lv_tr_eff > 1:
+            lv_tr_eff = 0.97  # Default 97% efficiency
+        lv_tr_loss = (1.0 - lv_tr_eff) * (it_kw + ups_loss + mv_tr_loss)
+
+        power_dist_loss = ups_loss + mv_tr_loss + lv_tr_loss
+
+        load_ratio = (it_kw / design_it_load) if design_it_load and design_it_load > 0 else 0.0
+        load_ratio = _clamp(load_ratio, 0.0, 1.0)
+
+        # Simplified variable loads (pumps, fans, etc.)
+        pumps_kw = 0.01 * it_kw  # 1% of IT load
+        airflow_kw = 0.02 * it_kw  # 2% of IT load
+        if fans_enabled and fan_curve_ref:
+            fan_curve_value = _curve_value(curve_lib, fan_curve_ref, load_ratio, None)
+            if fan_curve_value is not None:
+                raw_curve = curve_lib.get("raw_curves", {}).get(fan_curve_ref, {}) if isinstance(curve_lib, dict) else {}
+                output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
+                if "kw" in output_name or "power_kw" in output_name:
+                    airflow_kw = max(0.0, float(fan_curve_value))
+                else:
+                    airflow_kw = max(0.0, float(fan_curve_value) * float(fan_rated_power_kw or 0.0))
+        aux_kw = aux_coeff * it_kw
+        other_kw = 0.0
+
+        dry_cooler_kw = 0.0
+        if dry_cooler_curve_ref:
+            dry_curve_value = _curve_value(curve_lib, dry_cooler_curve_ref, load_ratio, None)
+            if dry_curve_value is not None:
+                raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_curve_ref, {}) if isinstance(curve_lib, dict) else {}
+                output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
+                if "kw" in output_name or "power_kw" in output_name:
+                    dry_cooler_kw = max(0.0, float(dry_curve_value))
+                else:
+                    dry_cooler_kw = max(0.0, float(dry_curve_value) * float(dry_cooler_rated_power_kw or 0.0))
+
+        condenser_entering_water_c = oat_c
+        if dry_cooler_leaving_water_ref:
+            leaving_water = _curve_value(curve_lib, dry_cooler_leaving_water_ref, oat_c, None)
+            if leaving_water is not None:
+                condenser_entering_water_c = float(leaving_water)
+        if condenser_entering_water_c is None and oat_c is not None:
+            condenser_entering_water_c = float(oat_c) + float(dry_cooler_approach_c)
+        elif oat_c is not None and dry_cooler_leaving_water_ref:
+            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_leaving_water_ref, {}) if isinstance(curve_lib, dict) else {}
+            if not raw_curve:
+                condenser_entering_water_c = float(oat_c) + float(dry_cooler_approach_c)
+
+        # Thermal cooling load from IT heat sources
+        it_heat_load = it_kw  # Simplified - IT heat load equals IT power
+        pumps_heat = pumps_kw
+        airflow_heat = airflow_kw
+        other_heat = aux_kw + other_kw
+        total_thermal_load = it_heat_load + pumps_heat + airflow_heat + other_heat
+
+        # Cooling power calculation using COP curve
+        cop = _curve_value(curve_lib, chiller_curve_ref, x=condenser_entering_water_c, y=load_ratio)
+        if cop is None:
+            cop = 3.0  # Default COP = 3.0
+        chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
+        cooling_kw = chiller_kw + dry_cooler_kw
+
+        # Total facility power
+        total_facility_power = it_kw + power_dist_loss + cooling_kw + pumps_kw + airflow_kw + aux_kw + other_kw
+
+        # Calculate PUE
+        pue = total_facility_power / it_kw if it_kw > 0 else None
+
         result["hourly_results"].append({
             "hour_index": idx,
             "dry_bulb_C": oat_c,
             "wet_bulb_C": wet_c,
             "relative_humidity_percent": rh_val,
             "IT_load_kW": it_kw,
-            "cooling_power_kW": breakdown.get("cooling_kw", 0.0),
-            "electrical_loss_kW": breakdown.get("power_distribution_loss_kw", 0.0),
-            "auxiliary_power_kW": breakdown.get("aux_kw", 0.0) + breakdown.get("other_kw", 0.0),
-            "total_facility_power_kW": out.get("power", {}).get("total_facility_power_kw", 0.0),
+            "cooling_power_kW": cooling_kw,
+            "chiller_power_kW": chiller_kw,
+            "dry_cooler_power_kW": dry_cooler_kw,
+            "condenser_entering_water_C": condenser_entering_water_c,
+            "chiller_cop": cop,
+            "terminal_fan_power_kW": airflow_kw,
+            "electrical_loss_kW": power_dist_loss,
+            "auxiliary_power_kW": aux_kw + other_kw,
+            "total_facility_power_kW": total_facility_power,
             "hourly_PUE": pue
         })
 
     annual_it = sum(item.get("IT_load_kW", 0.0) for item in result["hourly_results"])
     annual_facility = sum(item.get("total_facility_power_kW", 0.0) for item in result["hourly_results"])
     annual_cooling = sum(item.get("cooling_power_kW", 0.0) for item in result["hourly_results"])
+    annual_chiller = sum(item.get("chiller_power_kW", 0.0) for item in result["hourly_results"])
+    annual_dry_cooler = sum(item.get("dry_cooler_power_kW", 0.0) for item in result["hourly_results"])
+    annual_terminal_fan = sum(item.get("terminal_fan_power_kW", 0.0) for item in result["hourly_results"])
     annual_loss = sum(item.get("electrical_loss_kW", 0.0) for item in result["hourly_results"])
     annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
     annual_pue = annual_facility / annual_it if annual_it > 0 else None
@@ -1437,6 +1584,9 @@ def compute_pue_project(input_obj):
         "annual_IT_energy_kWh": annual_it,
         "annual_facility_energy_kWh": annual_facility,
         "annual_cooling_energy_kWh": annual_cooling,
+        "annual_chiller_energy_kWh": annual_chiller,
+        "annual_dry_cooler_energy_kWh": annual_dry_cooler,
+        "annual_terminal_fan_energy_kWh": annual_terminal_fan,
         "annual_electrical_loss_kWh": annual_loss,
         "annual_auxiliary_energy_kWh": annual_aux
     }

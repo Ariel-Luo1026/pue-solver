@@ -1,0 +1,14 @@
+{
+  "schema_version": "pue.curve.fans.v1",
+  "type": "terminal_fan_power_curves",
+  "rated_power_kW": 30,
+  "curves": [
+    {
+      "curve_id": "terminal_fan_power_vs_it_load",
+      "x_axis": "it_load_ratio",
+      "output": "power_factor",
+      "interpolation": "linear",
+      "points": [[0.2, 0.1], [0.5, 0.32], [0.75, 0.62], [1.0, 1.0]]
+    }
+  ]
+}
