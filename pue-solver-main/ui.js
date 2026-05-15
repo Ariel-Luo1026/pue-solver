@@ -725,28 +725,46 @@ function previewInputCurves(files) {
     createChart("inputElectricalChart", {
         type: "line",
         data: {
-            labels: elecCurves[0] && Array.isArray(elecCurves[0].points) ? elecCurves[0].points.map(p => p[0]) : [],
             datasets: elecCurves.map((curve, i) => ({
                 label: curve.curve_id,
-                data: (curve.points || []).map(p => p[1]),
-                borderColor: ["#2563eb", "#059669", "#f59e0b"][i % 3]
+                data: (curve.points || []).map(p => ({ x: p[0], y: p[1] })),
+                borderColor: ["#2563eb", "#059669", "#f59e0b"][i % 3],
+                backgroundColor: ["#2563eb", "#059669", "#f59e0b"][i % 3],
+                pointRadius: 2
             }))
         },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            scales: {
+                x: { type: "linear", title: { display: true, text: "load ratio" } },
+                y: { title: { display: true, text: "efficiency" } }
+            }
+        }
     });
 
     const pumpCurves = (files.pumps && files.pumps.curves) || [];
     createChart("inputPumpChart", {
         type: "line",
         data: {
-            labels: pumpCurves[0] && Array.isArray(pumpCurves[0].points) ? pumpCurves[0].points.map(p => p[0]) : [],
             datasets: pumpCurves.map((curve, i) => ({
                 label: curve.curve_id,
-                data: (curve.points || []).map(p => p[1]),
-                borderColor: ["#2563eb", "#7c3aed"][i % 2]
+                data: (curve.points || []).map(p => ({ x: p[0], y: p[1] })),
+                borderColor: ["#2563eb", "#7c3aed"][i % 2],
+                backgroundColor: ["#2563eb", "#7c3aed"][i % 2],
+                pointRadius: 2
             }))
         },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            scales: {
+                x: { type: "linear", title: { display: true, text: "IT load ratio" } },
+                y: { title: { display: true, text: "power factor or kW" }, beginAtZero: true }
+            }
+        }
     });
 
     const auxCoeffInput = document.getElementById("auxFixedCoeff");
@@ -762,14 +780,23 @@ function previewInputCurves(files) {
     createChart("inputFanChart", {
         type: "line",
         data: {
-            labels: fanCurves[0] && Array.isArray(fanCurves[0].points) ? fanCurves[0].points.map(p => p[0]) : [],
             datasets: fanCurves.map((curve, i) => ({
                 label: curve.curve_id,
-                data: (curve.points || []).map(p => p[1]),
-                borderColor: ["#0f766e", "#2563eb"][i % 2]
+                data: (curve.points || []).map(p => ({ x: p[0], y: p[1] })),
+                borderColor: ["#0f766e", "#2563eb"][i % 2],
+                backgroundColor: ["#0f766e", "#2563eb"][i % 2],
+                pointRadius: 2
             }))
         },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            scales: {
+                x: { type: "linear", title: { display: true, text: "IT load ratio" } },
+                y: { title: { display: true, text: "power factor or kW" }, beginAtZero: true }
+            }
+        }
     });
 }
 
@@ -1093,7 +1120,8 @@ function showProjectVisualization(outObj) {
     const peakDetails = document.getElementById("peakHourDetails");
     if (peakDetails) {
         const cards = [
-            ["Peak Hour", peak.peak_hour_index],
+            ["Peak Facility Hour", peak.peak_hour_index],
+            ["Max PUE Hour", peak.peak_PUE_hour_index],
             ["Peak PUE", fmtNumber(peak.peak_PUE, 3)],
             ["Dry Bulb", `${fmtNumber(peak.peak_outdoor_dry_bulb_C, 1)} deg C`],
             ["Wet Bulb", `${fmtNumber(peak.peak_outdoor_wet_bulb_C, 1)} deg C`],

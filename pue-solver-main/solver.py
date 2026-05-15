@@ -1393,6 +1393,17 @@ def compute_pue_project(input_obj):
         chiller_cfg = {}
     chiller_curve_ref = chiller_cfg.get("curve_ref") or chiller_cfg.get("cop_curve_ref") or "chiller_COP_H_vs_load"
 
+    pumps_cfg = _get(input_obj, ["equipment", "cooling", "pumps"], {})
+    if not isinstance(pumps_cfg, dict):
+        pumps_cfg = {}
+    pump_curve_refs = pumps_cfg.get("power_curve_refs") or pumps_cfg.get("curve_refs")
+    if isinstance(pump_curve_refs, str):
+        pump_curve_refs = [pump_curve_refs]
+    if not isinstance(pump_curve_refs, list):
+        raw_curve_names = list(curve_lib.get("raw_curves", {}).keys()) if isinstance(curve_lib, dict) else []
+        pump_curve_refs = [name for name in raw_curve_names if "pump_power_vs_it_load" in str(name)]
+    pumps_enabled = bool(pumps_cfg.get("enabled", True))
+
     fan_cfg = _get(input_obj, ["equipment", "cooling", "fans"], {})
     if not isinstance(fan_cfg, dict):
         fan_cfg = {}
@@ -1470,31 +1481,46 @@ def compute_pue_project(input_obj):
         rh_val = _num(rel_humidity[i], None) if i < len(rel_humidity) else None
         idx = hour_index[i] if i < len(hour_index) else i
 
+        load_ratio = (it_kw / design_it_load) if design_it_load and design_it_load > 0 else 0.0
+        load_ratio = _clamp(load_ratio, 0.0, 1.0)
+
         # Direct calculation using curve_lib with simplified assumptions
         # Assume standard electrical chain: UPS + transformers
-        ups_eff = _curve_value(curve_lib, "UPS_efficiency_double_conversion", it_kw / 1000.0)
+        ups_eff = _curve_value(curve_lib, "UPS_efficiency_double_conversion", load_ratio)
         if ups_eff is None or ups_eff <= 0 or ups_eff > 1:
             ups_eff = 0.95  # Default 95% efficiency
         ups_loss = (1.0 - ups_eff) * it_kw  # Loss = (1 - efficiency) * input_power
 
         # Transformer losses (simplified - assume one transformer)
-        mv_tr_eff = _curve_value(curve_lib, "MV_transformer_efficiency", it_kw / 1000.0)
+        mv_tr_eff = _curve_value(curve_lib, "MV_transformer_efficiency", load_ratio)
         if mv_tr_eff is None or mv_tr_eff <= 0 or mv_tr_eff > 1:
             mv_tr_eff = 0.98  # Default 98% efficiency
         mv_tr_loss = (1.0 - mv_tr_eff) * (it_kw + ups_loss)
 
-        lv_tr_eff = _curve_value(curve_lib, "LV_transformer_efficiency", it_kw / 1000.0)
+        lv_tr_eff = _curve_value(curve_lib, "LV_transformer_efficiency", load_ratio)
         if lv_tr_eff is None or lv_tr_eff <= 0 or lv_tr_eff > 1:
             lv_tr_eff = 0.97  # Default 97% efficiency
         lv_tr_loss = (1.0 - lv_tr_eff) * (it_kw + ups_loss + mv_tr_loss)
 
         power_dist_loss = ups_loss + mv_tr_loss + lv_tr_loss
 
-        load_ratio = (it_kw / design_it_load) if design_it_load and design_it_load > 0 else 0.0
-        load_ratio = _clamp(load_ratio, 0.0, 1.0)
-
         # Simplified variable loads (pumps, fans, etc.)
         pumps_kw = 0.01 * it_kw  # 1% of IT load
+        if pumps_enabled and pump_curve_refs:
+            pump_values = []
+            for pump_ref in pump_curve_refs:
+                pump_curve_value = _curve_value(curve_lib, str(pump_ref), load_ratio, None)
+                if pump_curve_value is None:
+                    continue
+                raw_curve = curve_lib.get("raw_curves", {}).get(str(pump_ref), {}) if isinstance(curve_lib, dict) else {}
+                output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
+                if "kw" in output_name or "power_kw" in output_name:
+                    pump_values.append(max(0.0, float(pump_curve_value)))
+                else:
+                    rated_each = (0.01 * float(design_it_load or 0.0)) / max(len(pump_curve_refs), 1)
+                    pump_values.append(max(0.0, float(pump_curve_value) * rated_each))
+            if pump_values:
+                pumps_kw = sum(pump_values)
         airflow_kw = 0.02 * it_kw  # 2% of IT load
         if fans_enabled and fan_curve_ref:
             fan_curve_value = _curve_value(curve_lib, fan_curve_ref, load_ratio, None)
@@ -1578,7 +1604,13 @@ def compute_pue_project(input_obj):
     annual_loss = sum(item.get("electrical_loss_kW", 0.0) for item in result["hourly_results"])
     annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
     annual_pue = annual_facility / annual_it if annual_it > 0 else None
-    peak = max(result["hourly_results"], key=lambda x: x.get("total_facility_power_kW", 0.0))
+    hourly_pues = [item.get("hourly_PUE") for item in result["hourly_results"] if item.get("hourly_PUE") is not None]
+    peak_facility = max(result["hourly_results"], key=lambda x: x.get("total_facility_power_kW", 0.0))
+    peak_pue = max(
+        [item for item in result["hourly_results"] if item.get("hourly_PUE") is not None],
+        key=lambda x: x.get("hourly_PUE", 0.0),
+        default=peak_facility
+    )
     result["annual_results"] = {
         "annual_average_PUE": annual_pue,
         "annual_IT_energy_kWh": annual_it,
@@ -1588,21 +1620,27 @@ def compute_pue_project(input_obj):
         "annual_dry_cooler_energy_kWh": annual_dry_cooler,
         "annual_terminal_fan_energy_kWh": annual_terminal_fan,
         "annual_electrical_loss_kWh": annual_loss,
-        "annual_auxiliary_energy_kWh": annual_aux
+        "annual_auxiliary_energy_kWh": annual_aux,
+        "min_hourly_PUE": min(hourly_pues) if hourly_pues else None,
+        "max_hourly_PUE": max(hourly_pues) if hourly_pues else None
     }
     result["peak_results"] = {
-        "peak_PUE": peak.get("hourly_PUE"),
-        "peak_hour_index": peak.get("hour_index"),
-        "peak_outdoor_dry_bulb_C": peak.get("dry_bulb_C"),
-        "peak_outdoor_wet_bulb_C": peak.get("wet_bulb_C"),
-        "peak_IT_load_kW": peak.get("IT_load_kW"),
-        "peak_total_facility_power_kW": peak.get("total_facility_power_kW")
+        "peak_PUE": peak_pue.get("hourly_PUE"),
+        "peak_PUE_hour_index": peak_pue.get("hour_index"),
+        "peak_PUE_outdoor_dry_bulb_C": peak_pue.get("dry_bulb_C"),
+        "peak_PUE_IT_load_kW": peak_pue.get("IT_load_kW"),
+        "peak_hour_index": peak_facility.get("hour_index"),
+        "peak_outdoor_dry_bulb_C": peak_facility.get("dry_bulb_C"),
+        "peak_outdoor_wet_bulb_C": peak_facility.get("wet_bulb_C"),
+        "peak_IT_load_kW": peak_facility.get("IT_load_kW"),
+        "peak_total_facility_power_kW": peak_facility.get("total_facility_power_kW"),
+        "peak_facility_hour_PUE": peak_facility.get("hourly_PUE")
     }
     validation["checks"]["PUE_greater_than_1_check"] = annual_pue is None or annual_pue > 1.0
     if isinstance(weather.get("design_peak_hour_method"), str) and weather.get("design_peak_hour_method").lower() == "highest_dry_bulb_hour":
         max_dry = max(range(len(dry_bulb)), key=lambda j: _num(dry_bulb[j], -1.0)) if len(dry_bulb) > 0 else None
         expected_peak = hour_index[max_dry] if max_dry is not None and max_dry < len(hour_index) else max_dry
-        validation["checks"]["peak_hour_consistency_check"] = expected_peak == peak.get("hour_index")
+        validation["checks"]["peak_hour_consistency_check"] = expected_peak == peak_facility.get("hour_index")
         if not validation["checks"]["peak_hour_consistency_check"]:
             validation["warnings"].append("peak hour PUE does not match highest dry bulb hour")
     else:

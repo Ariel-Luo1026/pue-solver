@@ -89,6 +89,29 @@
         return null;
     }
 
+    function groupedCurves2d(rows, defaultCurveId, xCandidates, yCandidates, xAxis, defaultOutput) {
+        const curveIdCol = Object.keys(rows[0] || {}).find(k => normalizeHeader(k) === "curve_id");
+        const grouped = {};
+        if (!curveIdCol) return null;
+        rows.forEach(row => {
+            const id = String(row[curveIdCol] || "").trim();
+            if (!id) return;
+            const x = rowValue(row, xCandidates);
+            const yCol = rowsColumnWithKey([row], yCandidates);
+            const y = yCol && yCol.values.length > 0 ? yCol.values[0] : null;
+            if (x === null || y === null) return;
+            if (!grouped[id]) grouped[id] = { points: [], output: yCol.normalizedKey.includes("kw") ? "power_kW" : defaultOutput };
+            grouped[id].points.push([x, y]);
+        });
+        const curves = Object.keys(grouped).map(id => ({
+            curve_id: id || defaultCurveId,
+            x_axis: xAxis,
+            output: grouped[id].output,
+            points: grouped[id].points
+        })).filter(c => c.points.length > 0);
+        return curves.length > 0 ? curves : null;
+    }
+
     function rowsPoints2d(rows, xCandidates, yCandidates) {
         const xs = rowsColumn(rows, xCandidates);
         const ys = rowsColumn(rows, yCandidates);
@@ -254,6 +277,22 @@
         }
 
         if (slot === "pumps") {
+            const grouped = groupedCurves2d(
+                rows,
+                "chw_pump_power_vs_it_load",
+                ["it_load_ratio", "load_ratio", "x"],
+                ["power_kw", "power_kW", "power_factor", "y"],
+                "it_load_ratio",
+                "power_factor"
+            );
+            if (grouped) {
+                return {
+                    schema_version: "pue.curve.pumps.v1",
+                    type: "pump_power_curves",
+                    source_format: "excel",
+                    curves: grouped
+                };
+            }
             const points = rowsPoints2d(rows, ["it_load_ratio", "load_ratio", "x"], ["power_factor", "power_kw", "y"]);
             if (!points) throw new Error("Pump Excel needs it_load_ratio/load_ratio and power_factor/power_kw columns.");
             return {
@@ -272,6 +311,22 @@
         }
 
         if (slot === "fans") {
+            const grouped = groupedCurves2d(
+                rows,
+                "terminal_fan_power_vs_it_load",
+                ["it_load_ratio", "load_ratio", "airflow_ratio", "x"],
+                ["power_kw", "power_kW", "fan_power_kw", "power_factor", "y"],
+                "it_load_ratio",
+                "power_factor"
+            );
+            if (grouped) {
+                return {
+                    schema_version: "pue.curve.fans.v1",
+                    type: "terminal_fan_power_curves",
+                    source_format: "excel",
+                    curves: grouped
+                };
+            }
             const points = rowsPoints2d(rows, ["it_load_ratio", "load_ratio", "airflow_ratio", "x"], ["power_factor", "power_kw", "fan_power_kw", "y"]);
             if (!points) throw new Error("Fan Excel needs it_load_ratio/load_ratio and power_factor/power_kw columns.");
             return {
