@@ -135,11 +135,35 @@
 
     function adaptEpw(text) {
         const lines = text.split(/\r?\n/).filter(Boolean);
+        const locationCols = (lines[0] || "").split(",");
         const dataLines = lines.slice(8);
         const dry = [];
         const dew = [];
         const rh = [];
+        const pressure = [];
+        const horizontalIrSky = [];
+        const ghi = [];
+        const dni = [];
+        const dhi = [];
+        const globalHorizontalIlluminance = [];
+        const directNormalIlluminance = [];
+        const diffuseHorizontalIlluminance = [];
+        const zenithLuminance = [];
+        const windDirection = [];
+        const windSpeed = [];
+        const totalSkyCover = [];
+        const opaqueSkyCover = [];
+        const visibility = [];
+        const ceilingHeight = [];
+        const precipitableWater = [];
+        const aerosolOpticalDepth = [];
+        const albedo = [];
+        const liquidPrecipitationDepth = [];
         const hourIndex = [];
+
+        const pushIfNumber = (arr, value) => {
+            if (value !== null) arr.push(value);
+        };
 
         dataLines.forEach((line, i) => {
             const cols = line.split(",");
@@ -150,24 +174,90 @@
             if (dryBulb === null) return;
             hourIndex.push(i + 1);
             dry.push(dryBulb);
-            if (dewPoint !== null) dew.push(dewPoint);
-            if (relHumidity !== null) rh.push(relHumidity);
+            pushIfNumber(dew, dewPoint);
+            pushIfNumber(rh, relHumidity);
+            pushIfNumber(pressure, num(cols[9]));
+            pushIfNumber(horizontalIrSky, num(cols[12]));
+            pushIfNumber(ghi, num(cols[13]));
+            pushIfNumber(dni, num(cols[14]));
+            pushIfNumber(dhi, num(cols[15]));
+            pushIfNumber(globalHorizontalIlluminance, num(cols[16]));
+            pushIfNumber(directNormalIlluminance, num(cols[17]));
+            pushIfNumber(diffuseHorizontalIlluminance, num(cols[18]));
+            pushIfNumber(zenithLuminance, num(cols[19]));
+            pushIfNumber(windDirection, num(cols[20]));
+            pushIfNumber(windSpeed, num(cols[21]));
+            pushIfNumber(totalSkyCover, num(cols[22]));
+            pushIfNumber(opaqueSkyCover, num(cols[23]));
+            pushIfNumber(visibility, num(cols[24]));
+            pushIfNumber(ceilingHeight, num(cols[25]));
+            pushIfNumber(precipitableWater, num(cols[28]));
+            pushIfNumber(aerosolOpticalDepth, num(cols[29]));
+            pushIfNumber(albedo, num(cols[32]));
+            pushIfNumber(liquidPrecipitationDepth, num(cols[33]));
         });
 
         return {
             schema_version: "pue.timeseries.weather.v1",
             type: "annual_weather",
             source_format: "epw",
+            location: {
+                city: locationCols[1] || "",
+                state_or_region: locationCols[2] || "",
+                country: locationCols[3] || "",
+                latitude: num(locationCols[6]),
+                longitude: num(locationCols[7]),
+                time_zone: num(locationCols[8]),
+                elevation_m: num(locationCols[9])
+            },
             units: {
                 dry_bulb_C: "degC",
                 dew_point_C: "degC",
-                relative_humidity_percent: "%"
+                relative_humidity_percent: "%",
+                atmospheric_pressure_Pa: "Pa",
+                horizontal_infrared_radiation_intensity_Wh_m2: "Wh/m2",
+                global_horizontal_radiation_Wh_m2: "Wh/m2",
+                direct_normal_radiation_Wh_m2: "Wh/m2",
+                diffuse_horizontal_radiation_Wh_m2: "Wh/m2",
+                global_horizontal_illuminance_lux: "lux",
+                direct_normal_illuminance_lux: "lux",
+                diffuse_horizontal_illuminance_lux: "lux",
+                zenith_luminance_cd_m2: "cd/m2",
+                wind_direction_degrees: "degrees",
+                wind_speed_m_s: "m/s",
+                total_sky_cover_tenths: "0-10",
+                opaque_sky_cover_tenths: "0-10",
+                visibility_km: "km",
+                ceiling_height_m: "m",
+                precipitable_water_mm: "mm",
+                aerosol_optical_depth_thousandths: "thousandths",
+                albedo: "0-1",
+                liquid_precipitation_depth_mm: "mm"
             },
             data: {
                 hour_index: hourIndex,
                 dry_bulb_C: dry,
                 dew_point_C: dew,
-                relative_humidity_percent: rh
+                relative_humidity_percent: rh,
+                atmospheric_pressure_Pa: pressure,
+                horizontal_infrared_radiation_intensity_Wh_m2: horizontalIrSky,
+                global_horizontal_radiation_Wh_m2: ghi,
+                direct_normal_radiation_Wh_m2: dni,
+                diffuse_horizontal_radiation_Wh_m2: dhi,
+                global_horizontal_illuminance_lux: globalHorizontalIlluminance,
+                direct_normal_illuminance_lux: directNormalIlluminance,
+                diffuse_horizontal_illuminance_lux: diffuseHorizontalIlluminance,
+                zenith_luminance_cd_m2: zenithLuminance,
+                wind_direction_degrees: windDirection,
+                wind_speed_m_s: windSpeed,
+                total_sky_cover_tenths: totalSkyCover,
+                opaque_sky_cover_tenths: opaqueSkyCover,
+                visibility_km: visibility,
+                ceiling_height_m: ceilingHeight,
+                precipitable_water_mm: precipitableWater,
+                aerosol_optical_depth_thousandths: aerosolOpticalDepth,
+                albedo,
+                liquid_precipitation_depth_mm: liquidPrecipitationDepth
             }
         };
     }

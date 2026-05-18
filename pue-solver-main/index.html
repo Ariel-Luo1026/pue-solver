@@ -78,6 +78,45 @@
             cursor: not-allowed;
         }
 
+        .primaryButton {
+            min-width: 132px;
+            font-size: 15px;
+        }
+
+        .secondaryButton {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .hiddenControl {
+            display: none !important;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .advancedDetails {
+            margin-bottom: 14px;
+        }
+
+        .advancedDetails>summary {
+            cursor: pointer;
+            color: #374151;
+            font-weight: 700;
+            padding: 10px 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        .advancedDetails[open]>summary {
+            margin-bottom: 14px;
+        }
+
         .muted {
             color: #6b7280;
         }
@@ -162,6 +201,13 @@
             padding: 6px;
         }
 
+        .compactFields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
         .curvePreviewGrid {
             display: grid;
             grid-template-columns: 1fr;
@@ -234,17 +280,20 @@
 </head>
 
 <body>
-    <h1 style="margin:0 0 6px 0;">PUE Solver Dev v0.3（VS Code + Live Server + Pyodide）</h1>
+    <h1 style="margin:0 0 6px 0;">PUE Solver</h1>
     <p class="muted" style="margin:0 0 14px 0;">
-        你现在可以在 VS Code 里修改 <code>solver.py</code> / <code>ui.js</code>，保存后浏览器自动刷新并生效。
+        上传全年负载、天气和设备曲线，运行后查看 PUE 与能耗结果。
     </p>
+
+    <details class="advancedDetails">
+        <summary>高级：曲线库与 COP 曲面检查</summary>
 
     <div class="card">
         <h3 style="margin:0 0 10px 0;">曲线库（curves.json）</h3>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-            <button id="btnPickCurves">打开 curves.json（可写回）</button>
-            <button id="btnSaveCurves">保存回 curves.json</button>
-            <button id="btnExportCurves">导出 curves.json（下载）</button>
+        <div class="toolbar">
+            <button class="secondaryButton" id="btnPickCurves">打开 curves.json（可写回）</button>
+            <button class="secondaryButton" id="btnSaveCurves">保存回 curves.json</button>
+            <button class="secondaryButton" id="btnExportCurves">导出 curves.json（下载）</button>
             <span class="muted" id="curvesStatus">未选择文件（将使用内存库 + 导出下载）</span>
         </div>
     </div>
@@ -264,7 +313,7 @@
                             <div class="muted">从 curves.json / 标准化冷水机曲线读取</div>
                             <select id="copSurfaceSelect"></select>
                         </div>
-                        <button id="btnCopReloadSurface">刷新曲面</button>
+                        <button class="secondaryButton" id="btnCopReloadSurface">刷新曲面</button>
                     </div>
                     <div id="copMsg" class="hint"></div>
                     <div id="copSlices" class="hint"></div>
@@ -287,9 +336,52 @@
 
     </div>
 
+    </details>
+
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;">项目基本信息</h3>
+        <div class="fileGrid">
+            <div class="fileSlot">
+                <div class="panelTitle">项目名称</div>
+                <input id="projectNameInput" type="text" placeholder="例如：XX 数据中心 PUE 评估" />
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">项目地点</div>
+                <input id="projectLocationInput" type="text" placeholder="例如：上海 / Paris, France" />
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">IT 设计容量 (MW)</div>
+                <input id="projectCapacityMwInput" type="number" min="0" step="0.1" placeholder="例如：12" />
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">项目阶段</div>
+                <select id="projectStageInput">
+                    <option value="">Not specified</option>
+                    <option value="Concept Design">Concept Design</option>
+                    <option value="Schematic Design">Schematic Design</option>
+                    <option value="Design Development">Design Development</option>
+                    <option value="Construction Documents">Construction Documents</option>
+                    <option value="Operational Assessment">Operational Assessment</option>
+                </select>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">项目版本号</div>
+                <input id="projectVersionInput" type="text" value="v1.0" placeholder="例如：v1.0 / revA" />
+            </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px;">
+            <button class="secondaryButton" id="btnSaveProjectMemory">保存项目输入</button>
+            <button class="secondaryButton" id="btnLoadProjectMemory">恢复项目输入</button>
+            <button class="secondaryButton" id="btnDeleteProjectMemory">删除当前存档</button>
+            <select id="projectMemorySelect" style="max-width:320px;"></select>
+        </div>
+        <div id="projectInfoStatus" class="hint">用于报告标题和项目摘要，不参与 PUE 计算。</div>
+        <div id="projectMemoryStatus" class="hint">项目输入存档保存在当前浏览器本地。</div>
+    </div>
+
     <!-- ================= Standardized Data Inputs ================= -->
     <div class="card">
-        <h3 style="margin:0 0 10px 0;">标准化全年输入文件</h3>
+        <h3 style="margin:0 0 10px 0;">输入文件</h3>
         <div class="fileGrid">
             <div class="fileSlot">
                 <div class="panelTitle">1. IT负载全年曲线</div>
@@ -331,10 +423,48 @@
                 <input id="fileFans" type="file" accept=".json,.xlsx,.xls,.xml" />
                 <div id="statusFans" class="hint">未加载</div>
             </div>
+            <div class="fileSlot">
+                <div class="panelTitle">9. 日照得热负荷（报告展示）</div>
+                <div class="hint">仅用于报告说明，不参与 PUE 计算</div>
+                <div class="compactFields">
+                    <label class="muted">
+                        年得热 kWh
+                        <input id="solarGainAnnualKwh" type="number" min="0" step="1" placeholder="可选" />
+                    </label>
+                    <label class="muted">
+                        峰值得热 kW
+                        <input id="solarGainPeakKw" type="number" min="0" step="0.1" placeholder="可选" />
+                    </label>
+                </div>
+                <div id="statusSolarGain" class="hint">报告展示项：不会写入 solver 输入</div>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">10. 设备 PDF 参数表（报告展示）</div>
+                <div class="compactFields">
+                    <label class="muted">
+                        Dry Cooler PDF
+                        <input id="filePdfDryCooler" type="file" accept=".pdf" multiple />
+                    </label>
+                    <label class="muted">
+                        Chiller PDF
+                        <input id="filePdfChiller" type="file" accept=".pdf" multiple />
+                    </label>
+                    <label class="muted">
+                        Electrical PDF
+                        <input id="filePdfElectrical" type="file" accept=".pdf" multiple />
+                    </label>
+                    <label class="muted">
+                        Pump PDF
+                        <input id="filePdfPump" type="file" accept=".pdf" multiple />
+                    </label>
+                </div>
+                <div id="statusEquipmentPdf" class="hint">按设备类别上传规格书 PDF，参数仅用于报告展示</div>
+                <div id="equipmentPdfEditor" class="curvePreviewGrid" style="margin-top:10px;"></div>
+            </div>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:12px;">
-            <button id="btnLoadDemoData">加载演示全年数据</button>
-            <button id="btnBuildFromFiles">从文件生成Solver输入</button>
+        <div class="toolbar" style="margin-top:12px;">
+            <button class="secondaryButton" id="btnLoadDemoData">加载演示全年数据</button>
+            <button class="hiddenControl" id="btnBuildFromFiles">从文件生成Solver输入</button>
             <label class="muted" style="display:flex; gap:8px; align-items:center;">
                 Auxiliary Fixed Load系数
                 <input id="auxFixedCoeff" value="0.005" style="width:90px;" />
@@ -343,7 +473,7 @@
                 Dry cooler approach C
                 <input id="dryCoolerApproachC" value="5" style="width:70px;" />
             </label>
-            <span id="standardInputStatus" class="muted">文件输入优先于下方手写 JSON。</span>
+            <span id="standardInputStatus" class="muted">上传 IT 负载和天气后可直接运行。</span>
         </div>
         <div class="curvePreviewGrid">
             <div class="panel">
@@ -383,8 +513,9 @@
 
     <!-- ================= Run ================= -->
     <div class="card">
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-            <button id="btnRun" disabled>Run</button>
+        <div class="toolbar">
+            <button class="primaryButton" id="btnRun" disabled>运行计算</button>
+            <button class="secondaryButton" id="btnExportHtmlReport" disabled>导出 HTML 报告</button>
             <span id="status" class="muted">正在加载 Pyodide…</span>
             <span class="muted">（如果长时间卡住：检查网络能否访问 pyodide CDN）</span>
         </div>
@@ -392,6 +523,8 @@
     </div>
 
     <!-- ================= IO（仍然两列） ================= -->
+    <details class="advancedDetails">
+        <summary>高级：手写 JSON 与运行日志</summary>
     <div class="row">
         <div class="card">
             <h3 style="margin:0 0 10px 0;">输入 JSON</h3>
@@ -404,10 +537,17 @@
         </div>
     </div>
 
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;">Log</h3>
+        <pre id="log"></pre>
+    </div>
+    </details>
+
     <!-- ================= Results Visualization ================= -->
     <div class="card">
         <h3 style="margin:0 0 10px 0;">PUE 计算结果可视化</h3>
         <div id="resultsVisualization" style="display: none;">
+            <div class="calcBox" id="projectInfoReportPanel" style="display:none; margin-bottom:14px;"></div>
             <div class="calcBox" id="calculationPrinciple" style="margin-bottom:14px;"></div>
             <!-- Annual Summary Cards -->
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px;">
@@ -428,6 +568,8 @@
                     <div style="font-size: 20px; font-weight: bold; color: #7c3aed;" id="peakFacilityPower">-</div>
                 </div>
             </div>
+            <div class="calcBox" id="solarGainReportPanel" style="display:none; margin-bottom:14px;"></div>
+            <div class="calcBox" id="weatherReportPanel" style="display:none; margin-bottom:14px;"></div>
 
             <!-- Charts Row -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
@@ -488,17 +630,13 @@
         </div>
     </div>
 
-    <div class="card">
-        <h3 style="margin:0 0 10px 0;">Log</h3>
-        <pre id="log"></pre>
-    </div>
-
     <!-- Pyodide -->
     <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-dragdata@2.3.1"></script>
     <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <!-- App -->
     <script src="./import_adapter.js"></script>
     <script src="./ui.js"></script>

@@ -5,6 +5,7 @@ const elLog = document.getElementById("log");
 const elIn = document.getElementById("jsonInput");
 const elOut = document.getElementById("jsonOutput");
 const btnRun = document.getElementById("btnRun");
+const btnExportHtmlReport = document.getElementById("btnExportHtmlReport");
 const elSolverDataStatus = document.getElementById("solverDataStatus");
 const resultCharts = {};
 const standardDataFiles = {
@@ -17,6 +18,9 @@ const standardDataFiles = {
     fans: null
 };
 let standardSolverInput = null;
+let preferStandardFiles = false;
+let lastReportContext = null;
+const equipmentPdfSpecs = {};
 
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
@@ -46,6 +50,1119 @@ function destroyResultCharts() {
 function setText(id, text) {
     const el = document.getElementById(id);
     if (el) el.textContent = text;
+}
+
+function getProjectReportInfo() {
+    const stageMap = {
+        "概念设计": "Concept Design",
+        "方案设计": "Schematic Design",
+        "初步设计": "Design Development",
+        "施工图设计": "Construction Documents",
+        "运行评估": "Operational Assessment"
+    };
+    const textValue = (id) => {
+        const el = document.getElementById(id);
+        return el && el.value ? el.value.trim() : "";
+    };
+    const capacityRaw = optionalNonNegativeNumber("projectCapacityMwInput");
+    const stage = textValue("projectStageInput");
+    return {
+        name: textValue("projectNameInput"),
+        location: textValue("projectLocationInput"),
+        capacityMw: capacityRaw,
+        stage: stageMap[stage] || stage,
+        version: textValue("projectVersionInput") || "v1.0"
+    };
+}
+
+function updateProjectInfoStatus() {
+    const status = document.getElementById("projectInfoStatus");
+    if (!status) return;
+    const info = getProjectReportInfo();
+    const parts = [];
+    if (info.name) parts.push(info.name);
+    if (info.location) parts.push(info.location);
+    if (info.capacityMw !== null) parts.push(`${fmtNumber(info.capacityMw, 1)} MW`);
+    if (info.stage) parts.push(info.stage);
+    if (info.version) parts.push(info.version);
+    status.textContent = parts.length
+        ? `${parts.join(" / ")}；仅用于报告展示`
+        : "用于报告标题和项目摘要，不参与 PUE 计算。";
+    status.style.color = parts.length ? "#059669" : "#6b7280";
+}
+
+function renderProjectInfoReportPanel() {
+    const panel = document.getElementById("projectInfoReportPanel");
+    if (!panel) return;
+    const info = getProjectReportInfo();
+    const rows = [
+        ["项目名称", info.name],
+        ["项目地点", info.location],
+        ["IT 设计容量", info.capacityMw !== null ? `${fmtNumber(info.capacityMw, 1)} MW` : ""],
+        ["项目阶段", info.stage]
+    ].filter(([, value]) => value !== "");
+    if (!rows.length) {
+        panel.style.display = "none";
+        panel.innerHTML = "";
+        return;
+    }
+    panel.style.display = "block";
+    panel.innerHTML =
+        "<b>项目基本信息</b><br>" +
+        rows.map(([label, value]) => `${label}：<b>${value}</b>`).join("；") +
+        "。该信息用于报告识别和规模说明，不参与 PUE 计算。";
+}
+
+function optionalNonNegativeNumber(id) {
+    const el = document.getElementById(id);
+    if (!el || el.value === "") return null;
+    const value = Number(el.value);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function getSolarGainReportInput() {
+    return {
+        annualKwh: optionalNonNegativeNumber("solarGainAnnualKwh"),
+        peakKw: optionalNonNegativeNumber("solarGainPeakKw")
+    };
+}
+
+function updateSolarGainStatus() {
+    const status = document.getElementById("statusSolarGain");
+    if (!status) return;
+    const solar = getSolarGainReportInput();
+    if (solar.annualKwh === null && solar.peakKw === null) {
+        status.textContent = "报告展示项：不会写入 solver 输入";
+        status.style.color = "#6b7280";
+        return;
+    }
+    const parts = [];
+    if (solar.annualKwh !== null) parts.push(`年得热 ${fmtInteger(solar.annualKwh)} kWh`);
+    if (solar.peakKw !== null) parts.push(`峰值得热 ${fmtNumber(solar.peakKw, 1)} kW`);
+    status.textContent = `${parts.join("，")}；仅用于报告展示`;
+    status.style.color = "#059669";
+}
+
+function refreshRestoredFileStatuses() {
+    updateFileStatus("statusItLoad", standardDataFiles.itLoad ? "已从本地存档恢复" : "未加载", standardDataFiles.itLoad ? "ok" : "info");
+    updateFileStatus("statusWeather", standardDataFiles.weather ? "已从本地存档恢复" : "未加载", standardDataFiles.weather ? "ok" : "info");
+    updateFileStatus("statusDryCooler", standardDataFiles.dryCooler ? "已从本地存档恢复" : "未加载", standardDataFiles.dryCooler ? "ok" : "info");
+    updateFileStatus("statusChiller", standardDataFiles.chiller ? "已从本地存档恢复" : "未加载", standardDataFiles.chiller ? "ok" : "info");
+    updateFileStatus("statusElectrical", standardDataFiles.electrical ? "已从本地存档恢复" : "未加载", standardDataFiles.electrical ? "ok" : "info");
+    updateFileStatus("statusPumps", standardDataFiles.pumps ? "已从本地存档恢复" : "未加载", standardDataFiles.pumps ? "ok" : "info");
+    updateFileStatus("statusFans", standardDataFiles.fans ? "已从本地存档恢复" : "未加载", standardDataFiles.fans ? "ok" : "info");
+}
+
+function renderSolarGainReportPanel() {
+    const panel = document.getElementById("solarGainReportPanel");
+    if (!panel) return;
+    const solar = getSolarGainReportInput();
+    if (solar.annualKwh === null && solar.peakKw === null) {
+        panel.style.display = "none";
+        panel.innerHTML = "";
+        return;
+    }
+    const values = [];
+    if (solar.annualKwh !== null) values.push(`年日照得热量：<b>${fmtInteger(solar.annualKwh)} kWh</b>`);
+    if (solar.peakKw !== null) values.push(`峰值日照得热：<b>${fmtNumber(solar.peakKw, 1)} kW</b>`);
+    panel.style.display = "block";
+    panel.innerHTML =
+        "<b>报告补充：日照得热负荷</b><br>" +
+        values.join("；") +
+        "。该项仅作为围护结构/外部热扰动背景说明，未写入 solver 输入，也不参与 PUE、设施能耗、冷源能耗或峰值小时计算。";
+}
+
+function summarizeNumericArray(values) {
+    const nums = Array.isArray(values) ? values.map(Number).filter(Number.isFinite) : [];
+    if (!nums.length) return null;
+    const sum = nums.reduce((total, value) => total + value, 0);
+    return {
+        count: nums.length,
+        min: Math.min(...nums),
+        max: Math.max(...nums),
+        avg: sum / nums.length,
+        sum
+    };
+}
+
+function renderWeatherReportPanel() {
+    const panel = document.getElementById("weatherReportPanel");
+    if (!panel) return;
+    const weather = standardDataFiles.weather || {};
+    const data = weather.data || weather.hourly_data || {};
+    const source = String(weather.source_format || "").toLowerCase();
+    const dry = summarizeNumericArray(data.dry_bulb_C);
+    const rh = summarizeNumericArray(data.relative_humidity_percent);
+    const ghi = summarizeNumericArray(data.global_horizontal_radiation_Wh_m2);
+    const dni = summarizeNumericArray(data.direct_normal_radiation_Wh_m2);
+    const wind = summarizeNumericArray(data.wind_speed_m_s);
+    const pressure = summarizeNumericArray(data.atmospheric_pressure_Pa);
+    if (!dry && !ghi && !wind) {
+        panel.style.display = "none";
+        panel.innerHTML = "";
+        return;
+    }
+
+    const location = weather.location || {};
+    const place = [location.city, location.state_or_region, location.country].filter(Boolean).join(", ");
+    const items = [];
+    if (place) items.push(`地点：<b>${place}</b>`);
+    if (source) items.push(`来源：<b>${source.toUpperCase()}</b>`);
+    if (dry) items.push(`干球温度：<b>${fmtNumber(dry.min, 1)}-${fmtNumber(dry.max, 1)} °C</b>，平均 <b>${fmtNumber(dry.avg, 1)} °C</b>`);
+    if (rh) items.push(`相对湿度：平均 <b>${fmtNumber(rh.avg, 0)}%</b>`);
+    if (ghi) items.push(`全年全球水平太阳辐射：<b>${fmtInteger(ghi.sum / 1000)} kWh/m²</b>，峰值 <b>${fmtInteger(ghi.max)} W/m²</b>`);
+    if (dni) items.push(`峰值法向直射辐射：<b>${fmtInteger(dni.max)} W/m²</b>`);
+    if (wind) items.push(`风速：平均 <b>${fmtNumber(wind.avg, 1)} m/s</b>，最大 <b>${fmtNumber(wind.max, 1)} m/s</b>`);
+    if (pressure) items.push(`平均气压：<b>${fmtInteger(pressure.avg)} Pa</b>`);
+
+    panel.style.display = "block";
+    panel.innerHTML =
+        "<b>报告补充：EPW 气象信息</b><br>" +
+        items.join("；") +
+        "。这些信息用于解释气候背景和太阳得热风险，当前不参与 PUE 计算。";
+}
+
+function classifyEquipmentCategory(text, filename = "") {
+    const hay = `${filename} ${text}`.toLowerCase();
+    if (/chiller|冷水机|cop|centrifugal/.test(hay)) return "Chiller COP Surface";
+    if (/dry\s*cooler|干冷|adiabatic|fluid cooler/.test(hay)) return "Dry Cooler";
+    if (/pump|水泵|chw|cw pump/.test(hay)) return "Pumps";
+    if (/fan|terminal|末端|airflow|ahu|crac|cra h/.test(hay)) return "Terminal Fans";
+    if (/ups|transformer|electrical|switchgear|配电|变压器/.test(hay)) return "Electrical";
+    return "General Equipment";
+}
+
+function firstRegex(text, patterns) {
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match) return match[1] || match[0];
+    }
+    return "";
+}
+
+function extractEquipmentParameters(text, filename = "") {
+    const compact = text.replace(/\s+/g, " ");
+    const rows = [
+        ["Model / Series", firstRegex(compact, [
+            /(?:model|series|type)\s*[:#-]?\s*([A-Z0-9][A-Z0-9._/\-\s]{2,40})/i,
+            /(?:型号|系列)\s*[:：]?\s*([A-Z0-9][A-Z0-9._/\-\s]{2,40})/i
+        ]) || filename.replace(/\.pdf$/i, "")],
+        ["Capacity", firstRegex(compact, [
+            /(?:cooling\s*)?capacity\s*[:=]?\s*([0-9,.]+\s*(?:kW|MW|RT|tons?))/i,
+            /(?:制冷量|冷量|容量)\s*[:：]?\s*([0-9,.]+\s*(?:kW|MW|RT|冷吨))/i
+        ])],
+        ["Power / Efficiency", firstRegex(compact, [
+            /(?:power|input power|fan power|pump power)\s*[:=]?\s*([0-9,.]+\s*kW)/i,
+            /(?:COP|EER|efficiency|η)\s*[:=]?\s*([0-9,.]+%?)/i,
+            /(?:功率|效率)\s*[:：]?\s*([0-9,.]+%?\s*(?:kW)?)/i
+        ])],
+        ["Electrical", firstRegex(compact, [
+            /(?:voltage|power supply)\s*[:=]?\s*([0-9,.]+\s*V(?:\s*\/\s*[0-9]+\s*Hz)?)/i,
+            /(?:电压|电源)\s*[:：]?\s*([0-9,.]+\s*V(?:\s*\/\s*[0-9]+\s*Hz)?)/i
+        ])],
+        ["Flow / Temperature", firstRegex(compact, [
+            /(?:flow|airflow|water flow)\s*[:=]?\s*([0-9,.]+\s*(?:m3\/h|m³\/h|L\/s|gpm|cfm))/i,
+            /(?:supply|return|leaving|entering)[^.;]{0,24}?([0-9,.]+\s*°?\s*C)/i,
+            /(?:流量|风量|水量)\s*[:：]?\s*([0-9,.]+\s*(?:m3\/h|m³\/h|L\/s))/i
+        ])]
+    ].filter(([, value]) => value).slice(0, 4);
+    return rows.length ? rows : [["Source", filename || "Uploaded PDF"], ["Extraction", "No structured parameters found"]];
+}
+
+function setEquipmentSpecRows(category, specIndex, rows) {
+    equipmentPdfSpecs[category] = equipmentPdfSpecs[category] || [];
+    equipmentPdfSpecs[category][specIndex] = equipmentPdfSpecs[category][specIndex] || { sourceFile: "Manual entry", rows: [] };
+    equipmentPdfSpecs[category][specIndex].rows = rows;
+}
+
+function renderEquipmentPdfEditor() {
+    const root = document.getElementById("equipmentPdfEditor");
+    if (!root) return;
+    const categories = ["Dry Cooler", "Chiller COP Surface", "Electrical", "Pumps"];
+    const blocks = categories
+        .filter(category => Array.isArray(equipmentPdfSpecs[category]) && equipmentPdfSpecs[category].length)
+        .map(category => {
+            const spec = equipmentPdfSpecs[category][0];
+            const rows = [...(spec.rows || [])];
+            while (rows.length < 4) rows.push(["", ""]);
+            return `
+                <div class="panel">
+                    <div class="panelTitle">${category} reference equipment parameter</div>
+                    <div class="hint">Source: ${esc(spec.sourceFile || "Manual entry")} · 自动预填，可手动修正；报告使用这里的内容。</div>
+                    <div style="display:grid; grid-template-columns: 1fr 1.5fr; gap:8px; margin-top:8px;">
+                        ${rows.slice(0, 4).map(([label, value], i) => `
+                            <input data-equipment-param="${esc(category)}" data-spec-index="0" data-row-index="${i}" data-field="label" value="${esc(label)}" placeholder="Parameter name" />
+                            <input data-equipment-param="${esc(category)}" data-spec-index="0" data-row-index="${i}" data-field="value" value="${esc(value)}" placeholder="Value" />
+                        `).join("")}
+                    </div>
+                </div>
+            `;
+        }).join("");
+    root.innerHTML = blocks;
+    root.querySelectorAll("[data-equipment-param]").forEach(input => {
+        input.addEventListener("input", () => {
+            const category = input.getAttribute("data-equipment-param");
+            const specIndex = Number(input.getAttribute("data-spec-index"));
+            const rows = [];
+            root.querySelectorAll("[data-equipment-param]").forEach(el => {
+                if (el.getAttribute("data-equipment-param") !== category) return;
+                if (Number(el.getAttribute("data-spec-index")) !== specIndex) return;
+                const rowIndex = Number(el.getAttribute("data-row-index"));
+                const field = el.getAttribute("data-field");
+                rows[rowIndex] = rows[rowIndex] || ["", ""];
+                rows[rowIndex][field === "label" ? 0 : 1] = el.value;
+            });
+            setEquipmentSpecRows(category, specIndex, rows.filter(([label, value]) => label || value));
+        });
+    });
+}
+
+async function readPdfText(file) {
+    if (!window.pdfjsLib) throw new Error("PDF.js is not loaded.");
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+    const buffer = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+    const pages = [];
+    const maxPages = Math.min(pdf.numPages, 8);
+    for (let pageNo = 1; pageNo <= maxPages; pageNo++) {
+        const page = await pdf.getPage(pageNo);
+        const content = await page.getTextContent();
+        pages.push(content.items.map(item => item.str).join(" "));
+    }
+    return pages.join("\n");
+}
+
+async function handleEquipmentPdfFiles(files, forcedCategory = "") {
+    const status = document.getElementById("statusEquipmentPdf");
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    if (status) {
+        status.textContent = "正在解析 PDF 参数...";
+        status.style.color = "#6b7280";
+    }
+    let parsed = 0;
+    for (const file of list) {
+        try {
+            const text = await readPdfText(file);
+            const category = forcedCategory || classifyEquipmentCategory(text, file.name);
+            equipmentPdfSpecs[category] = equipmentPdfSpecs[category] || [];
+            equipmentPdfSpecs[category].push({
+                sourceFile: file.name,
+                rows: extractEquipmentParameters(text, file.name)
+            });
+            parsed += 1;
+        } catch (e) {
+            equipmentPdfSpecs["General Equipment"] = equipmentPdfSpecs["General Equipment"] || [];
+            equipmentPdfSpecs["General Equipment"].push({
+                sourceFile: file.name,
+                rows: [["PDF Parse Error", String(e.message || e)]]
+            });
+        }
+    }
+    if (status) {
+        status.textContent = `已解析 ${parsed}/${list.length} 个 ${forcedCategory || "设备"} PDF；参数仅用于报告展示`;
+        status.style.color = parsed ? "#059669" : "#dc2626";
+    }
+    renderEquipmentPdfEditor();
+}
+
+function equipmentSpecHtml(category) {
+    const specs = equipmentPdfSpecs[category] || equipmentPdfSpecs["General Equipment"] || [];
+    if (!specs.length) {
+        return `<div class="specBlock"><b>Reference equipment parameter:</b> Not provided.</div>`;
+    }
+    return specs.slice(0, 2).map(spec => `
+        <div class="specBlock">
+            <b>Reference equipment parameter:</b> ${esc(spec.sourceFile)}
+            <table class="mini"><tbody>${tableRows(spec.rows.slice(0, 4).map(([label, value]) => [label, esc(value)]))}</tbody></table>
+        </div>
+    `).join("");
+}
+
+function projectMemoryKey(name, version) {
+    const clean = value => String(value || "").trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5._-]+/g, "-").replace(/^-|-$/g, "");
+    return `pueSolverProject:${clean(name) || "untitled"}:${clean(version) || "v1.0"}`;
+}
+
+function projectMemoryLabelFromKey(key) {
+    return key.replace(/^pueSolverProject:/, "").replace(/:/g, " / ");
+}
+
+function getProjectMemoryKeys() {
+    return Object.keys(localStorage)
+        .filter(key => key.startsWith("pueSolverProject:"))
+        .sort();
+}
+
+function updateProjectMemorySelect() {
+    const select = document.getElementById("projectMemorySelect");
+    if (!select) return;
+    const keys = getProjectMemoryKeys();
+    select.innerHTML = "";
+    if (!keys.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "暂无本地存档";
+        select.appendChild(opt);
+        return;
+    }
+    keys.forEach(key => {
+        const opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = projectMemoryLabelFromKey(key);
+        select.appendChild(opt);
+    });
+}
+
+function setProjectMemoryStatus(text, tone = "info") {
+    const el = document.getElementById("projectMemoryStatus");
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = tone === "error" ? "#dc2626" : tone === "ok" ? "#059669" : "#6b7280";
+}
+
+function collectProjectMemoryPayload() {
+    return {
+        saved_at: new Date().toISOString(),
+        project_info: {
+            name: document.getElementById("projectNameInput")?.value || "",
+            location: document.getElementById("projectLocationInput")?.value || "",
+            capacity_mw: document.getElementById("projectCapacityMwInput")?.value || "",
+            stage: document.getElementById("projectStageInput")?.value || "",
+            version: document.getElementById("projectVersionInput")?.value || "v1.0"
+        },
+        report_only_inputs: {
+            solar_gain_annual_kwh: document.getElementById("solarGainAnnualKwh")?.value || "",
+            solar_gain_peak_kw: document.getElementById("solarGainPeakKw")?.value || "",
+            aux_fixed_coeff: document.getElementById("auxFixedCoeff")?.value || "0.005",
+            dry_cooler_approach_c: document.getElementById("dryCoolerApproachC")?.value || "5"
+        },
+        standard_data_files: standardDataFiles,
+        standard_solver_input: standardSolverInput,
+        curve_lib: window.curveLib || null,
+        equipment_pdf_specs: equipmentPdfSpecs
+    };
+}
+
+function saveProjectMemory() {
+    const info = getProjectReportInfo();
+    const key = projectMemoryKey(info.name, info.version);
+    try {
+        localStorage.setItem(key, JSON.stringify(collectProjectMemoryPayload()));
+        updateProjectMemorySelect();
+        const select = document.getElementById("projectMemorySelect");
+        if (select) select.value = key;
+        setProjectMemoryStatus(`已保存项目输入：${projectMemoryLabelFromKey(key)}`, "ok");
+    } catch (e) {
+        setProjectMemoryStatus(`保存失败：${String(e.message || e)}`, "error");
+    }
+}
+
+function restoreProjectMemory(key = "") {
+    const select = document.getElementById("projectMemorySelect");
+    const memoryKey = key || (select && select.value);
+    if (!memoryKey) {
+        setProjectMemoryStatus("没有可恢复的项目存档。", "error");
+        return;
+    }
+    try {
+        const payload = JSON.parse(localStorage.getItem(memoryKey) || "{}");
+        const info = payload.project_info || {};
+        const report = payload.report_only_inputs || {};
+        if (document.getElementById("projectNameInput")) document.getElementById("projectNameInput").value = info.name || "";
+        if (document.getElementById("projectLocationInput")) document.getElementById("projectLocationInput").value = info.location || "";
+        if (document.getElementById("projectCapacityMwInput")) document.getElementById("projectCapacityMwInput").value = info.capacity_mw || "";
+        if (document.getElementById("projectStageInput")) document.getElementById("projectStageInput").value = info.stage || "";
+        if (document.getElementById("projectVersionInput")) document.getElementById("projectVersionInput").value = info.version || "v1.0";
+        if (document.getElementById("solarGainAnnualKwh")) document.getElementById("solarGainAnnualKwh").value = report.solar_gain_annual_kwh || "";
+        if (document.getElementById("solarGainPeakKw")) document.getElementById("solarGainPeakKw").value = report.solar_gain_peak_kw || "";
+        if (document.getElementById("auxFixedCoeff")) document.getElementById("auxFixedCoeff").value = report.aux_fixed_coeff || "0.005";
+        if (document.getElementById("dryCoolerApproachC")) document.getElementById("dryCoolerApproachC").value = report.dry_cooler_approach_c || "5";
+
+        Object.keys(standardDataFiles).forEach(key => { standardDataFiles[key] = payload.standard_data_files?.[key] || null; });
+        standardSolverInput = payload.standard_solver_input || null;
+        preferStandardFiles = Boolean(standardSolverInput || standardDataFiles.itLoad || standardDataFiles.weather);
+        window.curveLib = payload.curve_lib || window.curveLib || { curves_1d: {}, cop_surfaces: {} };
+        Object.keys(equipmentPdfSpecs).forEach(key => delete equipmentPdfSpecs[key]);
+        Object.assign(equipmentPdfSpecs, payload.equipment_pdf_specs || {});
+        renderEquipmentPdfEditor();
+
+        if (standardSolverInput) elIn.value = pretty(standardSolverInput);
+        refreshRestoredFileStatuses();
+        previewInputCurves(standardDataFiles);
+        refreshStandardInputStatus();
+        updateProjectInfoStatus();
+        updateSolarGainStatus();
+        renderProjectInfoReportPanel();
+        renderSolarGainReportPanel();
+        renderWeatherReportPanel();
+        setProjectMemoryStatus(`已恢复项目输入：${projectMemoryLabelFromKey(memoryKey)}`, "ok");
+    } catch (e) {
+        setProjectMemoryStatus(`恢复失败：${String(e.message || e)}`, "error");
+    }
+}
+
+function deleteProjectMemory() {
+    const select = document.getElementById("projectMemorySelect");
+    const key = select && select.value;
+    if (!key) {
+        setProjectMemoryStatus("没有可删除的项目存档。", "error");
+        return;
+    }
+    localStorage.removeItem(key);
+    updateProjectMemorySelect();
+    setProjectMemoryStatus(`已删除项目存档：${projectMemoryLabelFromKey(key)}`, "ok");
+}
+
+function esc(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function plainNumber(value, digits = 2) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return null;
+    return Number(value).toLocaleString("en-US", {
+        maximumFractionDigits: digits,
+        minimumFractionDigits: digits
+    });
+}
+
+function reportValue(value, suffix = "", digits = 2) {
+    const formatted = plainNumber(value, digits);
+    return formatted === null ? "N/A" : `${formatted}${suffix}`;
+}
+
+function monthName(index) {
+    return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][index] || `M${index + 1}`;
+}
+
+function groupHourlyByMonth(hourly, picker) {
+    const monthHours = [744, 672, 744, 720, 744, 720, 744, 744, 720, 744, 720, 744];
+    let start = 0;
+    return monthHours.map((count, index) => {
+        const rows = hourly.slice(start, start + count);
+        start += count;
+        const values = rows.map(picker).filter(v => Number.isFinite(Number(v))).map(Number);
+        const avg = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+        return { month: monthName(index), value: avg };
+    });
+}
+
+function tableRows(rows) {
+    return rows.map(([label, value]) => `<tr><th>${esc(label)}</th><td>${value}</td></tr>`).join("");
+}
+
+function linearTicks(min, max, count = 5) {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+    if (Math.abs(max - min) < 1e-12) return [min];
+    return Array.from({ length: count }, (_, i) => min + (max - min) * (i / (count - 1)));
+}
+
+function svgGrid(width, height, pad, xTicks, yTicks, sx, sy) {
+    const vertical = xTicks.map(t => {
+        const x = sx(t);
+        return `<line x1="${x.toFixed(1)}" y1="${pad}" x2="${x.toFixed(1)}" y2="${height - pad}" class="gridLine" />
+                <text x="${x.toFixed(1)}" y="${height - pad + 18}" text-anchor="middle" class="tick">${reportValue(t, "", 1)}</text>`;
+    }).join("");
+    const horizontal = yTicks.map(t => {
+        const y = sy(t);
+        return `<line x1="${pad}" y1="${y.toFixed(1)}" x2="${width - pad}" y2="${y.toFixed(1)}" class="gridLine" />
+                <text x="${pad - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="tick">${reportValue(t, "", 1)}</text>`;
+    }).join("");
+    return vertical + horizontal;
+}
+
+function svgTracer(x, y, width, height, pad, label = "") {
+    return `
+        <line x1="${x.toFixed(1)}" y1="${pad}" x2="${x.toFixed(1)}" y2="${height - pad}" class="traceLine" />
+        <line x1="${pad}" y1="${y.toFixed(1)}" x2="${width - pad}" y2="${y.toFixed(1)}" class="traceLine" />
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" class="tracePoint" />
+        ${label ? `<text x="${Math.min(width - pad - 6, x + 8).toFixed(1)}" y="${Math.max(pad + 14, y - 8).toFixed(1)}" class="traceLabel">${esc(label)}</text>` : ""}
+    `;
+}
+
+function svgLineChart(series, opts = {}) {
+    const width = opts.width || 920;
+    const height = opts.height || 280;
+    const pad = 42;
+    const values = (series || []).map(Number).filter(Number.isFinite);
+    if (values.length < 2) return `<div class="empty">Not enough data</div>`;
+    const sampleEvery = Math.max(1, Math.ceil(values.length / (opts.maxPoints || 700)));
+    const sampled = values.filter((_, i) => i % sampleEvery === 0 || i === values.length - 1);
+    const min = opts.min ?? Math.min(...sampled);
+    const max = opts.max ?? Math.max(...sampled);
+    const span = Math.max(max - min, 1e-9);
+    const xMax = Math.max(values.length - 1, 1);
+    const sx = x => pad + (x / xMax) * (width - pad * 2);
+    const sy = value => height - pad - ((value - min) / span) * (height - pad * 2);
+    const sampledWithIndex = values
+        .map((value, index) => ({ value, index }))
+        .filter((_, i) => i % sampleEvery === 0 || i === values.length - 1);
+    const points = sampledWithIndex.map(({ value, index }) => `${sx(index).toFixed(1)},${sy(value).toFixed(1)}`).join(" ");
+    const maxPoint = values.reduce((best, value, index) => value > best.value ? { value, index } : best, { value: -Infinity, index: 0 });
+    const xTicks = linearTicks(0, xMax, 6);
+    const yTicks = linearTicks(min, max, 5);
+    return `
+        <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "line chart")}">
+            ${svgGrid(width, height, pad, xTicks, yTicks, sx, sy)}
+            <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis" />
+            <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
+            <text x="${pad}" y="${pad - 12}" class="tick">${esc(opts.yLabel || "")}</text>
+            <text x="${width - pad}" y="${height - 12}" text-anchor="end" class="tick">${esc(opts.xLabel || "")}</text>
+            <polyline points="${points}" class="line" />
+            ${svgTracer(sx(maxPoint.index), sy(maxPoint.value), width, height, pad, `max ${reportValue(maxPoint.value, "", 2)}`)}
+        </svg>`;
+}
+
+function svgBarChart(items, opts = {}) {
+    const width = opts.width || 920;
+    const height = opts.height || 280;
+    const pad = 42;
+    const rows = (items || []).filter(item => Number.isFinite(Number(item.value)));
+    if (!rows.length) return `<div class="empty">Not enough data</div>`;
+    const max = Math.max(...rows.map(item => Number(item.value)), 1);
+    const barGap = 8;
+    const barWidth = (width - pad * 2 - barGap * (rows.length - 1)) / rows.length;
+    const bars = rows.map((item, i) => {
+        const value = Number(item.value);
+        const h = ((height - pad * 2) * value) / max;
+        const x = pad + i * (barWidth + barGap);
+        const y = height - pad - h;
+        return `
+            <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, barWidth).toFixed(1)}" height="${h.toFixed(1)}" class="bar" />
+            <text x="${(x + barWidth / 2).toFixed(1)}" y="${height - 16}" text-anchor="middle" class="tick">${esc(item.label)}</text>`;
+    }).join("");
+    return `
+        <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "bar chart")}">
+            <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis" />
+            <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
+            <text x="${pad}" y="${pad - 12}" class="tick">${esc(opts.yLabel || "")}</text>
+            <text x="${pad + 4}" y="${pad + 12}" class="tick">${reportValue(max, "", 2)}</text>
+            ${bars}
+        </svg>`;
+}
+
+function svgXYLineChart(points, opts = {}) {
+    const width = opts.width || 920;
+    const height = opts.height || 280;
+    const pad = 42;
+    const pts = curvePoints2d(points);
+    if (pts.length < 2) return `<div class="empty">Not enough data</div>`;
+    const xMin = Math.min(...pts.map(p => p[0]));
+    const xMax = Math.max(...pts.map(p => p[0]));
+    const yMin = Math.min(...pts.map(p => p[1]));
+    const yMax = Math.max(...pts.map(p => p[1]));
+    const sx = value => pad + ((value - xMin) / Math.max(xMax - xMin, 1e-9)) * (width - pad * 2);
+    const sy = value => height - pad - ((value - yMin) / Math.max(yMax - yMin, 1e-9)) * (height - pad * 2);
+    const poly = pts.map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
+    const maxPoint = pts.reduce((best, point) => point[1] > best[1] ? point : best, pts[0]);
+    const xTicks = linearTicks(xMin, xMax, 6);
+    const yTicks = linearTicks(yMin, yMax, 5);
+    return `
+        <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "curve chart")}">
+            ${svgGrid(width, height, pad, xTicks, yTicks, sx, sy)}
+            <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis" />
+            <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
+            <text x="${pad}" y="${pad - 12}" class="tick">${esc(opts.yLabel || "")}</text>
+            <text x="${width - pad}" y="${height - 12}" text-anchor="end" class="tick">${esc(opts.xLabel || "")}</text>
+            <polyline points="${poly}" class="line" />
+            ${svgTracer(sx(maxPoint[0]), sy(maxPoint[1]), width, height, pad, `max ${reportValue(maxPoint[1], "", 2)}`)}
+        </svg>`;
+}
+
+function svgMultiCurveChart(curves, opts = {}) {
+    const width = opts.width || 920;
+    const height = opts.height || 300;
+    const pad = 46;
+    const prepared = (curves || [])
+        .map(curve => ({ ...curve, points: curvePoints2d(curve.points || []) }))
+        .filter(curve => curve.points.length >= 2);
+    if (!prepared.length) return `<div class="empty">Not enough data</div>`;
+    const all = prepared.flatMap(curve => curve.points);
+    const xMin = Math.min(...all.map(p => p[0]));
+    const xMax = Math.max(...all.map(p => p[0]));
+    const yMin = Math.min(...all.map(p => p[1]));
+    const yMax = Math.max(...all.map(p => p[1]));
+    const sx = value => pad + ((value - xMin) / Math.max(xMax - xMin, 1e-9)) * (width - pad * 2);
+    const sy = value => height - pad - ((value - yMin) / Math.max(yMax - yMin, 1e-9)) * (height - pad * 2);
+    const colors = ["#2563EB", "#059669", "#DC2626", "#7C3AED", "#EA580C", "#0891B2", "#DB2777", "#65A30D"];
+    const lines = prepared.map((curve, i) => {
+        const pts = curve.points.map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
+        return `<polyline points="${pts}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="2.2" />`;
+    }).join("");
+    const legend = prepared.map((curve, i) =>
+        `<span class="legendItem"><span style="color:${colors[i % colors.length]}">■</span> ${esc(curve.curveId)}</span>`
+    ).join("");
+    const maxPoint = all.reduce((best, point) => point[1] > best[1] ? point : best, all[0]);
+    const xTicks = linearTicks(xMin, xMax, 6);
+    const yTicks = linearTicks(yMin, yMax, 5);
+    return `
+        <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "multi curve chart")}">
+            ${svgGrid(width, height, pad, xTicks, yTicks, sx, sy)}
+            <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis" />
+            <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
+            <text x="${pad}" y="${pad - 14}" class="tick">${esc(opts.yLabel || "curve output")}</text>
+            <text x="${width - pad}" y="${height - 14}" text-anchor="end" class="tick">${esc(opts.xLabel || "curve input")}</text>
+            ${lines}
+            ${svgTracer(sx(maxPoint[0]), sy(maxPoint[1]), width, height, pad, `max ${reportValue(maxPoint[1], "", 2)}`)}
+        </svg>
+        <div class="legend">${legend}</div>`;
+}
+
+function curvePoints2d(points) {
+    return Array.isArray(points)
+        ? points
+            .filter(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1])))
+            .map(p => [Number(p[0]), Number(p[1])])
+            .sort((a, b) => a[0] - b[0])
+        : [];
+}
+
+function curvePoints3d(points) {
+    return Array.isArray(points)
+        ? points
+            .filter(p => Array.isArray(p) && p.length >= 3 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1])) && Number.isFinite(Number(p[2])))
+            .map(p => [Number(p[0]), Number(p[1]), Number(p[2])])
+        : [];
+}
+
+function collectReportCurves() {
+    const rows = [];
+    const add2dCurve = (category, sourceFile, curve) => {
+        const points = curvePoints2d(curve?.points || curve?.data);
+        if (!points.length) return;
+        const xs = points.map(p => p[0]);
+        const ys = points.map(p => p[1]);
+        rows.push({
+            category,
+            sourceFile: sourceFile || "N/A",
+            curveId: curve.curve_id || curve.id || category,
+            xAxis: curve.x_axis || "x",
+            yAxis: curve.output || curve.y_axis || "y",
+            pointCount: points.length,
+            xMin: Math.min(...xs),
+            xMax: Math.max(...xs),
+            yMin: Math.min(...ys),
+            yMax: Math.max(...ys),
+            points
+        });
+    };
+    const addCurveList = (category, file) => {
+        if (!file) return;
+        if (Array.isArray(file.curves)) file.curves.forEach(curve => add2dCurve(category, file.source_file, curve));
+        else add2dCurve(category, file.source_file, file);
+    };
+    addCurveList("Dry Cooler", standardDataFiles.dryCooler);
+    addCurveList("Electrical", standardDataFiles.electrical);
+    addCurveList("Pumps", standardDataFiles.pumps);
+    addCurveList("Terminal Fans", standardDataFiles.fans);
+
+    const chiller = standardDataFiles.chiller;
+    const chillerPoints = curvePoints3d(chiller?.points || chiller?.data);
+    if (chillerPoints.length) {
+        const xs = chillerPoints.map(p => p[0]);
+        const ys = chillerPoints.map(p => p[1]);
+        const zs = chillerPoints.map(p => p[2]);
+        rows.push({
+            category: "Chiller COP Surface",
+            sourceFile: chiller.source_file || "N/A",
+            curveId: chiller.curve_id || "chiller_COP_H_vs_load",
+            xAxis: chiller.x_axis || "condenser_entering_water_C",
+            yAxis: chiller.y_axis || "load_ratio",
+            zAxis: chiller.output || "COP",
+            pointCount: chillerPoints.length,
+            xMin: Math.min(...xs),
+            xMax: Math.max(...xs),
+            yMin: Math.min(...ys),
+            yMax: Math.max(...ys),
+            zMin: Math.min(...zs),
+            zMax: Math.max(...zs),
+            points3d: chillerPoints
+        });
+    }
+    return rows;
+}
+
+function groupReportCurves(curves) {
+    const groups = {};
+    curves.forEach((curve) => {
+        const key = `${curve.category}||${curve.sourceFile}`;
+        if (!groups[key]) {
+            groups[key] = {
+                category: curve.category,
+                sourceFile: curve.sourceFile,
+                curves: []
+            };
+        }
+        groups[key].curves.push(curve);
+    });
+    return Object.values(groups);
+}
+
+function svgCurveChart(curve) {
+    const statsTable = curve.zAxis
+        ? `<table class="mini"><tbody>${tableRows([
+            [`${curve.xAxis} range`, `${reportValue(curve.xMin, "", 3)} to ${reportValue(curve.xMax, "", 3)}`],
+            [`${curve.yAxis} range`, `${reportValue(curve.yMin, "", 3)} to ${reportValue(curve.yMax, "", 3)}`],
+            [`${curve.zAxis} range`, `${reportValue(curve.zMin, "", 3)} to ${reportValue(curve.zMax, "", 3)}`],
+            ["Point count", esc(curve.pointCount)]
+        ])}</tbody></table>`
+        : `<table class="mini"><tbody>${tableRows([
+            [`${curve.xAxis} range`, `${reportValue(curve.xMin, "", 3)} to ${reportValue(curve.xMax, "", 3)}`],
+            [`${curve.yAxis} range`, `${reportValue(curve.yMin, "", 3)} to ${reportValue(curve.yMax, "", 3)}`],
+            ["Point count", esc(curve.pointCount)]
+        ])}</tbody></table>`;
+    if (curve.points3d) {
+        const groups = {};
+        curve.points3d.forEach(([x, y, z]) => {
+            const key = String(x);
+            groups[key] = groups[key] || [];
+            groups[key].push([y, z]);
+        });
+        const groupKeys = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
+        if (!groupKeys.length) return `<div class="empty">Not enough data</div>`;
+        const width = 920, height = 280, pad = 42;
+        const all = groupKeys.flatMap(key => groups[key]);
+        const xMin = Math.min(...all.map(p => p[0]));
+        const xMax = Math.max(...all.map(p => p[0]));
+        const yMin = Math.min(...all.map(p => p[1]));
+        const yMax = Math.max(...all.map(p => p[1]));
+        const sx = value => pad + ((value - xMin) / Math.max(xMax - xMin, 1e-9)) * (width - pad * 2);
+        const sy = value => height - pad - ((value - yMin) / Math.max(yMax - yMin, 1e-9)) * (height - pad * 2);
+        const colors = ["#2563EB", "#059669", "#DC2626", "#7C3AED", "#EA580C", "#0891B2"];
+        const lines = groupKeys.slice(0, 8).map((key, i) => {
+            const pts = groups[key].sort((a, b) => a[0] - b[0]).map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
+            return `<polyline points="${pts}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="2" />`;
+        }).join("");
+        const legend = groupKeys.slice(0, 8).map((key, i) => `<span style="color:${colors[i % colors.length]}">●</span> ${esc(curve.xAxis)}=${esc(key)}`).join(" · ");
+        const maxPoint = all.reduce((best, point) => point[1] > best[1] ? point : best, all[0]);
+        const xTicks = linearTicks(xMin, xMax, 6);
+        const yTicks = linearTicks(yMin, yMax, 5);
+        return `
+            ${statsTable}
+            <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(curve.curveId)}">
+                ${svgGrid(width, height, pad, xTicks, yTicks, sx, sy)}
+                <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis" />
+                <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
+                <text x="${pad}" y="${pad - 12}" class="tick">${esc(curve.zAxis || "z")}</text>
+                <text x="${width - pad}" y="${height - 12}" text-anchor="end" class="tick">${esc(curve.yAxis || "y")}</text>
+                ${lines}
+                ${svgTracer(sx(maxPoint[0]), sy(maxPoint[1]), width, height, pad, `max ${reportValue(maxPoint[1], "", 2)}`)}
+            </svg>
+            <div class="legend">${legend}</div>`;
+    }
+    return `${statsTable}${svgXYLineChart(curve.points || [], { yLabel: curve.yAxis || "y", xLabel: curve.xAxis || "x" })}`;
+}
+
+function svgCurveGroupChart(group) {
+    if (!group || !Array.isArray(group.curves) || group.curves.length === 0) {
+        return `<div class="empty">Not enough data</div>`;
+    }
+    if (group.curves.length === 1 || group.curves[0].points3d) {
+        return svgCurveChart(group.curves[0]);
+    }
+    const xAxes = [...new Set(group.curves.map(curve => curve.xAxis || "x"))];
+    const yAxes = [...new Set(group.curves.map(curve => curve.yAxis || "y"))];
+    const stats = `<table class="mini"><thead><tr><th>Curve ID</th><th>X Axis</th><th>Y Axis</th><th>X Range</th><th>Y Range</th><th>Points</th></tr></thead><tbody>${
+        group.curves.map(curve => `<tr>
+            <td>${esc(curve.curveId)}</td>
+            <td>${esc(curve.xAxis)}</td>
+            <td>${esc(curve.yAxis)}</td>
+            <td>${reportValue(curve.xMin, "", 3)} to ${reportValue(curve.xMax, "", 3)}</td>
+            <td>${reportValue(curve.yMin, "", 3)} to ${reportValue(curve.yMax, "", 3)}</td>
+            <td>${esc(curve.pointCount)}</td>
+        </tr>`).join("")
+    }</tbody></table>`;
+    return `${stats}${svgMultiCurveChart(group.curves, {
+        title: group.category,
+        xLabel: xAxes.length === 1 ? xAxes[0] : "curve input",
+        yLabel: yAxes.length === 1 ? yAxes[0] : "curve output"
+    })}`;
+}
+
+function epwChartSection(weatherData) {
+    const charts = [
+        ["Dry Bulb Temperature", weatherData.dry_bulb_C, "°C"],
+        ["Dew Point Temperature", weatherData.dew_point_C, "°C"],
+        ["Relative Humidity", weatherData.relative_humidity_percent, "%"],
+        ["Global Horizontal Radiation", weatherData.global_horizontal_radiation_Wh_m2, "Wh/m²"],
+        ["Direct Normal Radiation", weatherData.direct_normal_radiation_Wh_m2, "Wh/m²"],
+        ["Wind Speed", weatherData.wind_speed_m_s, "m/s"],
+        ["Atmospheric Pressure", weatherData.atmospheric_pressure_Pa, "Pa"],
+        ["Total Sky Cover", weatherData.total_sky_cover_tenths, "tenths"]
+    ].filter(([, values]) => Array.isArray(values) && values.length > 1);
+    if (!charts.length) return `<div class="empty">No extended EPW weather fields available.</div>`;
+    return `<div class="grid">${charts.map(([title, values, unit]) => `
+        <div class="card"><h3>${esc(title)}</h3>${svgLineChart(values, { yLabel: unit, xLabel: "Hour of Year", maxPoints: 700 })}</div>
+    `).join("")}</div>`;
+}
+
+function formulasHtml() {
+    const formulas = [
+        ["Annual PUE", `<span class="math"><i>PUE</i><sub>annual</sub> = <span class="frac"><span>∑<sub>h=1</sub><sup>N</sup> <i>P</i><sub>facility,h</sub></span><span>∑<sub>h=1</sub><sup>N</sup> <i>P</i><sub>IT,h</sub></span></span></span>`],
+        ["Facility Power Balance", `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>chiller,h</sub> + <i>P</i><sub>drycooler,h</sub> + <i>P</i><sub>pump,h</sub> + <i>P</i><sub>fan,h</sub> + <i>P</i><sub>aux,h</sub></span>`],
+        ["UPS Efficiency Loss", `<span class="math"><i>P</i><sub>UPS,loss</sub> = <i>P</i><sub>IT</sub> · (η<sub>UPS</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
+        ["Transformer Loss", `<span class="math"><i>P</i><sub>TR,loss</sub> = <i>P</i><sub>out</sub> · (η<sub>TR</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
+        ["Thermal Load Assembly", `<span class="math"><i>Q</i><sub>cooling,h</sub> = <i>Q</i><sub>IT,h</sub> + <i>Q</i><sub>pump,h</sub> + <i>Q</i><sub>airflow,h</sub> + <i>Q</i><sub>aux,h</sub></span>`],
+        ["Chiller Power", `<span class="math"><i>P</i><sub>chiller,h</sub> = <span class="frac"><span><i>Q</i><sub>cooling,h</sub></span><span><i>COP</i>(<i>T</i><sub>cond,in,h</sub>, <i>PLR</i><sub>h</sub>)</span></span></span>`],
+        ["Dry Cooler Leaving Water", `<span class="math"><i>T</i><sub>LWT,h</sub> = <i>T</i><sub>OA,h</sub> + Δ<i>T</i><sub>approach</sub></span>`],
+        ["Affinity Law", `<span class="math"><i>P</i><sub>variable</sub> = <i>P</i><sub>rated</sub> · <i>s</i><sup>3</sup></span>`],
+        ["Peak Facility Hour", `<span class="math"><i>h</i><sub>peak</sub> = arg max<sub>h</sub>(<i>P</i><sub>facility,h</sub>)</span>`]
+    ];
+    return `<div class="formulaGrid">${formulas.map(([name, eq]) => `
+        <div class="formulaBox">
+            <div class="formulaName">${esc(name)}</div>
+            <div>${eq}</div>
+        </div>
+    `).join("")}</div>`;
+}
+
+function buildHtmlReport(context) {
+    const output = context.output || {};
+    const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
+    const annual = output.annual_results || {};
+    const peak = output.peak_results || {};
+    const projectInfo = getProjectReportInfo();
+    const solar = getSolarGainReportInput();
+    const weather = standardDataFiles.weather || {};
+    const weatherData = weather.data || weather.hourly_data || {};
+    const it = standardDataArray(standardDataFiles.itLoad || {}, [["data", "hourly_it_load_kW"], ["hourly_it_load_kW"], ["project", "it_load", "hourly_it_load_kW"]], ["data", "hourly_profile"], "IT_load_kW");
+    const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"], ["weather", "hourly_data", "dry_bulb_C"]]);
+    const pueSeries = hourly.map(row => Number(row.hourly_PUE)).filter(Number.isFinite);
+    const facilitySeries = hourly.map(row => Number(row.total_facility_power_kW)).filter(Number.isFinite);
+    const monthlyPue = groupHourlyByMonth(hourly, row => Number(row.hourly_PUE));
+    const reportCurves = collectReportCurves();
+    const curveGroups = groupReportCurves(reportCurves);
+    const drySummary = summarizeNumericArray(dry);
+    const itSummary = summarizeNumericArray(it);
+    const ghiSummary = summarizeNumericArray(weatherData.global_horizontal_radiation_Wh_m2);
+    const windSummary = summarizeNumericArray(weatherData.wind_speed_m_s);
+    const rhSummary = summarizeNumericArray(weatherData.relative_humidity_percent);
+    const place = projectInfo.location || [weather.location?.city, weather.location?.state_or_region, weather.location?.country].filter(Boolean).join(", ") || "N/A";
+    const reportTitle = projectInfo.name || "Annual Data Center PUE Performance Assessment";
+    const generated = new Date().toISOString();
+    const energyRows = [
+        ["IT Energy", annual.annual_IT_energy_kWh],
+        ["Chiller Energy", annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
+        ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh],
+        ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh],
+        ["Electrical Loss", annual.annual_electrical_loss_kWh],
+        ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
+    ].filter(([, value]) => Number(value) > 0);
+    const energyChart = svgBarChart(energyRows.map(([label, value]) => ({ label: label.replace(" Energy", "").replace("Electrical ", "Elec "), value: Number(value) / 1000 })), { yLabel: "MWh" });
+    const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value })), { yLabel: "PUE" });
+    const curveRegisterRows = reportCurves.map(curve => [
+        curve.category,
+        esc(curve.curveId),
+        esc(curve.sourceFile),
+        curve.zAxis
+            ? `${esc(curve.xAxis)} ${reportValue(curve.xMin, "", 2)}-${reportValue(curve.xMax, "", 2)}; ${esc(curve.yAxis)} ${reportValue(curve.yMin, "", 2)}-${reportValue(curve.yMax, "", 2)}; ${esc(curve.zAxis)} ${reportValue(curve.zMin, "", 2)}-${reportValue(curve.zMax, "", 2)}`
+            : `${esc(curve.xAxis)} ${reportValue(curve.xMin, "", 2)}-${reportValue(curve.xMax, "", 2)}; ${esc(curve.yAxis)} ${reportValue(curve.yMin, "", 2)}-${reportValue(curve.yMax, "", 2)}`,
+        esc(curve.pointCount)
+    ]);
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${esc(reportTitle)}</title>
+<style>
+    :root { --ink:#0F172A; --muted:#475569; --line:#CBD5E1; --soft:#F8FAFC; --accent:#2563EB; --green:#059669; --red:#DC2626; --violet:#7C3AED; }
+    body { margin:0; font-family: Inter, "Times New Roman", Georgia, serif; color:var(--ink); background:#fff; }
+    .page { max-width: 1260px; margin: 0 auto; padding: 28px 24px 46px; }
+    header { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 18px; }
+    h1 { margin:0 0 8px; font-size: 30px; line-height:1.15; letter-spacing: 0; font-weight:760; }
+    h2 { margin:24px 0 10px; font-size: 19px; border-bottom: 1px solid var(--line); padding-bottom: 6px; font-weight:760; }
+    h3 { margin:12px 0 8px; font-size: 15px; font-weight:740; }
+    p { line-height: 1.65; color: var(--muted); text-align: justify; }
+    code { font-family: "Courier New", monospace; font-size: 12.5px; }
+    .subtitle { color:var(--muted); font-size: 14px; line-height:1.45; }
+    .meta { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .metric { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--soft); }
+    .metric .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; font-family: Arial, sans-serif; }
+    .metric .value { font-size:21px; font-weight:760; margin-top:4px; color:var(--accent); }
+    table { width:100%; border-collapse:collapse; margin:8px 0 12px; font-size: 12.5px; }
+    th, td { border:1px solid var(--line); padding:6px 8px; vertical-align:top; }
+    th { width:32%; text-align:left; background:#EEF2F7; }
+    .mini { margin: 4px 0 10px; font-size: 12px; }
+    .mini th { width: 28%; }
+    .grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; align-items:start; }
+    .curveGrid { display:grid; grid-template-columns: 1fr; gap:14px; }
+    .card { border:1px solid var(--line); border-radius:8px; padding:10px; break-inside: avoid; background:#fff; }
+    .chart { width:100%; height:auto; background:#fff; border:1px solid var(--line); border-radius:8px; }
+    .axis { stroke:#94A3B8; stroke-width:1; }
+    .gridLine { stroke:#E2E8F0; stroke-width:1; }
+    .traceLine { stroke:#0F172A; stroke-width:1; stroke-dasharray:4 4; opacity:.42; }
+    .tracePoint { fill:#fff; stroke:#0F172A; stroke-width:1.8; }
+    .traceLabel { fill:#0F172A; font: 11px Arial, sans-serif; }
+    .line { fill:none; stroke:var(--accent); stroke-width:2; }
+    .bar { fill:var(--accent); opacity:.9; }
+    .tick { fill:#64748B; font-size:11px; font-family: Arial, sans-serif; }
+    .legend { color:var(--muted); font-size:11.5px; margin-top:6px; line-height:1.5; display:flex; flex-wrap:wrap; gap:8px 14px; }
+    .legendItem { white-space:nowrap; }
+    .note { background:#EFF6FF; border-left:4px solid var(--accent); padding:8px 10px; color:#1E3A8A; }
+    .empty { border:1px dashed var(--line); border-radius:8px; padding:18px; color:var(--muted); text-align:center; }
+    .caption { font-size:12px; color:#333; text-align:center; margin-top:8px; font-style:italic; }
+    .specBlock { margin-top:10px; padding:8px 10px; border-left:3px solid var(--accent); background:#F8FAFC; font-size:12.5px; color:#334155; }
+    .formulaGrid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; margin:10px 0 12px; }
+    .formulaBox { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fff; min-height:68px; }
+    .formulaName { font: 700 12px Arial, sans-serif; color:var(--muted); text-transform:uppercase; letter-spacing:.035em; margin-bottom:8px; }
+    .math { font-family: "Times New Roman", Georgia, serif; font-size:18px; color:#111827; }
+    .math i { font-style: italic; }
+    .frac { display:inline-flex; flex-direction:column; vertical-align:middle; text-align:center; line-height:1.12; margin:0 4px; }
+    .frac span:first-child { border-bottom:1px solid #111; padding:0 5px 2px; }
+    .frac span:last-child { padding-top:2px; }
+    @media (max-width: 900px) { .grid, .meta, .formulaGrid { grid-template-columns: 1fr; } }
+    @media print { .page { max-width:none; padding:12mm; } .card, table, .chart { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main class="page">
+<header>
+    <h1>${esc(reportTitle)}</h1>
+    <div class="subtitle">Integrated Cooling Plant and Electrical Infrastructure Energy Analysis</div>
+    <div class="subtitle">Generated by Codex HTML Report Generator · ${esc(generated)}</div>
+</header>
+
+<section>
+    <h2>1. Executive Summary</h2>
+    <div class="meta">
+        <div class="metric"><div class="label">Annual Average PUE</div><div class="value">${reportValue(annual.annual_average_PUE, "", 3)}</div></div>
+        <div class="metric"><div class="label">Peak Facility Power</div><div class="value">${reportValue(peak.peak_total_facility_power_kW, " kW", 0)}</div></div>
+        <div class="metric"><div class="label">IT Energy</div><div class="value">${reportValue((annual.annual_IT_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
+        <div class="metric"><div class="label">Facility Energy</div><div class="value">${reportValue((annual.annual_facility_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
+    </div>
+    <table><tbody>${tableRows([
+        ["Site Location", esc(place)],
+        ["Design IT Load", projectInfo.capacityMw !== null ? `${reportValue(projectInfo.capacityMw, " MW", 1)}` : "N/A"],
+        ["Project Stage", esc(projectInfo.stage || "N/A")],
+        ["Minimum Hourly PUE", reportValue(annual.min_hourly_PUE, "", 3)],
+        ["Maximum Hourly PUE", reportValue(annual.max_hourly_PUE, "", 3)],
+        ["Peak Facility Hour", esc(peak.peak_hour_index ?? "N/A")]
+    ])}</tbody></table>
+</section>
+
+<section>
+    <h2>2. Methodology</h2>
+    <p>The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured.</p>
+    <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
+    <h3>Mathematical Framework</h3>
+    ${formulasHtml()}
+    <table><tbody>${tableRows([
+        ["PUE Definition", "<code>PUE = P_facility / P_IT</code>"],
+        ["Cooling Power", "<code>P_cooling = P_chiller + P_dry_cooler</code> plus pump/fan terms reported separately where available"],
+        ["Chiller COP", "<code>COP = Q_cooling / P_compressor</code>"],
+        ["Dry Cooler Approach", "<code>T_LWT = T_ambient + Approach</code> when no explicit leaving-water curve is supplied"],
+        ["Not Currently Modeled", "Cooling mode classification, free-cooling hours, solar heat gain impact on cooling load"]
+    ])}</tbody></table>
+</section>
+
+<section>
+    <h2>3. Input Datasets and Weather Analysis</h2>
+    <div class="grid">
+        <div class="card"><h3>IT Load Profile</h3><table><tbody>${tableRows([
+            ["Source File", esc(standardDataFiles.itLoad?.source_file || "N/A")],
+            ["Points", esc(it ? it.length : 0)],
+            ["Average", reportValue(itSummary?.avg, " kW", 0)],
+            ["Peak", reportValue(itSummary?.max, " kW", 0)],
+            ["Minimum", reportValue(itSummary?.min, " kW", 0)]
+        ])}</tbody></table></div>
+        <div class="card"><h3>Weather Profile</h3><table><tbody>${tableRows([
+            ["Source File", esc(weather.source_file || "N/A")],
+            ["Source", esc(weather.source_format || "N/A")],
+            ["Dry Bulb Average", reportValue(drySummary?.avg, " °C", 1)],
+            ["Dry Bulb Peak", reportValue(drySummary?.max, " °C", 1)],
+            ["Dry Bulb Minimum", reportValue(drySummary?.min, " °C", 1)],
+            ["Relative Humidity Average", reportValue(rhSummary?.avg, "%", 0)],
+            ["Annual GHI", ghiSummary ? `${reportValue(ghiSummary.sum / 1000, " kWh/m²", 0)}` : "N/A"],
+            ["Average Wind Speed", reportValue(windSummary?.avg, " m/s", 1)]
+        ])}</tbody></table></div>
+    </div>
+    <h3>Extended EPW Data Views</h3>
+    ${epwChartSection(weatherData)}
+</section>
+
+<section>
+    <h2>4. Equipment Curve Register</h2>
+    <p>All imported equipment parameter curves are represented below in a common technical format. These are the curve inputs available to the frontend and solver workflow at report generation time.</p>
+    ${curveRegisterRows.length ? `
+        <table>
+            <thead><tr><th>Category</th><th>Curve ID</th><th>Source File</th><th>Domain / Range</th><th>Points</th></tr></thead>
+            <tbody>${curveRegisterRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+        <div class="curveGrid">${curveGroups.map((group, index) => `
+            <div class="card">
+                <h3>Figure ${index + 1}. ${esc(group.category)} input curves</h3>
+                ${svgCurveGroupChart(group)}
+                ${equipmentSpecHtml(group.category)}
+                <div class="caption">Input equipment curve set from ${esc(group.sourceFile)}. Curves from the same input table are plotted together.</div>
+            </div>
+        `).join("")}</div>
+    ` : `<div class="empty">No equipment curves were imported.</div>`}
+</section>
+
+<section>
+    <h2>5. Annual Simulation Results</h2>
+    <table><tbody>${tableRows([
+        ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
+        ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
+        ["Annual Cooling Energy", reportValue(annual.annual_cooling_energy_kWh, " kWh", 0)],
+        ["Annual Chiller Energy", reportValue(annual.annual_chiller_energy_kWh, " kWh", 0)],
+        ["Annual Dry Cooler Energy", reportValue(annual.annual_dry_cooler_energy_kWh, " kWh", 0)],
+        ["Annual Terminal Fan Energy", reportValue(annual.annual_terminal_fan_energy_kWh, " kWh", 0)],
+        ["Annual Electrical Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
+        ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
+    ])}</tbody></table>
+    <div class="grid">
+        <div class="card"><h3>8760 Annual PUE Timeseries</h3>${svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year" })}</div>
+        <div class="card"><h3>Facility Power Timeseries</h3>${svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year" })}</div>
+        <div class="card"><h3>Annual Energy Breakdown</h3>${energyChart}</div>
+        <div class="card"><h3>Monthly Average PUE</h3>${monthlyChart}</div>
+    </div>
+</section>
+
+<section>
+    <h2>6. Engineering Discussion</h2>
+    <p>The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.</p>
+    <table><tbody>${tableRows([
+        ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
+        ["Free Cooling Hours", "Not modeled in current solver"],
+        ["Mechanical Cooling Hours", "Not modeled in current solver"]
+    ])}</tbody></table>
+</section>
+
+<section>
+    <h2>7. Conclusion</h2>
+    <p>This report provides a transparent annual PUE assessment based on the currently loaded input datasets and solver outputs. Values that are not produced by the solver are explicitly marked as contextual or not modeled.</p>
+</section>
+</main>
+</body>
+</html>`;
+}
+
+function exportHtmlReport() {
+    if (!lastReportContext || !lastReportContext.output) {
+        setSolverDataStatus("请先运行一次计算，再导出 HTML 报告。", "error");
+        return;
+    }
+    const html = buildHtmlReport(lastReportContext);
+    const projectName = getProjectReportInfo().name || "pue-report";
+    const safeName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pue-report";
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeName}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setSolverDataStatus("HTML 报告已生成。", "ok");
 }
 
 function setSolverDataStatus(text, tone = "info") {
@@ -805,8 +1922,11 @@ function refreshStandardInputStatus() {
     const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"], ["weather", "hourly_data", "dry_bulb_C"]]);
     const el = document.getElementById("standardInputStatus");
     if (el) {
-        el.textContent = `标准化输入状态：IT=${it ? it.length : 0}小时，天气=${dry ? dry.length : 0}小时，${standardSolverInput ? "已生成Solver输入" : "尚未生成Solver输入"}`;
-        el.style.color = standardSolverInput ? "#059669" : "#6b7280";
+        const ready = Boolean(it && dry);
+        el.textContent = ready
+            ? `输入就绪：IT=${it.length}小时，天气=${dry.length}小时，点击“运行计算”会自动生成 solver 输入。`
+            : `等待输入：IT=${it ? it.length : 0}小时，天气=${dry ? dry.length : 0}小时。`;
+        el.style.color = ready ? "#059669" : "#6b7280";
     }
 }
 
@@ -815,15 +1935,30 @@ async function handleStandardFile(slot, statusId, file) {
         const json = window.PueImportAdapter
             ? await window.PueImportAdapter.adaptFile(slot, file)
             : await readJsonFile(file);
+        if (json && typeof json === "object") json.source_file = file.name;
         standardDataFiles[slot] = json;
         standardSolverInput = null;
+        preferStandardFiles = true;
         if (slot === "chiller") syncStandardChillerSurfaceToCurveLib(json);
-        updateFileStatus(statusId, `${file.name} 已导入为 ${json.type || "standard_json"}`, "ok");
+        if (slot === "weather" && json.source_format === "epw") {
+            const data = json.data || {};
+            const ghi = summarizeNumericArray(data.global_horizontal_radiation_Wh_m2);
+            const wind = summarizeNumericArray(data.wind_speed_m_s);
+            const extra = [
+                ghi ? `GHI ${fmtInteger(ghi.sum / 1000)} kWh/m²` : "",
+                wind ? `平均风速 ${fmtNumber(wind.avg, 1)} m/s` : ""
+            ].filter(Boolean).join("，");
+            updateFileStatus(statusId, `${file.name} 已导入 EPW${extra ? "：" + extra : ""}`, "ok");
+        } else {
+            updateFileStatus(statusId, `${file.name} 已导入为 ${json.type || "standard_json"}`, "ok");
+        }
         previewInputCurves(standardDataFiles);
+        renderWeatherReportPanel();
         refreshStandardInputStatus();
     } catch (e) {
         standardDataFiles[slot] = null;
         standardSolverInput = null;
+        preferStandardFiles = true;
         updateFileStatus(statusId, `读取失败：${String(e.message || e)}`, "error");
         refreshStandardInputStatus();
     }
@@ -834,6 +1969,7 @@ function loadDemoStandardData() {
     Object.assign(standardDataFiles, demo);
     syncStandardChillerSurfaceToCurveLib(demo.chiller);
     standardSolverInput = null;
+    preferStandardFiles = true;
     updateFileStatus("statusItLoad", "演示 8760 IT 负载已加载", "ok");
     updateFileStatus("statusWeather", "演示 8760 天气已加载", "ok");
     updateFileStatus("statusDryCooler", "演示干冷器曲线已加载", "ok");
@@ -849,6 +1985,7 @@ function loadDemoStandardData() {
 function buildStandardSolverInputToTextarea() {
     try {
         standardSolverInput = buildSolverInputFromStandardFiles(standardDataFiles);
+        preferStandardFiles = true;
         syncStandardChillerSurfaceToCurveLib(standardDataFiles.chiller);
         elIn.value = pretty(standardSolverInput);
         previewInputCurves(standardDataFiles);
@@ -903,6 +2040,41 @@ function initStandardDataInputs() {
         standardSolverInput = null;
         refreshStandardInputStatus();
     });
+    ["solarGainAnnualKwh", "solarGainPeakKw"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener("input", () => {
+            updateSolarGainStatus();
+            renderSolarGainReportPanel();
+        });
+    });
+    ["projectNameInput", "projectLocationInput", "projectCapacityMwInput", "projectStageInput", "projectVersionInput"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener("input", () => {
+            updateProjectInfoStatus();
+            renderProjectInfoReportPanel();
+        });
+    });
+    [
+        ["filePdfDryCooler", "Dry Cooler"],
+        ["filePdfChiller", "Chiller COP Surface"],
+        ["filePdfElectrical", "Electrical"],
+        ["filePdfPump", "Pumps"]
+    ].forEach(([inputId, category]) => {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        input.addEventListener("change", () => handleEquipmentPdfFiles(input.files, category));
+    });
+    const saveMemoryBtn = document.getElementById("btnSaveProjectMemory");
+    if (saveMemoryBtn) saveMemoryBtn.addEventListener("click", saveProjectMemory);
+    const loadMemoryBtn = document.getElementById("btnLoadProjectMemory");
+    if (loadMemoryBtn) loadMemoryBtn.addEventListener("click", () => restoreProjectMemory());
+    const deleteMemoryBtn = document.getElementById("btnDeleteProjectMemory");
+    if (deleteMemoryBtn) deleteMemoryBtn.addEventListener("click", deleteProjectMemory);
+    updateProjectMemorySelect();
+    updateProjectInfoStatus();
+    updateSolarGainStatus();
     refreshStandardInputStatus();
 }
 
@@ -936,6 +2108,9 @@ function showProjectVisualization(outObj) {
     setText("annualItEnergy", fmtInteger(annual.annual_IT_energy_kWh));
     setText("annualFacilityEnergy", fmtInteger(annual.annual_facility_energy_kWh));
     setText("peakFacilityPower", `${fmtInteger(peak.peak_total_facility_power_kW)} kW`);
+    renderProjectInfoReportPanel();
+    renderSolarGainReportPanel();
+    renderWeatherReportPanel();
 
     const sampled = decimateHourlyRows(hourly);
     const labels = sampled.map((row, index) => {
@@ -1172,6 +2347,9 @@ function showSinglePointVisualization(outObj) {
     setText("annualItEnergy", fmtNumber(itKw, 1));
     setText("annualFacilityEnergy", fmtNumber(facilityKw, 1));
     setText("peakFacilityPower", `${fmtNumber(breakdown.oat_c, 1)} deg C`);
+    renderProjectInfoReportPanel();
+    renderSolarGainReportPanel();
+    renderWeatherReportPanel();
 
     const onePoint = [{
         hour_index: "Current",
@@ -1459,6 +2637,13 @@ async function run() {
     if (!pyodide) return;
 
     try {
+        if (!standardSolverInput && preferStandardFiles) {
+            standardSolverInput = buildSolverInputFromStandardFiles(standardDataFiles);
+            syncStandardChillerSurfaceToCurveLib(standardDataFiles.chiller);
+            elIn.value = pretty(standardSolverInput);
+            previewInputCurves(standardDataFiles);
+            refreshStandardInputStatus();
+        }
         const rawInput = standardSolverInput || JSON.parse(elIn.value);
         const curveLib = window.curveLib || {
             curves_1d: {},
@@ -1469,6 +2654,8 @@ async function run() {
 
         if (job.kind === "invalid" || job.kind === "invalid_project") {
             const d = job.diagnostics || {};
+            lastReportContext = null;
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
             hideProjectVisualization();
             elOut.value = pretty({
                 error: job.error,
@@ -1491,6 +2678,8 @@ async function run() {
         if (job.kind === "precomputed_project") {
             elOut.value = pretty(job.output);
             showProjectVisualization(job.output);
+            lastReportContext = { input: job.input, output: job.output, job, generatedAt: new Date().toISOString() };
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
             setSolverDataStatus(
                 `Using precomputed solver output: hourly rows=${job.diagnostics.hourlyRows}`,
                 "ok"
@@ -1523,6 +2712,8 @@ json.dumps(out, indent=2)
         if (isProjectResult) {
             // Show visualization for 8760-hour results
             showProjectVisualization(outObj);
+            lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
             const annual = outObj.annual_results || {};
             const peak = outObj.peak_results || {};
             const hourlyCount = Array.isArray(outObj.hourly_results) ? outObj.hourly_results.length : 0;
@@ -1545,6 +2736,8 @@ json.dumps(out, indent=2)
         } else {
             // Show compact visualization for single-point results
             showSinglePointVisualization(outObj);
+            lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
             setSolverDataStatus(
                 `Solver: ${job.solverFn} | single-point schema`,
                 "info"
@@ -1602,12 +2795,17 @@ json.dumps(out, indent=2)
 
     } catch (e) {
         console.error(e);
+        lastReportContext = null;
+        if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+        setSolverDataStatus(`运行失败：${String(e.message || e)}`, "error");
         log("❌ Run 失败：\n" + String(e));
     }
 }
 
 btnRun.addEventListener("click", run);
+if (btnExportHtmlReport) btnExportHtmlReport.addEventListener("click", exportHtmlReport);
 elIn.addEventListener("input", () => {
+    preferStandardFiles = false;
     if (standardSolverInput) {
         standardSolverInput = null;
         refreshStandardInputStatus();

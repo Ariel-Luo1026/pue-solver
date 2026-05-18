@@ -202,12 +202,35 @@ function refreshSliceList() {
     const el = document.getElementById("copSlices");
     if (!el) return;
     const surf = lib.cop_surfaces[sid];
-    if (!surf || !surf.oat_slices || surf.oat_slices.length === 0) {
-        el.textContent = "当前切片列表：空";
+    const slices = Array.isArray(surf?.oat_slices)
+        ? surf.oat_slices
+            .filter(s => Number.isFinite(Number(s.oat_c)) && Array.isArray(s.points) && s.points.length > 0)
+            .slice()
+            .sort((a, b) => Number(a.oat_c) - Number(b.oat_c))
+        : [];
+    if (slices.length === 0) {
+        el.textContent = "COP 曲面为空：请先加载或添加 OAT 切片";
         return;
     }
-    const oats = surf.oat_slices.map(s => s.oat_c).sort((a, b) => a - b);
-    el.textContent = "当前切片列表（OAT）： " + oats.join("°C, ") + "°C";
+
+    const oatValues = slices.map(s => Number(s.oat_c));
+    const points = slices.flatMap(s => s.points || []);
+    const plrValues = points.map(p => Number(p?.[0])).filter(Number.isFinite);
+    const copValues = points.map(p => Number(p?.[1])).filter(Number.isFinite);
+    const fmt = (value, digits = 2) => Number(value).toFixed(digits).replace(/\.?0+$/, "");
+
+    const summary = [
+        `OAT ${fmt(oatValues[0], 1)}-${fmt(oatValues[oatValues.length - 1], 1)}°C`,
+        `${slices.length} 个切片`,
+        `${points.length} 个点`
+    ];
+    if (plrValues.length) {
+        summary.push(`PLR ${fmt(Math.min(...plrValues), 2)}-${fmt(Math.max(...plrValues), 2)}`);
+    }
+    if (copValues.length) {
+        summary.push(`COP ${fmt(Math.min(...copValues), 2)}-${fmt(Math.max(...copValues), 2)}`);
+    }
+    el.textContent = `曲面数据覆盖：${summary.join("，")}`;
 }
 
 function getSelectedCopSurfaceId() {
