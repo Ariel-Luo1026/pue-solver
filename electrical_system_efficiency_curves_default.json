@@ -1,0 +1,196 @@
+{
+  "schema_version": "pue_curve.v0.1",
+  "curve_package": "electrical_system_efficiency_curves_default",
+  "source": {
+    "type": "engineering_default_assumptions",
+    "description": "Default electrical-chain efficiency curves for PUE solver when manufacturer data is unavailable.",
+    "warning": "Replace with project-specific vendor curves for formal design calculations."
+  },
+  "electrical_chain": [
+    "MV_transformer",
+    "UPS",
+    "LV_transformer",
+    "PDU_RPP",
+    "busway",
+    "rack_PSU"
+  ],
+  "curves": {
+    "MV_transformer_efficiency": {
+      "type": "1D_lookup_table",
+      "x_axis": "load_ratio",
+      "output": "efficiency_percent",
+      "interpolation": "linear",
+      "data": [
+        {
+          "load_ratio": 0.1,
+          "efficiency_percent": 97.8
+        },
+        {
+          "load_ratio": 0.25,
+          "efficiency_percent": 98.6
+        },
+        {
+          "load_ratio": 0.5,
+          "efficiency_percent": 98.9
+        },
+        {
+          "load_ratio": 0.75,
+          "efficiency_percent": 99.0
+        },
+        {
+          "load_ratio": 1.0,
+          "efficiency_percent": 98.9
+        }
+      ]
+    },
+    "UPS_efficiency_double_conversion": {
+      "type": "1D_lookup_table",
+      "x_axis": "load_ratio",
+      "output": "efficiency_percent",
+      "interpolation": "linear",
+      "data": [
+        {
+          "load_ratio": 0.1,
+          "efficiency_percent": 94.0
+        },
+        {
+          "load_ratio": 0.25,
+          "efficiency_percent": 95.5
+        },
+        {
+          "load_ratio": 0.5,
+          "efficiency_percent": 96.3
+        },
+        {
+          "load_ratio": 0.75,
+          "efficiency_percent": 96.5
+        },
+        {
+          "load_ratio": 1.0,
+          "efficiency_percent": 96.2
+        }
+      ]
+    },
+    "UPS_efficiency_eco_mode": {
+      "type": "1D_lookup_table",
+      "x_axis": "load_ratio",
+      "output": "efficiency_percent",
+      "interpolation": "linear",
+      "data": [
+        {
+          "load_ratio": 0.1,
+          "efficiency_percent": 97.0
+        },
+        {
+          "load_ratio": 0.25,
+          "efficiency_percent": 98.0
+        },
+        {
+          "load_ratio": 0.5,
+          "efficiency_percent": 98.5
+        },
+        {
+          "load_ratio": 0.75,
+          "efficiency_percent": 98.7
+        },
+        {
+          "load_ratio": 1.0,
+          "efficiency_percent": 98.6
+        }
+      ]
+    },
+    "LV_transformer_efficiency": {
+      "type": "1D_lookup_table",
+      "x_axis": "load_ratio",
+      "output": "efficiency_percent",
+      "interpolation": "linear",
+      "data": [
+        {
+          "load_ratio": 0.1,
+          "efficiency_percent": 97.5
+        },
+        {
+          "load_ratio": 0.25,
+          "efficiency_percent": 98.3
+        },
+        {
+          "load_ratio": 0.5,
+          "efficiency_percent": 98.7
+        },
+        {
+          "load_ratio": 0.75,
+          "efficiency_percent": 98.8
+        },
+        {
+          "load_ratio": 1.0,
+          "efficiency_percent": 98.7
+        }
+      ]
+    },
+    "PDU_RPP_efficiency": {
+      "type": "1D_lookup_table",
+      "x_axis": "load_ratio",
+      "output": "efficiency_percent",
+      "interpolation": "linear",
+      "data": [
+        {
+          "load_ratio": 0.1,
+          "efficiency_percent": 98.5
+        },
+        {
+          "load_ratio": 0.25,
+          "efficiency_percent": 98.8
+        },
+        {
+          "load_ratio": 0.5,
+          "efficiency_percent": 99.0
+        },
+        {
+          "load_ratio": 0.75,
+          "efficiency_percent": 99.1
+        },
+        {
+          "load_ratio": 1.0,
+          "efficiency_percent": 99.0
+        }
+      ]
+    },
+    "busway_efficiency": {
+      "type": "constant",
+      "output": "efficiency_percent",
+      "value": 99.5
+    },
+    "rack_PSU_efficiency_titanium_like": {
+      "type": "1D_lookup_table",
+      "x_axis": "load_ratio",
+      "output": "efficiency_percent",
+      "interpolation": "linear",
+      "data": [
+        {
+          "load_ratio": 0.1,
+          "efficiency_percent": 90.0
+        },
+        {
+          "load_ratio": 0.2,
+          "efficiency_percent": 94.0
+        },
+        {
+          "load_ratio": 0.5,
+          "efficiency_percent": 96.0
+        },
+        {
+          "load_ratio": 1.0,
+          "efficiency_percent": 91.0
+        }
+      ]
+    }
+  },
+  "default_mapping": {
+    "MV_transformer": "MV_transformer_efficiency",
+    "UPS": "UPS_efficiency_double_conversion",
+    "LV_transformer": "LV_transformer_efficiency",
+    "PDU_RPP": "PDU_RPP_efficiency",
+    "busway": "busway_efficiency",
+    "rack_PSU": "rack_PSU_efficiency_titanium_like"
+  }
+}
