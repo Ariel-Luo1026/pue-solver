@@ -1566,8 +1566,66 @@ def compute_pue_project(input_obj):
 
         # Cooling power calculation using COP curve
         cop = _curve_value(curve_lib, chiller_curve_ref, x=condenser_entering_water_c, y=load_ratio)
-        if cop is None:
+        cop_source = "curve_value"
+        if cop is None or cop <= 0:
+            cop_surfaces = curve_lib.get("cop_surfaces", {}) if isinstance(curve_lib, dict) else {}
+            surface = cop_surfaces.get(chiller_curve_ref) if isinstance(cop_surfaces, dict) else None
+            if isinstance(surface, dict):
+                cop = _num(eval_cop_surface(surface, load_ratio, condenser_entering_water_c), None)
+                cop_source = "cop_surface"
+
+        if cop is None or cop <= 0:
+            raw_curves = curve_lib.get("raw_curves", {}) if isinstance(curve_lib, dict) else {}
+            raw_curve = raw_curves.get(chiller_curve_ref) if isinstance(raw_curves, dict) else None
+            if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "2d_lookup_table":
+                raw_points = raw_curve.get("points")
+                if not isinstance(raw_points, list):
+                    raw_points = raw_curve.get("data", [])
+                x_axis = raw_curve.get("x_axis")
+                y_axis = raw_curve.get("y_axis")
+                output = raw_curve.get("output")
+                pts = []
+                for point in raw_points if isinstance(raw_points, list) else []:
+                    if isinstance(point, dict):
+                        x = _num(point.get(x_axis), None)
+                        y = _num(point.get(y_axis), None)
+                        z = _num(point.get(output), None)
+                    elif isinstance(point, (list, tuple)) and len(point) >= 3:
+                        x = _num(point[0], None)
+                        y = _num(point[1], None)
+                        z = _num(point[2], None)
+                    else:
+                        continue
+                    if x is None or y is None or z is None:
+                        continue
+                    pts.append([x, y, z])
+                if pts and condenser_entering_water_c is not None:
+                    slices = {}
+                    for x, y, z in pts:
+                        slices.setdefault(x, []).append([y, z])
+                    sorted_x = sorted(slices.items(), key=lambda item: item[0])
+                    method = str(raw_curve.get("interpolation", "bilinear_or_pchip")).lower()
+                    method_y = "pchip" if "pchip" in method else "linear"
+                    x_val = float(condenser_entering_water_c)
+                    y_val = float(load_ratio)
+                    if x_val <= sorted_x[0][0]:
+                        cop = _num(eval_curve_1d(slices[sorted_x[0][0]], y_val, method_y), None)
+                    elif x_val >= sorted_x[-1][0]:
+                        cop = _num(eval_curve_1d(slices[sorted_x[-1][0]], y_val, method_y), None)
+                    else:
+                        for j in range(len(sorted_x) - 1):
+                            x0, pts0 = sorted_x[j]
+                            x1, pts1 = sorted_x[j + 1]
+                            if x0 <= x_val <= x1:
+                                cop0 = float(eval_curve_1d(pts0, y_val, method_y))
+                                cop1 = float(eval_curve_1d(pts1, y_val, method_y))
+                                cop = cop0 if abs(x1 - x0) < 1e-12 else float(cop0 + (x_val - x0) / (x1 - x0) * (cop1 - cop0))
+                                break
+                    cop_source = "raw_curve_points"
+
+        if cop is None or cop <= 0:
             cop = 3.0  # Default COP = 3.0
+            cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
         cooling_kw = chiller_kw + dry_cooler_kw
 
@@ -1588,6 +1646,7 @@ def compute_pue_project(input_obj):
             "dry_cooler_power_kW": dry_cooler_kw,
             "condenser_entering_water_C": condenser_entering_water_c,
             "chiller_cop": cop,
+            "cop_source": cop_source,
             "terminal_fan_power_kW": airflow_kw,
             "electrical_loss_kW": power_dist_loss,
             "auxiliary_power_kW": aux_kw + other_kw,
