@@ -1535,19 +1535,77 @@ def compute_pue_project(input_obj):
         other_kw = 0.0
 
         dry_cooler_kw = 0.0
+        dry_curve_value = None
+        dry_curve_load_value = load_ratio
+        dry_cooler_power_source = "no_curve"
         if dry_cooler_curve_ref:
-            dry_curve_value = _curve_value(curve_lib, dry_cooler_curve_ref, load_ratio, None)
+            dry_cooler_power_source = "curve_missing"
+            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_curve_ref, {}) if isinstance(curve_lib, dict) else {}
+            if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
+                raw_points = raw_curve.get("points")
+                if not isinstance(raw_points, list):
+                    raw_points = raw_curve.get("data", [])
+                x_axis = raw_curve.get("x_axis")
+                output = raw_curve.get("output")
+                pts = []
+                for point in raw_points if isinstance(raw_points, list) else []:
+                    if isinstance(point, dict):
+                        x = _num(point.get(x_axis), None)
+                        y = _num(point.get(output), None)
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        x = _num(point[0], None)
+                        y = _num(point[1], None)
+                    else:
+                        continue
+                    if x is None or y is None:
+                        continue
+                    pts.append([x, y])
+                if pts:
+                    max_x = max(point[0] for point in pts)
+                    if max_x > 2.0 and load_ratio <= 1.0:
+                        dry_curve_load_value = load_ratio * 100.0
+                    dry_curve_value = _num(eval_curve_1d(pts, dry_curve_load_value, raw_curve.get("interpolation", "linear")), None)
+                    dry_cooler_power_source = "raw_points"
+            if dry_curve_value is None:
+                dry_curve_value = _curve_value(curve_lib, dry_cooler_curve_ref, dry_curve_load_value, None)
+                if dry_curve_value is not None:
+                    dry_cooler_power_source = "curve_value"
             if dry_curve_value is not None:
-                raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_curve_ref, {}) if isinstance(curve_lib, dict) else {}
                 output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
                 if "kw" in output_name or "power_kw" in output_name:
                     dry_cooler_kw = max(0.0, float(dry_curve_value))
+                    dry_cooler_power_source = f"{dry_cooler_power_source}_power_kw_direct"
                 else:
                     dry_cooler_kw = max(0.0, float(dry_curve_value) * float(dry_cooler_rated_power_kw or 0.0))
+                    dry_cooler_power_source = f"{dry_cooler_power_source}_power_factor_times_rated"
 
         condenser_entering_water_c = oat_c
         if dry_cooler_leaving_water_ref:
-            leaving_water = _curve_value(curve_lib, dry_cooler_leaving_water_ref, oat_c, None)
+            leaving_water = None
+            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_leaving_water_ref, {}) if isinstance(curve_lib, dict) else {}
+            if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
+                raw_points = raw_curve.get("points")
+                if not isinstance(raw_points, list):
+                    raw_points = raw_curve.get("data", [])
+                x_axis = raw_curve.get("x_axis")
+                output = raw_curve.get("output")
+                pts = []
+                for point in raw_points if isinstance(raw_points, list) else []:
+                    if isinstance(point, dict):
+                        x = _num(point.get(x_axis), None)
+                        y = _num(point.get(output), None)
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        x = _num(point[0], None)
+                        y = _num(point[1], None)
+                    else:
+                        continue
+                    if x is None or y is None:
+                        continue
+                    pts.append([x, y])
+                if pts and oat_c is not None:
+                    leaving_water = _num(eval_curve_1d(pts, oat_c, raw_curve.get("interpolation", "linear")), None)
+            if leaving_water is None:
+                leaving_water = _curve_value(curve_lib, dry_cooler_leaving_water_ref, oat_c, None)
             if leaving_water is not None:
                 condenser_entering_water_c = float(leaving_water)
         if condenser_entering_water_c is None and oat_c is not None:
@@ -1565,13 +1623,40 @@ def compute_pue_project(input_obj):
         total_thermal_load = it_heat_load + pumps_heat + airflow_heat + other_heat
 
         # Cooling power calculation using COP curve
-        cop = _curve_value(curve_lib, chiller_curve_ref, x=condenser_entering_water_c, y=load_ratio)
+        cop_load_value = load_ratio
+        raw_chiller_curve = curve_lib.get("raw_curves", {}).get(chiller_curve_ref, {}) if isinstance(curve_lib, dict) else {}
+        chiller_y_axis = str(raw_chiller_curve.get("y_axis", "")).lower() if isinstance(raw_chiller_curve, dict) else ""
+        cop_uses_percent_load = "percent" in chiller_y_axis or "pct" in chiller_y_axis
+        if not cop_uses_percent_load:
+            cop_surfaces = curve_lib.get("cop_surfaces", {}) if isinstance(curve_lib, dict) else {}
+            surface = cop_surfaces.get(chiller_curve_ref) if isinstance(cop_surfaces, dict) else None
+            if isinstance(surface, dict):
+                for slice_item in surface.get("oat_slices", []) if isinstance(surface.get("oat_slices", []), list) else []:
+                    for point in slice_item.get("points", []) if isinstance(slice_item, dict) and isinstance(slice_item.get("points", []), list) else []:
+                        if isinstance(point, (list, tuple)) and len(point) >= 1 and _num(point[0], 0.0) > 2.0:
+                            cop_uses_percent_load = True
+                            break
+                    if cop_uses_percent_load:
+                        break
+        if not cop_uses_percent_load and isinstance(raw_chiller_curve, dict):
+            raw_points = raw_chiller_curve.get("points")
+            if not isinstance(raw_points, list):
+                raw_points = raw_chiller_curve.get("data", [])
+            for point in raw_points if isinstance(raw_points, list) else []:
+                y = _num(point.get(raw_chiller_curve.get("y_axis")) if isinstance(point, dict) else (point[1] if isinstance(point, (list, tuple)) and len(point) >= 2 else None), None)
+                if y is not None and y > 2.0:
+                    cop_uses_percent_load = True
+                    break
+        if cop_uses_percent_load and load_ratio <= 1.0:
+            cop_load_value = load_ratio * 100.0
+
+        cop = _curve_value(curve_lib, chiller_curve_ref, x=condenser_entering_water_c, y=cop_load_value)
         cop_source = "curve_value"
         if cop is None or cop <= 0:
             cop_surfaces = curve_lib.get("cop_surfaces", {}) if isinstance(curve_lib, dict) else {}
             surface = cop_surfaces.get(chiller_curve_ref) if isinstance(cop_surfaces, dict) else None
             if isinstance(surface, dict):
-                cop = _num(eval_cop_surface(surface, load_ratio, condenser_entering_water_c), None)
+                cop = _num(eval_cop_surface(surface, cop_load_value, condenser_entering_water_c), None)
                 cop_source = "cop_surface"
 
         if cop is None or cop <= 0:
@@ -1607,7 +1692,7 @@ def compute_pue_project(input_obj):
                     method = str(raw_curve.get("interpolation", "bilinear_or_pchip")).lower()
                     method_y = "pchip" if "pchip" in method else "linear"
                     x_val = float(condenser_entering_water_c)
-                    y_val = float(load_ratio)
+                    y_val = float(cop_load_value)
                     if x_val <= sorted_x[0][0]:
                         cop = _num(eval_curve_1d(slices[sorted_x[0][0]], y_val, method_y), None)
                     elif x_val >= sorted_x[-1][0]:
@@ -1644,6 +1729,10 @@ def compute_pue_project(input_obj):
             "cooling_power_kW": cooling_kw,
             "chiller_power_kW": chiller_kw,
             "dry_cooler_power_kW": dry_cooler_kw,
+            "dry_cooler_power_source": dry_cooler_power_source,
+            "dry_cooler_load_ratio": dry_curve_load_value,
+            "dry_cooler_curve_value": dry_curve_value,
+            "dry_cooler_rated_power_kw": dry_cooler_rated_power_kw,
             "condenser_entering_water_C": condenser_entering_water_c,
             "chiller_cop": cop,
             "cop_source": cop_source,

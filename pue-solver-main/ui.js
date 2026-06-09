@@ -730,6 +730,148 @@ function curvePoints3d(points) {
         : [];
 }
 
+function solveLinearSystem(matrix, vector) {
+    const n = vector.length;
+    const a = matrix.map((row, i) => row.map(Number).concat(Number(vector[i])));
+    for (let col = 0; col < n; col += 1) {
+        let pivot = col;
+        for (let row = col + 1; row < n; row += 1) {
+            if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+        }
+        if (Math.abs(a[pivot][col]) < 1e-12) return null;
+        if (pivot !== col) [a[pivot], a[col]] = [a[col], a[pivot]];
+        const div = a[col][col];
+        for (let j = col; j <= n; j += 1) a[col][j] /= div;
+        for (let row = 0; row < n; row += 1) {
+            if (row === col) continue;
+            const factor = a[row][col];
+            for (let j = col; j <= n; j += 1) a[row][j] -= factor * a[col][j];
+        }
+    }
+    return a.map(row => row[n]);
+}
+
+function fitChillerCopSurfaceFunction(points) {
+    const pts = curvePoints3d(points);
+    if (pts.length < 6) return null;
+    const terms = ([t, plr]) => [1, t, plr, t * t, plr * plr, t * plr];
+    const xtx = Array.from({ length: 6 }, () => Array(6).fill(0));
+    const xtz = Array(6).fill(0);
+    pts.forEach(([t, plr, cop]) => {
+        const row = terms([t, plr]);
+        for (let r = 0; r < 6; r += 1) {
+            xtz[r] += row[r] * cop;
+            for (let c = 0; c < 6; c += 1) xtx[r][c] += row[r] * row[c];
+        }
+    });
+    const coeffs = solveLinearSystem(xtx, xtz);
+    if (!coeffs || coeffs.some(v => !Number.isFinite(v))) return null;
+    const predict = ([t, plr]) => {
+        const row = terms([t, plr]);
+        return row.reduce((sum, value, i) => sum + value * coeffs[i], 0);
+    };
+    const mean = pts.reduce((sum, p) => sum + p[2], 0) / pts.length;
+    const ssTot = pts.reduce((sum, p) => sum + Math.pow(p[2] - mean, 2), 0);
+    const ssErr = pts.reduce((sum, p) => sum + Math.pow(p[2] - predict(p), 2), 0);
+    const r2 = ssTot > 0 ? 1 - ssErr / ssTot : 1;
+    const errors = pts.map(p => Math.abs(p[2] - predict(p)));
+    return {
+        coeffs,
+        r2,
+        maxAbsError: Math.max(...errors),
+        pointCount: pts.length,
+        predict
+    };
+}
+
+function renderChillerSurfaceFunction(points) {
+    const el = document.getElementById("inputChillerSurfaceFunction");
+    if (!el) return;
+    const fit = fitChillerCopSurfaceFunction(points);
+    if (!fit) {
+        el.textContent = "三维面函数：点数不足或数据无法拟合。";
+        return;
+    }
+    const pts = curvePoints3d(points);
+    const loadLabel = Math.max(...pts.map(p => p[1])) > 2 ? "Load" : "PLR";
+    const [a, b, c, d, e, f] = fit.coeffs;
+    const signed = (value) => `${value < 0 ? "- " : "+ "}${Math.abs(value).toPrecision(6)}`;
+    el.innerHTML = `
+        <b>三维 COP 面函数（二次拟合，仅用于展示）</b><br>
+        <code>COP(T, ${loadLabel}) = ${a.toPrecision(6)} ${signed(b)}T ${signed(c)}${loadLabel} ${signed(d)}T^2 ${signed(e)}${loadLabel}^2 ${signed(f)}T*${loadLabel}</code><br>
+        <span class="muted">R²=${fmtNumber(fit.r2, 4)}，最大绝对误差=${fmtNumber(fit.maxAbsError, 4)}，拟合点数=${fit.pointCount}</span>
+    `;
+}
+
+function renderChillerSurfacePlot(points) {
+    const el = document.getElementById("inputChillerSurface3d");
+    if (!el) return;
+    const pts = curvePoints3d(points);
+    if (!pts.length) {
+        el.innerHTML = `<div class="empty" style="padding:12px;">No chiller COP surface data loaded.</div>`;
+        return;
+    }
+    if (typeof Plotly === "undefined") {
+        el.innerHTML = `<div class="empty" style="padding:12px;">Plotly.js is not loaded.</div>`;
+        return;
+    }
+    const fit = fitChillerCopSurfaceFunction(pts);
+    if (!fit) {
+        el.innerHTML = `<div class="empty" style="padding:12px;">点数不足或数据无法拟合三维曲面。</div>`;
+        return;
+    }
+    const tValues = pts.map(p => p[0]);
+    const loadValues = pts.map(p => p[1]);
+    const tMin = Math.min(...tValues);
+    const tMax = Math.max(...tValues);
+    const loadMin = Math.min(...loadValues);
+    const loadMax = Math.max(...loadValues);
+    const gridCount = 36;
+    const xGrid = Array.from({ length: gridCount }, (_, i) => tMin + (tMax - tMin) * i / Math.max(gridCount - 1, 1));
+    const yGrid = Array.from({ length: gridCount }, (_, i) => loadMin + (loadMax - loadMin) * i / Math.max(gridCount - 1, 1));
+    const zGrid = yGrid.map(load => xGrid.map(t => fit.predict([t, load])));
+    const loadLabel = loadMax > 2 ? "Load" : "PLR";
+    const data = [
+        {
+            type: "surface",
+            x: xGrid,
+            y: yGrid,
+            z: zGrid,
+            colorscale: "Viridis",
+            opacity: 0.86,
+            contours: {
+                z: { show: true, usecolormap: true, highlightcolor: "#111827", project: { z: true } }
+            },
+            colorbar: { title: "COP" },
+            name: "Fitted COP Surface",
+            hovertemplate: "T=%{x:.2f}<br>" + loadLabel + "=%{y:.3f}<br>COP=%{z:.3f}<extra></extra>"
+        },
+        {
+            type: "scatter3d",
+            mode: "markers",
+            x: pts.map(p => p[0]),
+            y: pts.map(p => p[1]),
+            z: pts.map(p => p[2]),
+            marker: { size: 4, color: "#dc2626", opacity: 0.95 },
+            name: "Original table points",
+            hovertemplate: "T=%{x:.2f}<br>" + loadLabel + "=%{y:.3f}<br>COP=%{z:.3f}<extra></extra>"
+        }
+    ];
+    const layout = {
+        margin: { l: 0, r: 0, t: 8, b: 0 },
+        paper_bgcolor: "#ffffff",
+        plot_bgcolor: "#ffffff",
+        scene: {
+            xaxis: { title: "T" },
+            yaxis: { title: loadLabel },
+            zaxis: { title: "COP" },
+            camera: { eye: { x: 1.55, y: -1.7, z: 1.15 } }
+        },
+        legend: { orientation: "h", x: 0, y: 1.02 }
+    };
+    Plotly.react(el, data, layout, { responsive: true, displaylogo: false });
+}
+
 function collectReportCurves() {
     const rows = [];
     const add2dCurve = (category, sourceFile, curve) => {
@@ -1837,6 +1979,8 @@ function previewInputCurves(files) {
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
     });
+    renderChillerSurfaceFunction(chillerPts);
+    renderChillerSurfacePlot(chillerPts);
 
     const elecCurves = (files.electrical && files.electrical.curves) || [];
     createChart("inputElectricalChart", {
