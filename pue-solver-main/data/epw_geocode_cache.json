@@ -152,5 +152,26 @@
     "lat": 52.3730796,
     "lon": 4.8924534,
     "country": "Nederland"
+  },
+  "manchester": {
+    "query": "MANCHESTER",
+    "display_name": "Manchester, Greater Manchester, England, United Kingdom",
+    "lat": 53.4424618,
+    "lon": -2.2324547,
+    "country": "United Kingdom"
+  },
+  "dunkirk": {
+    "query": "DUNKIRK",
+    "display_name": "Dunkerque, Nord, Hauts-de-France, France métropolitaine, France",
+    "lat": 51.0347708,
+    "lon": 2.3772525,
+    "country": "France"
+  },
+  "batang": {
+    "query": "BATANG",
+    "display_name": "巴塘县 འབའ་ཐང་།, 甘孜藏族自治州 དཀར་མཛེས་བོད་རིགས་རང་སྐྱོང་ཁུལ།, 四川省, 627600, 中国",
+    "lat": 29.8784367,
+    "lon": 99.2335686,
+    "country": "China"
   }
 }

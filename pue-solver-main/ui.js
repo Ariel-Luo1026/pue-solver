@@ -65,10 +65,14 @@ function getProjectReportInfo() {
         return el && el.value ? el.value.trim() : "";
     };
     const capacityRaw = optionalNonNegativeNumber("projectCapacityMwInput");
+    const latitude = optionalCoordinateNumber("projectLatitudeInput", -90, 90);
+    const longitude = optionalCoordinateNumber("projectLongitudeInput", -180, 180);
     const stage = textValue("projectStageInput");
     return {
         name: textValue("projectNameInput"),
         location: textValue("projectLocationInput"),
+        latitude,
+        longitude,
         capacityMw: capacityRaw,
         stage: stageMap[stage] || stage,
         version: textValue("projectVersionInput") || "v1.0"
@@ -82,6 +86,7 @@ function updateProjectInfoStatus() {
     const parts = [];
     if (info.name) parts.push(info.name);
     if (info.location) parts.push(info.location);
+    if (info.latitude !== null && info.longitude !== null) parts.push(`${fmtNumber(info.latitude, 4)}, ${fmtNumber(info.longitude, 4)}`);
     if (info.capacityMw !== null) parts.push(`${fmtNumber(info.capacityMw, 1)} MW`);
     if (info.stage) parts.push(info.stage);
     if (info.version) parts.push(info.version);
@@ -98,6 +103,7 @@ function renderProjectInfoReportPanel() {
     const rows = [
         ["项目名称", info.name],
         ["项目地点", info.location],
+        ["项目坐标", info.latitude !== null && info.longitude !== null ? `${fmtNumber(info.latitude, 4)}, ${fmtNumber(info.longitude, 4)}` : ""],
         ["IT 设计容量", info.capacityMw !== null ? `${fmtNumber(info.capacityMw, 1)} MW` : ""],
         ["项目阶段", info.stage]
     ].filter(([, value]) => value !== "");
@@ -427,6 +433,8 @@ function collectProjectMemoryPayload() {
         project_info: {
             name: document.getElementById("projectNameInput")?.value || "",
             location: document.getElementById("projectLocationInput")?.value || "",
+            latitude: document.getElementById("projectLatitudeInput")?.value || "",
+            longitude: document.getElementById("projectLongitudeInput")?.value || "",
             capacity_mw: document.getElementById("projectCapacityMwInput")?.value || "",
             stage: document.getElementById("projectStageInput")?.value || "",
             version: document.getElementById("projectVersionInput")?.value || "v1.0"
@@ -471,6 +479,8 @@ function restoreProjectMemory(key = "") {
         const report = payload.report_only_inputs || {};
         if (document.getElementById("projectNameInput")) document.getElementById("projectNameInput").value = info.name || "";
         if (document.getElementById("projectLocationInput")) document.getElementById("projectLocationInput").value = info.location || "";
+        if (document.getElementById("projectLatitudeInput")) document.getElementById("projectLatitudeInput").value = info.latitude || "";
+        if (document.getElementById("projectLongitudeInput")) document.getElementById("projectLongitudeInput").value = info.longitude || "";
         if (document.getElementById("projectCapacityMwInput")) document.getElementById("projectCapacityMwInput").value = info.capacity_mw || "";
         if (document.getElementById("projectStageInput")) document.getElementById("projectStageInput").value = info.stage || "";
         if (document.getElementById("projectVersionInput")) document.getElementById("projectVersionInput").value = info.version || "v1.0";
@@ -1086,6 +1096,11 @@ function buildHtmlReport(context) {
     const windSummary = summarizeNumericArray(weatherData.wind_speed_m_s);
     const rhSummary = summarizeNumericArray(weatherData.relative_humidity_percent);
     const place = projectInfo.location || [weather.location?.city, weather.location?.state_or_region, weather.location?.country].filter(Boolean).join(", ") || "N/A";
+    const projectLat = weatherSource.project_latitude ?? projectInfo.latitude;
+    const projectLon = weatherSource.project_longitude ?? projectInfo.longitude;
+    const projectCoordinates = Number.isFinite(Number(projectLat)) && Number.isFinite(Number(projectLon))
+        ? `${fmtNumber(Number(projectLat), 4)}, ${fmtNumber(Number(projectLon), 4)}`
+        : "N/A";
     const reportTitle = projectInfo.name || "Annual Data Center PUE Performance Assessment";
     const generated = new Date().toISOString();
     const energyRows = [
@@ -1195,8 +1210,11 @@ function buildHtmlReport(context) {
     <h2>2. Climate Data</h2>
     <div class="grid">
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
+            ["Project Location", esc(weatherSource.project_location || projectInfo.location || "N/A")],
+            ["Project Coordinates", esc(projectCoordinates)],
             ["Weather Source", esc(weatherSource.source || "N/A")],
-            ["Weather Station", esc(weatherSource.station || "N/A")],
+            ["Weather Station", esc(weatherSource.matched_station || weatherSource.station || "N/A")],
+            ["Distance to Weather Station", weatherSource.distance_km !== null && weatherSource.distance_km !== undefined ? `${reportValue(weatherSource.distance_km, " km", 1)}` : "N/A"],
             ["EPW File", esc(weatherSource.epw_file || "N/A")],
             ["Location", esc(weatherSource.location || "N/A")],
             ["Weather Hours", esc(weatherSource.weather_hours ?? "N/A")]
@@ -1664,6 +1682,13 @@ function updateFileStatus(id, text, tone = "info") {
     el.textContent = text;
 }
 
+function optionalCoordinateNumber(id, min, max) {
+    const el = document.getElementById(id);
+    if (!el || el.value === "") return null;
+    const value = Number(el.value);
+    return Number.isFinite(value) && value >= min && value <= max ? value : null;
+}
+
 function normalizeLocationText(value) {
     return String(value || "")
         .toLowerCase()
@@ -1708,6 +1733,51 @@ function findLocalEpwMatch(locationText, epwIndex) {
     return best;
 }
 
+const MAX_EPW_MATCH_DISTANCE_KM = 500;
+
+function haversineDistanceKm(lat1, lon1, lat2, lon2) {
+    const radius = 6371.0088;
+    const toRad = (value) => value * Math.PI / 180;
+    const phi1 = toRad(lat1);
+    const phi2 = toRad(lat2);
+    const dPhi = toRad(lat2 - lat1);
+    const dLambda = toRad(lon2 - lon1);
+    const a = Math.sin(dPhi / 2) ** 2 +
+        Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+    return 2 * radius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function readProjectCoordinates() {
+    const latRaw = document.getElementById("projectLatitudeInput")?.value ?? "";
+    const lonRaw = document.getElementById("projectLongitudeInput")?.value ?? "";
+    const latitude = Number(latRaw);
+    const longitude = Number(lonRaw);
+    if (latRaw === "" || lonRaw === "" ||
+        !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+        latitude < -90 || latitude > 90 ||
+        longitude < -180 || longitude > 180) {
+        return null;
+    }
+    return { latitude, longitude };
+}
+
+function findNearestLocalEpwByCoordinates(latitude, longitude, epwIndex) {
+    let best = null;
+    let bestDistance = Infinity;
+    epwIndex.forEach((item) => {
+        if (!item || typeof item !== "object") return;
+        const itemLat = Number(item.lat);
+        const itemLon = Number(item.lon);
+        if (!Number.isFinite(itemLat) || !Number.isFinite(itemLon)) return;
+        const distance = haversineDistanceKm(latitude, longitude, itemLat, itemLon);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = { ...item, distance_km: Number(distance.toFixed(1)) };
+        }
+    });
+    return best && bestDistance <= MAX_EPW_MATCH_DISTANCE_KM ? best : null;
+}
+
 function setAutoEpwStatus(text, tone = "info") {
     const el = document.getElementById("autoEpwStatus");
     if (!el) return;
@@ -1743,17 +1813,22 @@ function getWeatherSourceMetadata(weatherObj) {
     return {
         source: weatherObj.source_format || "N/A",
         station: weatherObj.location && weatherObj.location.city ? weatherObj.location.city : "N/A",
+        matched_station: weatherObj.location && weatherObj.location.city ? weatherObj.location.city : "N/A",
         epw_file: weatherObj.source_file || "N/A",
         location: [weatherObj.location?.city, weatherObj.location?.country].filter(Boolean).join(", "),
+        project_location: "",
+        project_latitude: null,
+        project_longitude: null,
+        distance_km: null,
         weather_hours: getWeatherHours(weatherObj) || null
     };
 }
 
-async function fetchOnlineEpw(locationText) {
+async function fetchOnlineEpw(latitude, longitude, locationText) {
     const response = await fetch("http://127.0.0.1:8011/api/fetch_epw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ location: locationText })
+        body: JSON.stringify({ latitude, longitude, location: locationText })
     });
     const text = await response.text();
     let payload = {};
@@ -1768,7 +1843,7 @@ async function fetchOnlineEpw(locationText) {
     return payload;
 }
 
-async function applyMatchedEpw(match, locationText, statusText = "", autoStatusText = "") {
+async function applyMatchedEpw(match, locationText, coordinates = null, statusText = "", autoStatusText = "") {
     const epwUrl = new URL(match.epw_path, window.location.href).href;
     const response = await fetch(epwUrl, { cache: "no-cache" });
     if (!response.ok) {
@@ -1795,8 +1870,13 @@ async function applyMatchedEpw(match, locationText, statusText = "", autoStatusT
     setWeatherSourceMetadata(json, {
         source: match.source || "Local EPW",
         station: match.station || "",
+        matched_station: match.station || "",
         epw_file: json.source_file,
         location: locationText || match.city || "",
+        project_location: locationText || "",
+        project_latitude: coordinates ? coordinates.latitude : null,
+        project_longitude: coordinates ? coordinates.longitude : null,
+        distance_km: Number.isFinite(Number(match.distance_km)) ? Number(match.distance_km) : null,
         weather_hours: getWeatherHours(json)
     });
     standardDataFiles.weather = json;
@@ -1820,27 +1900,27 @@ async function applyMatchedEpw(match, locationText, statusText = "", autoStatusT
 async function autoMatchLocalEpw() {
     const locationInput = document.getElementById("projectLocationInput");
     const locationText = locationInput ? locationInput.value.trim() : "";
+    const coordinates = readProjectCoordinates();
     const resetWeatherStatusAfterMiss = () => {
         updateFileStatus("statusWeather", standardDataFiles.weather ? "已有天气数据未改变" : "未加载", "info");
     };
     updateFileStatus("statusWeather", "Matching local EPW...", "info");
     setAutoEpwStatus("", "info");
+    if (!coordinates) {
+        resetWeatherStatusAfterMiss();
+        setAutoEpwStatus("Please enter valid Latitude and Longitude for EPW matching.", "error");
+        return;
+    }
     try {
         let epwIndex = await loadLocalEpwIndex();
-        let match = findLocalEpwMatch(locationText, epwIndex);
+        let match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
         if (match && match.epw_path) {
-            await applyMatchedEpw(match, locationText);
-            return;
-        }
-
-        if (!locationText) {
-            resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+            await applyMatchedEpw(match, locationText, coordinates);
             return;
         }
 
         setAutoEpwStatus("No local EPW matched. Searching online EPW...", "info");
-        const onlineResult = await fetchOnlineEpw(locationText);
+        const onlineResult = await fetchOnlineEpw(coordinates.latitude, coordinates.longitude, locationText);
         if (!onlineResult || !onlineResult.success) {
             resetWeatherStatusAfterMiss();
             setAutoEpwStatus("No suitable online EPW found. Please upload EPW manually.", "error");
@@ -1848,7 +1928,7 @@ async function autoMatchLocalEpw() {
         }
 
         epwIndex = await loadLocalEpwIndex();
-        match = findLocalEpwMatch(locationText, epwIndex);
+        match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
         if (!match || !match.epw_path) {
             resetWeatherStatusAfterMiss();
             setAutoEpwStatus("Online EPW downloaded, but local index did not match. Please upload EPW manually.", "error");
@@ -1861,6 +1941,7 @@ async function autoMatchLocalEpw() {
         await applyMatchedEpw(
             match,
             locationText,
+            coordinates,
             `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`,
             `Online EPW downloaded: ${station} / ${distance}`
         );
@@ -2426,7 +2507,7 @@ function initStandardDataInputs() {
             renderSolarGainReportPanel();
         });
     });
-    ["projectNameInput", "projectLocationInput", "projectCapacityMwInput", "projectStageInput", "projectVersionInput"].forEach((id) => {
+    ["projectNameInput", "projectLocationInput", "projectLatitudeInput", "projectLongitudeInput", "projectCapacityMwInput", "projectStageInput", "projectVersionInput"].forEach((id) => {
         const input = document.getElementById(id);
         if (!input) return;
         input.addEventListener("input", () => {

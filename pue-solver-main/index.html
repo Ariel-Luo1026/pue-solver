@@ -357,6 +357,15 @@
             <div class="fileSlot">
                 <div class="panelTitle">项目地点</div>
                 <input id="projectLocationInput" type="text" placeholder="例如：上海 / Paris, France" />
+                <div class="hint">项目地点仅用于报告展示，气候匹配使用经纬度。</div>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Latitude</div>
+                <input id="projectLatitudeInput" type="number" min="-90" max="90" step="0.0001" placeholder="例如：31.2304" />
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Longitude</div>
+                <input id="projectLongitudeInput" type="number" min="-180" max="180" step="0.0001" placeholder="例如：121.4737" />
             </div>
             <div class="fileSlot">
                 <div class="panelTitle">IT 设计容量 (MW)</div>
@@ -402,7 +411,7 @@
                 <input id="fileWeather" type="file" accept=".json,.epw,.xlsx,.xls" />
                 <button type="button" class="secondaryButton" id="btnAutoMatchEpw" style="margin-top:8px;">Auto Match EPW</button>
                 <div id="statusWeather" class="hint">未加载</div>
-                <div id="autoEpwStatus" class="hint">Local match first. If not found, online EPW fetch will be attempted when API server is running.</div>
+                <div id="autoEpwStatus" class="hint">Weather matching uses Latitude / Longitude. Local match first; online EPW fetch is attempted when API server is running.</div>
             </div>
             <div class="fileSlot">
                 <div class="panelTitle">3. 干冷器性能曲线</div>

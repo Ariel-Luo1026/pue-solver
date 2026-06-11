@@ -18,7 +18,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from fetch_epw_online import FetchEpwError, FetchEpwWarning, fetch_epw_for_location  # noqa: E402
+from fetch_epw_online import FetchEpwError, FetchEpwWarning, fetch_epw_for_coordinates  # noqa: E402
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -66,12 +66,28 @@ class EpwApiHandler(BaseHTTPRequestHandler):
             return
 
         location = str(payload.get("location") or "").strip()
-        if not location:
-            self._write_json({"success": False, "message": "Missing location."}, 400)
+        latitude = payload.get("latitude")
+        longitude = payload.get("longitude")
+        if latitude is None or longitude is None:
+            self._write_json({
+                "success": False,
+                "query_location": location,
+                "message": "Latitude and Longitude are required for EPW matching.",
+            }, 200)
+            return
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except (TypeError, ValueError):
+            self._write_json({
+                "success": False,
+                "query_location": location,
+                "message": "Latitude and Longitude are required for EPW matching.",
+            }, 200)
             return
 
         try:
-            result = fetch_epw_for_location(location)
+            result = fetch_epw_for_coordinates(latitude, longitude, query_location=location)
         except FetchEpwWarning as exc:
             details = dict(exc.details)
             details.update({
@@ -100,6 +116,8 @@ class EpwApiHandler(BaseHTTPRequestHandler):
         self._write_json({
             "success": True,
             "query_location": result.get("query_location", location),
+            "project_latitude": result.get("project_latitude"),
+            "project_longitude": result.get("project_longitude"),
             "matched_station": result.get("matched_station", ""),
             "distance_km": result.get("distance_km"),
             "confidence": result.get("confidence", ""),

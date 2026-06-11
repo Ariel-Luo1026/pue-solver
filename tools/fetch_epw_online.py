@@ -276,6 +276,20 @@ def choose_candidate(query: str, query_geo: dict, candidates: list[Candidate]) -
     )[0]
 
 
+def choose_candidate_by_coordinates(lat: float, lon: float, candidates: list[Candidate]) -> Candidate:
+    for candidate in candidates:
+        candidate.score = period_score(candidate.filename)
+        candidate.distance_km = haversine_km(lat, lon, candidate.lat, candidate.lon)
+        candidate.confidence = confidence_for(candidate.distance_km, exact_name=False)
+    return sorted(
+        candidates,
+        key=lambda c: (
+            c.distance_km if c.distance_km is not None else 999999,
+            -period_score(c.filename),
+        ),
+    )[0]
+
+
 def parse_epw_location(epw_path: Path) -> dict:
     try:
         first = epw_path.read_text(encoding="utf-8", errors="replace").splitlines()[0]
@@ -389,16 +403,19 @@ def add_aliases_to_local_index(epw_file: str, aliases: list[str]) -> None:
         write_json(LOCAL_INDEX_PATH, index)
 
 
-def fetch_epw(location: str) -> dict:
-    query_geo = geocode(location)
+def finish_epw_fetch(
+    candidate: Candidate,
+    query_location: str,
+    project_latitude: float | None = None,
+    project_longitude: float | None = None,
+) -> dict:
     candidates = load_master_candidates()
-    candidate = choose_candidate(location, query_geo, candidates)
     if candidate.distance_km is not None and candidate.distance_km > MAX_REPRESENTATIVE_DISTANCE_KM:
         raise FetchEpwWarning(
             "no suitable EPW station found",
             f"No suitable EPW station found within {int(MAX_REPRESENTATIVE_DISTANCE_KM)} km.",
             {
-                "query_location": location,
+                "query_location": query_location,
                 "nearest_station": candidate.station,
                 "distance_km": round(candidate.distance_km, 1),
                 "source": "Climate.OneBuilding",
@@ -408,13 +425,17 @@ def fetch_epw(location: str) -> dict:
     epw_meta = parse_epw_location(epw_path)
     if candidate.distance_km is None and epw_meta.get("lat") and epw_meta.get("lon"):
         try:
-            candidate.distance_km = haversine_km(query_geo["lat"], query_geo["lon"], float(epw_meta["lat"]), float(epw_meta["lon"]))
+            ref_lat = project_latitude if project_latitude is not None else float(epw_meta["lat"])
+            ref_lon = project_longitude if project_longitude is not None else float(epw_meta["lon"])
+            candidate.distance_km = haversine_km(ref_lat, ref_lon, float(epw_meta["lat"]), float(epw_meta["lon"]))
         except Exception:
             candidate.distance_km = None
-    candidate.confidence = confidence_for(candidate.distance_km, normalize_text(location) in normalize_text(candidate.station))
+    candidate.confidence = confidence_for(candidate.distance_km, False)
 
     log_entry = {
-        "query_location": location,
+        "query_location": query_location,
+        "project_latitude": project_latitude,
+        "project_longitude": project_longitude,
         "matched_station": epw_meta.get("station") or candidate.station,
         "distance_km": round(candidate.distance_km, 1) if candidate.distance_km is not None else None,
         "source": "Climate.OneBuilding",
@@ -429,7 +450,7 @@ def fetch_epw(location: str) -> dict:
     add_aliases_to_local_index(
         epw_path.name,
         [
-            location,
+            query_location,
             log_entry["matched_station"],
             candidate.station,
             candidate.city,
@@ -440,18 +461,57 @@ def fetch_epw(location: str) -> dict:
     return log_entry
 
 
+def fetch_epw(location: str) -> dict:
+    query_geo = geocode(location)
+    candidates = load_master_candidates()
+    candidate = choose_candidate(location, query_geo, candidates)
+    return finish_epw_fetch(
+        candidate,
+        query_location=location,
+        project_latitude=query_geo["lat"],
+        project_longitude=query_geo["lon"],
+    )
+
+
 def fetch_epw_for_location(location: str) -> dict:
     """Import-friendly API used by the local EPW HTTP server."""
     return fetch_epw(location)
 
 
+def fetch_epw_for_coordinates(lat: float, lon: float, query_location: str | None = None) -> dict:
+    """Fetch EPW using project coordinates only; query_location is display/log context."""
+    lat_value = float(lat)
+    lon_value = float(lon)
+    if not (-90.0 <= lat_value <= 90.0 and -180.0 <= lon_value <= 180.0):
+        raise FetchEpwError("invalid coordinates", "Latitude must be -90..90 and Longitude must be -180..180.")
+    candidates = load_master_candidates()
+    candidate = choose_candidate_by_coordinates(lat_value, lon_value, candidates)
+    label = str(query_location or "").strip() or f"{lat_value:.6f},{lon_value:.6f}"
+    return finish_epw_fetch(
+        candidate,
+        query_location=label,
+        project_latitude=lat_value,
+        project_longitude=lon_value,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fetch a nearby EPW file and rebuild the local EPW index.")
-    parser.add_argument("location", help='Location query, e.g. "Shanghai"')
+    parser.add_argument("location", nargs="?", help='Location query, e.g. "Shanghai"')
+    parser.add_argument("--lat", type=float, help="Project latitude for coordinate-based EPW matching.")
+    parser.add_argument("--lon", type=float, help="Project longitude for coordinate-based EPW matching.")
+    parser.add_argument("--label", default="", help="Optional display label for coordinate-based fetch.")
     args = parser.parse_args(argv)
 
     try:
-        result = fetch_epw_for_location(args.location)
+        if args.lat is not None or args.lon is not None:
+            if args.lat is None or args.lon is None:
+                raise FetchEpwError("invalid coordinates", "Both --lat and --lon are required for coordinate-based fetch.")
+            result = fetch_epw_for_coordinates(args.lat, args.lon, query_location=args.label or args.location)
+        elif args.location:
+            result = fetch_epw_for_location(args.location)
+        else:
+            parser.error('location or --lat/--lon is required')
     except FetchEpwWarning as exc:
         print(str(exc), file=sys.stderr)
         print(json.dumps(exc.details, ensure_ascii=False, indent=2), file=sys.stderr)

@@ -1,5 +1,32 @@
 [
   {
+    "city": "Dubai Intl",
+    "country": "ARE",
+    "aliases": [
+      "Dubai Intl",
+      "ARE Dubai Intl",
+      "411940",
+      "SRC-TMYx",
+      "ARE DU",
+      "ARE DU Dubai",
+      "ARE DU Dubai Intl AP 411940 TMYx 2011-2025",
+      "ARE_DU_Dubai Intl AP 411940_TMYx 2011-2025",
+      "ARE_DU_Dubai-Intl-AP-411940_TMYx-2011-2025",
+      "ARE_DU_Dubai.Intl.AP.411940_TMYx.2011-2025",
+      "Tokyo",
+      "Dubai.Intl.AP",
+      "Dubai Intl AP DU ARE",
+      "Dubai"
+    ],
+    "station": "Dubai Intl",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/ARE_DU_Dubai.Intl.AP.411940_TMYx.2011-2025.epw",
+    "epw_file": "ARE_DU_Dubai.Intl.AP.411940_TMYx.2011-2025.epw",
+    "wmo": "411940",
+    "lat": 25.255,
+    "lon": 55.364
+  },
+  {
     "city": "Dubai Minhad",
     "country": "ARE",
     "aliases": [
@@ -133,6 +160,30 @@
     "lon": -79.3953
   },
   {
+    "city": "Batang",
+    "country": "China",
+    "aliases": [
+      "Batang",
+      "China Batang",
+      "562470",
+      "SRC-TMYx",
+      "CHN SC",
+      "CHN SC Batang",
+      "CHN SC Batang 562470 TMYx 2011-2025",
+      "CHN_SC_Batang 562470_TMYx 2011-2025",
+      "CHN_SC_Batang-562470_TMYx-2011-2025",
+      "CHN_SC_Batang.562470_TMYx.2011-2025",
+      "Batang SC CHN"
+    ],
+    "station": "Batang",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/CHN_SC_Batang.562470_TMYx.2011-2025.epw",
+    "epw_file": "CHN_SC_Batang.562470_TMYx.2011-2025.epw",
+    "wmo": "562470",
+    "lat": 30.0029,
+    "lon": 99.1077
+  },
+  {
     "city": "Shanghai",
     "country": "China",
     "aliases": [
@@ -235,6 +286,31 @@
     "wmo": "076320",
     "lat": 43.9147,
     "lon": 2.1164
+  },
+  {
+    "city": "Dunkerque",
+    "country": "France",
+    "aliases": [
+      "Dunkerque",
+      "France Dunkerque",
+      "070100",
+      "SRC-TMYx",
+      "FRA NC",
+      "FRA NC Dunkerque",
+      "FRA NC Dunkerque 070100 TMYx 2011-2025",
+      "FRA_NC_Dunkerque 070100_TMYx 2011-2025",
+      "FRA_NC_Dunkerque-070100_TMYx-2011-2025",
+      "FRA_NC_Dunkerque.070100_TMYx.2011-2025",
+      "DUNKIRK",
+      "Dunkerque NC FRA"
+    ],
+    "station": "Dunkerque",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/FRA_NC_Dunkerque.070100_TMYx.2011-2025.epw",
+    "epw_file": "FRA_NC_Dunkerque.070100_TMYx.2011-2025.epw",
+    "wmo": "070100",
+    "lat": 51.0558,
+    "lon": 2.3394
   },
   {
     "city": "Nunarsuit",
@@ -441,6 +517,31 @@
     "wmo": "037700",
     "lat": 51.5049,
     "lon": -0.131
+  },
+  {
+    "city": "Manchester",
+    "country": "United Kingdom",
+    "aliases": [
+      "Manchester-Barton",
+      "Manchester",
+      "United Kingdom Manchester-Barton",
+      "033350",
+      "ERA5-TMYx",
+      "GBR ENG",
+      "GBR ENG Manchester",
+      "GBR ENG Manchester-Barton 033350 TMYx 2011-2025",
+      "GBR_ENG_Manchester-Barton 033350_TMYx 2011-2025",
+      "GBR_ENG_Manchester-Barton-033350_TMYx-2011-2025",
+      "GBR_ENG_Manchester-Barton.033350_TMYx.2011-2025",
+      "Manchester-Barton ENG GBR"
+    ],
+    "station": "Manchester-Barton",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/GBR_ENG_Manchester-Barton.033350_TMYx.2011-2025.epw",
+    "epw_file": "GBR_ENG_Manchester-Barton.033350_TMYx.2011-2025.epw",
+    "wmo": "033350",
+    "lat": 53.483,
+    "lon": -2.25
   },
   {
     "city": "CGB Honolulu Oahu",
