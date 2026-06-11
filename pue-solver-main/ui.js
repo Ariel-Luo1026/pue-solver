@@ -1749,72 +1749,124 @@ function getWeatherSourceMetadata(weatherObj) {
     };
 }
 
+async function fetchOnlineEpw(locationText) {
+    const response = await fetch("http://127.0.0.1:8011/api/fetch_epw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ location: locationText })
+    });
+    const text = await response.text();
+    let payload = {};
+    try {
+        payload = text ? JSON.parse(text) : {};
+    } catch (e) {
+        throw new Error("Invalid EPW API response.");
+    }
+    if (!response.ok && !payload.message) {
+        throw new Error(`EPW API HTTP ${response.status}`);
+    }
+    return payload;
+}
+
+async function applyMatchedEpw(match, locationText, statusText = "", autoStatusText = "") {
+    const epwUrl = new URL(match.epw_path, window.location.href).href;
+    const response = await fetch(epwUrl, { cache: "no-cache" });
+    if (!response.ok) {
+        throw new Error(`Local EPW fetch failed (${response.status}).`);
+    }
+    const epwText = await response.text();
+    const json = window.PueImportAdapter && window.PueImportAdapter.adaptEpw
+        ? window.PueImportAdapter.adaptEpw(epwText)
+        : null;
+    if (!json) {
+        throw new Error("Local EPW parse failed.");
+    }
+    json.source_file = match.epw_path.split("/").pop() || match.epw_path;
+    json.local_epw_match = {
+        city: match.city || "",
+        country: match.country || "",
+        source: match.source || "Local EPW",
+        station: match.station || "",
+        lat: match.lat,
+        lon: match.lon,
+        epw_path: match.epw_path,
+        matched_at: new Date().toISOString()
+    };
+    setWeatherSourceMetadata(json, {
+        source: match.source || "Local EPW",
+        station: match.station || "",
+        epw_file: json.source_file,
+        location: locationText || match.city || "",
+        weather_hours: getWeatherHours(json)
+    });
+    standardDataFiles.weather = json;
+    const weatherHours = getWeatherHours(json);
+    standardSolverInput = null;
+    preferStandardFiles = true;
+    updateFileStatus("statusWeather", statusText || `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`, "ok");
+    if (weatherHours !== 8760 && weatherHours !== 8784) {
+        setAutoEpwStatus(`EPW loaded, but weather hours are unusual: ${weatherHours}`, "error");
+    } else if (autoStatusText) {
+        setAutoEpwStatus(autoStatusText, "ok");
+    } else {
+        setAutoEpwStatus("", "ok");
+    }
+    previewInputCurves(standardDataFiles);
+    renderWeatherReportPanel();
+    refreshStandardInputStatus();
+    return json;
+}
+
 async function autoMatchLocalEpw() {
     const locationInput = document.getElementById("projectLocationInput");
-    const locationText = locationInput ? locationInput.value : "";
+    const locationText = locationInput ? locationInput.value.trim() : "";
     const resetWeatherStatusAfterMiss = () => {
         updateFileStatus("statusWeather", standardDataFiles.weather ? "已有天气数据未改变" : "未加载", "info");
     };
     updateFileStatus("statusWeather", "Matching local EPW...", "info");
     setAutoEpwStatus("", "info");
     try {
-        const epwIndex = await loadLocalEpwIndex();
-        const match = findLocalEpwMatch(locationText, epwIndex);
+        let epwIndex = await loadLocalEpwIndex();
+        let match = findLocalEpwMatch(locationText, epwIndex);
+        if (match && match.epw_path) {
+            await applyMatchedEpw(match, locationText);
+            return;
+        }
+
+        if (!locationText) {
+            resetWeatherStatusAfterMiss();
+            setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+            return;
+        }
+
+        setAutoEpwStatus("No local EPW matched. Searching online EPW...", "info");
+        const onlineResult = await fetchOnlineEpw(locationText);
+        if (!onlineResult || !onlineResult.success) {
+            resetWeatherStatusAfterMiss();
+            setAutoEpwStatus("No suitable online EPW found. Please upload EPW manually.", "error");
+            return;
+        }
+
+        epwIndex = await loadLocalEpwIndex();
+        match = findLocalEpwMatch(locationText, epwIndex);
         if (!match || !match.epw_path) {
             resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+            setAutoEpwStatus("Online EPW downloaded, but local index did not match. Please upload EPW manually.", "error");
             return;
         }
-        const epwUrl = new URL(match.epw_path, window.location.href).href;
-        const response = await fetch(epwUrl, { cache: "no-cache" });
-        if (!response.ok) {
-            resetWeatherStatusAfterMiss();
-            setAutoEpwStatus(`Local EPW fetch failed (${response.status}). Please upload EPW manually.`, "error");
-            return;
-        }
-        const epwText = await response.text();
-        const json = window.PueImportAdapter && window.PueImportAdapter.adaptEpw
-            ? window.PueImportAdapter.adaptEpw(epwText)
-            : null;
-        if (!json) {
-            resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
-            return;
-        }
-        json.source_file = match.epw_path.split("/").pop() || match.epw_path;
-        json.local_epw_match = {
-            city: match.city || "",
-            country: match.country || "",
-            source: match.source || "Local EPW",
-            station: match.station || "",
-            lat: match.lat,
-            lon: match.lon,
-            epw_path: match.epw_path,
-            matched_at: new Date().toISOString()
-        };
-        setWeatherSourceMetadata(json, {
-            source: match.source || "Local EPW",
-            station: match.station || "",
-            epw_file: json.source_file,
-            location: locationText || match.city || "",
-            weather_hours: getWeatherHours(json)
-        });
-        standardDataFiles.weather = json;
-        const weatherHours = getWeatherHours(json);
-        standardSolverInput = null;
-        preferStandardFiles = true;
-        updateFileStatus("statusWeather", `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`, "ok");
-        if (weatherHours !== 8760 && weatherHours !== 8784) {
-            setAutoEpwStatus(`EPW loaded, but weather hours are unusual: ${weatherHours}`, "error");
-        } else {
-            setAutoEpwStatus("", "ok");
-        }
-        previewInputCurves(standardDataFiles);
-        renderWeatherReportPanel();
-        refreshStandardInputStatus();
+        const station = onlineResult.matched_station || match.station || match.city;
+        const distance = Number.isFinite(Number(onlineResult.distance_km))
+            ? `${Number(onlineResult.distance_km).toFixed(1)} km`
+            : "distance N/A";
+        await applyMatchedEpw(
+            match,
+            locationText,
+            `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`,
+            `Online EPW downloaded: ${station} / ${distance}`
+        );
     } catch (e) {
         resetWeatherStatusAfterMiss();
-        setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+        setAutoEpwStatus("Local EPW not found. Start EPW API server or upload EPW manually.", "error");
     }
 }
 

@@ -117,5 +117,40 @@
     "lat": -33.9288301,
     "lon": 18.4172197,
     "country": "South Africa"
+  },
+  "madrid": {
+    "query": "Madrid",
+    "display_name": "Madrid, Comunidad de Madrid, España",
+    "lat": 40.416782,
+    "lon": -3.703507,
+    "country": "España"
+  },
+  "rapanui": {
+    "query": "Rapa Nui",
+    "display_name": "Isla de Pascua, Provincia de Isla de Pascua, Región de Valparaíso, 2770000, Chile",
+    "lat": -27.1259317,
+    "lon": -109.3495887,
+    "country": "Chile"
+  },
+  "northpole": {
+    "query": "North Pole",
+    "display_name": "North Pole, Fairbanks North Star Borough, Alaska, United States",
+    "lat": 64.750997,
+    "lon": -147.349319,
+    "country": "United States"
+  },
+  "bouvetisland": {
+    "query": "Bouvet Island",
+    "display_name": "Bouvetøya, Norge",
+    "lat": -54.4215,
+    "lon": 3.3574416,
+    "country": "Norge"
+  },
+  "amsterdam": {
+    "query": "Amsterdam",
+    "display_name": "Amsterdam, Noord-Holland, Nederland",
+    "lat": 52.3730796,
+    "lon": 4.8924534,
+    "country": "Nederland"
   }
 }

@@ -403,5 +403,65 @@
     "confidence": "high",
     "already_cached": true,
     "master_index_records": 97487
+  },
+  {
+    "query_location": "Madrid",
+    "matched_station": "Madrid.WS",
+    "distance_km": 4.3,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_6_Europe/ESP_Spain/MD_Madrid/ESP_MD_Madrid.WS.082200_TMYx.2011-2025.zip",
+    "epw_file": "ESP_MD_Madrid.WS.082200_TMYx.2011-2025.epw",
+    "downloaded_at": "2026-06-11T09:11:00.256968+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
+  },
+  {
+    "query_location": "Rapa Nui",
+    "matched_station": "Easter.Island-Mataveri.Intl.AP",
+    "distance_km": 8.4,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_3_South_America/CHL_Chile/AT_Atacama/CHL_AT_Easter.Island-Mataveri.Intl.AP.854690_TMYx.2004-2018.zip",
+    "epw_file": "CHL_AT_Easter.Island-Mataveri.Intl.AP.854690_TMYx.2004-2018.epw",
+    "downloaded_at": "2026-06-11T09:11:53.632094+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
+  },
+  {
+    "query_location": "North Pole",
+    "matched_station": "Fairbanks-Eielson.AFB",
+    "distance_km": 14.7,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_4_North_and_Central_America/USA_United_States_of_America/AK_Alaska/USA_AK_Fairbanks-Eielson.AFB.702650_US.Normals.2006-2020.zip",
+    "epw_file": "USA_AK_Fairbanks-Eielson.AFB.702650_US.Normals.2006-2020.epw",
+    "downloaded_at": "2026-06-11T09:12:17.262883+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
+  },
+  {
+    "query_location": "Madrid",
+    "matched_station": "Madrid.WS",
+    "distance_km": 4.3,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_6_Europe/ESP_Spain/MD_Madrid/ESP_MD_Madrid.WS.082200_TMYx.2011-2025.zip",
+    "epw_file": "ESP_MD_Madrid.WS.082200_TMYx.2011-2025.epw",
+    "downloaded_at": "2026-06-11T09:14:23.430827+00:00",
+    "confidence": "high",
+    "already_cached": true,
+    "master_index_records": 97487
+  },
+  {
+    "query_location": "Amsterdam",
+    "matched_station": "Amsterdam-Schipol.AP",
+    "distance_km": 9.3,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_6_Europe/NLD_Netherlands/NH_Noord-Holland/NLD_NH_Amsterdam-Schipol.AP.062400_TMYx.2011-2025.zip",
+    "epw_file": "NLD_NH_Amsterdam-Schipol.AP.062400_TMYx.2011-2025.epw",
+    "downloaded_at": "2026-06-11T09:17:09.327064+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
   }
 ]

@@ -440,13 +440,18 @@ def fetch_epw(location: str) -> dict:
     return log_entry
 
 
+def fetch_epw_for_location(location: str) -> dict:
+    """Import-friendly API used by the local EPW HTTP server."""
+    return fetch_epw(location)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fetch a nearby EPW file and rebuild the local EPW index.")
     parser.add_argument("location", help='Location query, e.g. "Shanghai"')
     args = parser.parse_args(argv)
 
     try:
-        result = fetch_epw(args.location)
+        result = fetch_epw_for_location(args.location)
     except FetchEpwWarning as exc:
         print(str(exc), file=sys.stderr)
         print(json.dumps(exc.details, ensure_ascii=False, indent=2), file=sys.stderr)

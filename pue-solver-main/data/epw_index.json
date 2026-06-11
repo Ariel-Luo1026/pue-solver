@@ -183,6 +183,32 @@
     "lon": 121.805
   },
   {
+    "city": "Madrid WS",
+    "country": "ESP",
+    "aliases": [
+      "Madrid WS",
+      "ESP Madrid WS",
+      "082200",
+      "SRC-TMYx",
+      "ESP MD",
+      "ESP MD Madrid",
+      "ESP MD Madrid WS 082200 TMYx 2011-2025",
+      "ESP_MD_Madrid WS 082200_TMYx 2011-2025",
+      "ESP_MD_Madrid-WS-082200_TMYx-2011-2025",
+      "ESP_MD_Madrid.WS.082200_TMYx.2011-2025",
+      "Madrid",
+      "Madrid.WS",
+      "Madrid WS MD ESP"
+    ],
+    "station": "Madrid WS",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/ESP_MD_Madrid.WS.082200_TMYx.2011-2025.epw",
+    "epw_file": "ESP_MD_Madrid.WS.082200_TMYx.2011-2025.epw",
+    "wmo": "082200",
+    "lat": 40.4517,
+    "lon": -3.7242
+  },
+  {
     "city": "Albi",
     "country": "France",
     "aliases": [
@@ -336,6 +362,32 @@
     "wmo": "766810",
     "lat": 19.317,
     "lon": -99.183
+  },
+  {
+    "city": "Amsterdam",
+    "country": "NLD",
+    "aliases": [
+      "Amsterdam-Schipol",
+      "Amsterdam",
+      "NLD Amsterdam-Schipol",
+      "062400",
+      "SRC-TMYx",
+      "NLD NH",
+      "NLD NH Amsterdam",
+      "NLD NH Amsterdam-Schipol AP 062400 TMYx 2011-2025",
+      "NLD_NH_Amsterdam-Schipol AP 062400_TMYx 2011-2025",
+      "NLD_NH_Amsterdam-Schipol-AP-062400_TMYx-2011-2025",
+      "NLD_NH_Amsterdam-Schipol.AP.062400_TMYx.2011-2025",
+      "Amsterdam-Schipol.AP",
+      "Amsterdam-Schipol AP NH NLD"
+    ],
+    "station": "Amsterdam-Schipol",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/NLD_NH_Amsterdam-Schipol.AP.062400_TMYx.2011-2025.epw",
+    "epw_file": "NLD_NH_Amsterdam-Schipol.AP.062400_TMYx.2011-2025.epw",
+    "wmo": "062400",
+    "lat": 52.3172,
+    "lon": 4.7897
   },
   {
     "city": "Singapore",
