@@ -1,0 +1,121 @@
+{
+  "shanghai": {
+    "query": "Shanghai",
+    "display_name": "上海市, 中国",
+    "lat": 31.2312707,
+    "lon": 121.4700152,
+    "country": "中国"
+  },
+  "tokyo": {
+    "query": "Tokyo",
+    "display_name": "東京都, 日本",
+    "lat": 35.6768601,
+    "lon": 139.7638947,
+    "country": "Japan"
+  },
+  "singapore": {
+    "query": "Singapore",
+    "display_name": "Singapore",
+    "lat": 1.357107,
+    "lon": 103.8194992,
+    "country": "Singapore"
+  },
+  "frankfurt": {
+    "query": "Frankfurt",
+    "display_name": "Frankfurt am Main, Hessen, Deutschland",
+    "lat": 50.1106444,
+    "lon": 8.6820917,
+    "country": "Germany"
+  },
+  "london": {
+    "query": "London",
+    "display_name": "Greater London, England, United Kingdom",
+    "lat": 51.5074456,
+    "lon": -0.1277653,
+    "country": "United Kingdom"
+  },
+  "dubai": {
+    "query": "Dubai",
+    "display_name": "دبي, الإمارات العربية المتحدة",
+    "lat": 25.0742823,
+    "lon": 55.1885387,
+    "country": "United Arab Emirates"
+  },
+  "newyork": {
+    "query": "New York",
+    "display_name": "New York, United States",
+    "lat": 40.7127281,
+    "lon": -74.0060152,
+    "country": "United States"
+  },
+  "honolulu": {
+    "query": "Honolulu",
+    "display_name": "Honolulu, Honolulu County, Hawaii, United States",
+    "lat": 21.304547,
+    "lon": -157.855676,
+    "country": "United States"
+  },
+  "buenosaires": {
+    "query": "Buenos Aires",
+    "display_name": "Buenos Aires, Comuna 1, Ciudad Autónoma de Buenos Aires, Argentina",
+    "lat": -34.6095579,
+    "lon": -58.3887904,
+    "country": "Argentina"
+  },
+  "dallas": {
+    "query": "Dallas",
+    "display_name": "Dallas, Dallas County, Texas, United States",
+    "lat": 32.7762719,
+    "lon": -96.7968559,
+    "country": "United States"
+  },
+  "phoenix": {
+    "query": "Phoenix",
+    "display_name": "Phoenix, Maricopa County, Arizona, United States",
+    "lat": 33.4484367,
+    "lon": -112.074141,
+    "country": "United States"
+  },
+  "toronto": {
+    "query": "Toronto",
+    "display_name": "Toronto, Golden Horseshoe, Ontario, Canada",
+    "lat": 43.6534817,
+    "lon": -79.3839347,
+    "country": "Canada"
+  },
+  "montreal": {
+    "query": "Montreal",
+    "display_name": "Montréal, Agglomération de Montréal, Montréal (région administrative), Québec, Canada",
+    "lat": 45.5031824,
+    "lon": -73.5698065,
+    "country": "Canada"
+  },
+  "mexicocity": {
+    "query": "Mexico City",
+    "display_name": "Ciudad de México, México",
+    "lat": 19.3207722,
+    "lon": -99.1514678,
+    "country": "México"
+  },
+  "saopaulo": {
+    "query": "Sao Paulo",
+    "display_name": "São Paulo, Região Sudeste, Brasil",
+    "lat": -23.5506507,
+    "lon": -46.6333824,
+    "country": "Brasil"
+  },
+  "johannesburg": {
+    "query": "Johannesburg",
+    "display_name": "Johannesburg, City of Johannesburg Metropolitan Municipality, Gauteng, 2001, South Africa",
+    "lat": -26.205,
+    "lon": 28.049722,
+    "country": "South Africa"
+  },
+  "capetown": {
+    "query": "Cape Town",
+    "display_name": "Cape Town, City of Cape Town, Western Cape, 8001, South Africa",
+    "lat": -33.9288301,
+    "lon": 18.4172197,
+    "country": "South Africa"
+  }
+}

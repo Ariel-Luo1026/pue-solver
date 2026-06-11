@@ -1072,6 +1072,7 @@ function buildHtmlReport(context) {
     const solar = getSolarGainReportInput();
     const weather = standardDataFiles.weather || {};
     const weatherData = weather.data || weather.hourly_data || {};
+    const weatherSource = getWeatherSourceMetadata(weather);
     const it = standardDataArray(standardDataFiles.itLoad || {}, [["data", "hourly_it_load_kW"], ["hourly_it_load_kW"], ["project", "it_load", "hourly_it_load_kW"]], ["data", "hourly_profile"], "IT_load_kW");
     const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"], ["weather", "hourly_data", "dry_bulb_C"]]);
     const pueSeries = hourly.map(row => Number(row.hourly_PUE)).filter(Number.isFinite);
@@ -1091,6 +1092,7 @@ function buildHtmlReport(context) {
         ["IT Energy", annual.annual_IT_energy_kWh],
         ["Chiller Energy", annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh],
+        ["Pump Energy", annual.annual_pump_energy_kWh || 0],
         ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh],
         ["Electrical Loss", annual.annual_electrical_loss_kWh],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
@@ -1190,7 +1192,20 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>2. Methodology</h2>
+    <h2>2. Climate Data</h2>
+    <div class="grid">
+        <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
+            ["Weather Source", esc(weatherSource.source || "N/A")],
+            ["Weather Station", esc(weatherSource.station || "N/A")],
+            ["EPW File", esc(weatherSource.epw_file || "N/A")],
+            ["Location", esc(weatherSource.location || "N/A")],
+            ["Weather Hours", esc(weatherSource.weather_hours ?? "N/A")]
+        ])}</tbody></table></div>
+    </div>
+</section>
+
+<section>
+    <h2>3. Methodology</h2>
     <p>The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured.</p>
     <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
     <h3>Mathematical Framework</h3>
@@ -1205,7 +1220,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>3. Input Datasets and Weather Analysis</h2>
+    <h2>4. Input Datasets and Weather Analysis</h2>
     <div class="grid">
         <div class="card"><h3>IT Load Profile</h3><table><tbody>${tableRows([
             ["Source File", esc(standardDataFiles.itLoad?.source_file || "N/A")],
@@ -1230,7 +1245,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>4. Equipment Curve Register</h2>
+    <h2>5. Equipment Curve Register</h2>
     <p>All imported equipment parameter curves are represented below in a common technical format. These are the curve inputs available to the frontend and solver workflow at report generation time.</p>
     ${curveRegisterRows.length ? `
         <table>
@@ -1249,13 +1264,15 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>5. Annual Simulation Results</h2>
+    <h2>6. Annual Simulation Results</h2>
     <table><tbody>${tableRows([
         ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
         ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
-        ["Annual Cooling Energy", reportValue(annual.annual_cooling_energy_kWh, " kWh", 0)],
+        ["Annual Cooling System Energy", reportValue(annual.annual_total_cooling_system_energy_kWh || 0, " kWh", 0)],
+        ["Annual Chiller + Dry Cooler Energy", reportValue(annual.annual_chiller_plus_dry_cooler_energy_kWh, " kWh", 0)],
         ["Annual Chiller Energy", reportValue(annual.annual_chiller_energy_kWh, " kWh", 0)],
         ["Annual Dry Cooler Energy", reportValue(annual.annual_dry_cooler_energy_kWh, " kWh", 0)],
+        ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
         ["Annual Terminal Fan Energy", reportValue(annual.annual_terminal_fan_energy_kWh, " kWh", 0)],
         ["Annual Electrical Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
         ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
@@ -1269,7 +1286,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>6. Engineering Discussion</h2>
+    <h2>7. Engineering Discussion</h2>
     <p>The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.</p>
     <table><tbody>${tableRows([
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
@@ -1279,7 +1296,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>7. Conclusion</h2>
+    <h2>8. Conclusion</h2>
     <p>This report provides a transparent annual PUE assessment based on the currently loaded input datasets and solver outputs. Values that are not produced by the solver are explicitly marked as contextual or not modeled.</p>
 </section>
 </main>
@@ -1645,6 +1662,160 @@ function updateFileStatus(id, text, tone = "info") {
     if (!el) return;
     el.style.color = tone === "ok" ? "#059669" : tone === "error" ? "#dc2626" : "#6b7280";
     el.textContent = text;
+}
+
+function normalizeLocationText(value) {
+    return String(value || "")
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[,，]/g, "")
+        .replace(/[\s._\-()/\\]+/g, "")
+        .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "")
+        .trim();
+}
+
+async function loadLocalEpwIndex() {
+    const response = await fetch("./data/epw_index.json", { cache: "no-cache" });
+    if (!response.ok) {
+        throw new Error(`EPW index HTTP ${response.status}`);
+    }
+    const index = await response.json();
+    return Array.isArray(index) ? index : [];
+}
+
+function findLocalEpwMatch(locationText, epwIndex) {
+    const query = normalizeLocationText(locationText);
+    if (!query) return null;
+    let best = null;
+    let bestScore = 0;
+    epwIndex.forEach((item) => {
+        if (!item || typeof item !== "object") return;
+        const terms = [item.city, item.country, item.station].concat(Array.isArray(item.aliases) ? item.aliases : []);
+        terms.forEach((term) => {
+            const normalizedTerm = normalizeLocationText(term);
+            if (!normalizedTerm) return;
+            let score = 0;
+            if (query === normalizedTerm) score = 100;
+            else if (query.includes(normalizedTerm)) score = 80;
+            else if (normalizedTerm.includes(query)) score = 70;
+            if (score > bestScore) {
+                bestScore = score;
+                best = item;
+            }
+        });
+    });
+    return best;
+}
+
+function setAutoEpwStatus(text, tone = "info") {
+    const el = document.getElementById("autoEpwStatus");
+    if (!el) return;
+    if (!text) {
+        el.textContent = "";
+        el.style.display = "none";
+        return;
+    }
+    el.style.display = "block";
+    el.style.color = tone === "ok" ? "#059669" : tone === "error" ? "#dc2626" : "#6b7280";
+    el.textContent = text;
+}
+
+function getWeatherHours(weatherObj) {
+    const data = weatherObj && (weatherObj.data || weatherObj.hourly_data);
+    return Array.isArray(data && data.dry_bulb_C) ? data.dry_bulb_C.length : 0;
+}
+
+function setWeatherSourceMetadata(weatherObj, metadata) {
+    if (!weatherObj || typeof weatherObj !== "object") return;
+    weatherObj.metadata = weatherObj.metadata && typeof weatherObj.metadata === "object"
+        ? weatherObj.metadata
+        : {};
+    weatherObj.metadata.weather_source = metadata;
+}
+
+function getWeatherSourceMetadata(weatherObj) {
+    if (!weatherObj || typeof weatherObj !== "object") return {};
+    const metadata = weatherObj.metadata && typeof weatherObj.metadata === "object"
+        ? weatherObj.metadata.weather_source
+        : null;
+    if (metadata && typeof metadata === "object") return metadata;
+    return {
+        source: weatherObj.source_format || "N/A",
+        station: weatherObj.location && weatherObj.location.city ? weatherObj.location.city : "N/A",
+        epw_file: weatherObj.source_file || "N/A",
+        location: [weatherObj.location?.city, weatherObj.location?.country].filter(Boolean).join(", "),
+        weather_hours: getWeatherHours(weatherObj) || null
+    };
+}
+
+async function autoMatchLocalEpw() {
+    const locationInput = document.getElementById("projectLocationInput");
+    const locationText = locationInput ? locationInput.value : "";
+    const resetWeatherStatusAfterMiss = () => {
+        updateFileStatus("statusWeather", standardDataFiles.weather ? "已有天气数据未改变" : "未加载", "info");
+    };
+    updateFileStatus("statusWeather", "Matching local EPW...", "info");
+    setAutoEpwStatus("", "info");
+    try {
+        const epwIndex = await loadLocalEpwIndex();
+        const match = findLocalEpwMatch(locationText, epwIndex);
+        if (!match || !match.epw_path) {
+            resetWeatherStatusAfterMiss();
+            setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+            return;
+        }
+        const epwUrl = new URL(match.epw_path, window.location.href).href;
+        const response = await fetch(epwUrl, { cache: "no-cache" });
+        if (!response.ok) {
+            resetWeatherStatusAfterMiss();
+            setAutoEpwStatus(`Local EPW fetch failed (${response.status}). Please upload EPW manually.`, "error");
+            return;
+        }
+        const epwText = await response.text();
+        const json = window.PueImportAdapter && window.PueImportAdapter.adaptEpw
+            ? window.PueImportAdapter.adaptEpw(epwText)
+            : null;
+        if (!json) {
+            resetWeatherStatusAfterMiss();
+            setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+            return;
+        }
+        json.source_file = match.epw_path.split("/").pop() || match.epw_path;
+        json.local_epw_match = {
+            city: match.city || "",
+            country: match.country || "",
+            source: match.source || "Local EPW",
+            station: match.station || "",
+            lat: match.lat,
+            lon: match.lon,
+            epw_path: match.epw_path,
+            matched_at: new Date().toISOString()
+        };
+        setWeatherSourceMetadata(json, {
+            source: match.source || "Local EPW",
+            station: match.station || "",
+            epw_file: json.source_file,
+            location: locationText || match.city || "",
+            weather_hours: getWeatherHours(json)
+        });
+        standardDataFiles.weather = json;
+        const weatherHours = getWeatherHours(json);
+        standardSolverInput = null;
+        preferStandardFiles = true;
+        updateFileStatus("statusWeather", `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`, "ok");
+        if (weatherHours !== 8760 && weatherHours !== 8784) {
+            setAutoEpwStatus(`EPW loaded, but weather hours are unusual: ${weatherHours}`, "error");
+        } else {
+            setAutoEpwStatus("", "ok");
+        }
+        previewInputCurves(standardDataFiles);
+        renderWeatherReportPanel();
+        refreshStandardInputStatus();
+    } catch (e) {
+        resetWeatherStatusAfterMiss();
+        setAutoEpwStatus("No local EPW matched. Please upload EPW manually.", "info");
+    }
 }
 
 async function readJsonFile(file) {
@@ -2080,6 +2251,15 @@ async function handleStandardFile(slot, statusId, file) {
             ? await window.PueImportAdapter.adaptFile(slot, file)
             : await readJsonFile(file);
         if (json && typeof json === "object") json.source_file = file.name;
+        if (slot === "weather" && json && json.source_format === "epw") {
+            setWeatherSourceMetadata(json, {
+                source: "Manual Upload",
+                station: json.location && json.location.city ? json.location.city : "",
+                epw_file: file.name,
+                location: [json.location?.city, json.location?.country].filter(Boolean).join(", "),
+                weather_hours: getWeatherHours(json)
+            });
+        }
         standardDataFiles[slot] = json;
         standardSolverInput = null;
         preferStandardFiles = true;
@@ -2171,6 +2351,8 @@ function initStandardDataInputs() {
     if (demoBtn) demoBtn.addEventListener("click", loadDemoStandardData);
     const buildBtn = document.getElementById("btnBuildFromFiles");
     if (buildBtn) buildBtn.addEventListener("click", buildStandardSolverInputToTextarea);
+    const autoEpwBtn = document.getElementById("btnAutoMatchEpw");
+    if (autoEpwBtn) autoEpwBtn.addEventListener("click", autoMatchLocalEpw);
     const auxInput = document.getElementById("auxFixedCoeff");
     if (auxInput) auxInput.addEventListener("input", () => {
         updateFileStatus("statusAuxFixed", `当前系数 ${auxInput.value || 0}`, "ok");
@@ -2309,6 +2491,7 @@ function showProjectVisualization(outObj) {
         ["IT Energy", annual.annual_IT_energy_kWh, "#059669"],
         ["Chiller Energy", annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh, "#2563eb"],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh, "#14b8a6"],
+        ["Pump Energy", annual.annual_pump_energy_kWh || 0, "#8b5cf6"],
         ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh, "#0f766e"],
         ["Electrical Loss", annual.annual_electrical_loss_kWh, "#f59e0b"],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh, "#7c3aed"]

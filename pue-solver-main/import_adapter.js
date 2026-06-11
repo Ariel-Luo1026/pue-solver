@@ -417,7 +417,8 @@
                     curves: grouped
                 };
             }
-            const points = rowsPoints2d(rows, ["it_load_ratio", "load_ratio", "airflow_ratio", "x"], ["power_factor", "power_kw", "fan_power_kw", "y"]);
+            const fanY = rowsColumnWithKey(rows, ["power_kw", "power_kW", "fan_power_kw", "power_factor", "y"]);
+            const points = rowsPoints2d(rows, ["it_load_ratio", "load_ratio", "airflow_ratio", "x"], ["power_kw", "power_kW", "fan_power_kw", "power_factor", "y"]);
             if (!points) throw new Error("Fan Excel needs it_load_ratio/load_ratio and power_factor/power_kw columns.");
             return {
                 schema_version: "pue.curve.fans.v1",
@@ -427,7 +428,7 @@
                     {
                         curve_id: "terminal_fan_power_vs_it_load",
                         x_axis: "it_load_ratio",
-                        output: "power_factor",
+                        output: fanY && fanY.normalizedKey.includes("kw") ? "power_kW" : "power_factor",
                         points
                     }
                 ]

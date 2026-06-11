@@ -1382,6 +1382,11 @@ def compute_pue_project(input_obj):
         dry_cooler_rated_power_kw = _num(dry_cooler_cfg.get("rated_power_kw"), None)
     if dry_cooler_rated_power_kw is None:
         dry_cooler_rated_power_kw = 0.03 * float(design_it_load or 0.0)
+    dry_cooler_heat_rejection_capacity_kw = _num(dry_cooler_cfg.get("heat_rejection_capacity_kW"), None)
+    if dry_cooler_heat_rejection_capacity_kw is None:
+        dry_cooler_heat_rejection_capacity_kw = _num(dry_cooler_cfg.get("heat_rejection_capacity_kw"), None)
+    if dry_cooler_heat_rejection_capacity_kw is None:
+        dry_cooler_heat_rejection_capacity_kw = 2000.0
     dry_cooler_approach_c = _num(dry_cooler_cfg.get("approach_C"), None)
     if dry_cooler_approach_c is None:
         dry_cooler_approach_c = _num(dry_cooler_cfg.get("approach_c"), None)
@@ -1401,7 +1406,13 @@ def compute_pue_project(input_obj):
         pump_curve_refs = [pump_curve_refs]
     if not isinstance(pump_curve_refs, list):
         raw_curve_names = list(curve_lib.get("raw_curves", {}).keys()) if isinstance(curve_lib, dict) else []
-        pump_curve_refs = [name for name in raw_curve_names if "pump_power_vs_it_load" in str(name)]
+        pump_curve_refs = []
+        for name in raw_curve_names:
+            raw_curve = curve_lib.get("raw_curves", {}).get(name, {}) if isinstance(curve_lib, dict) else {}
+            output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
+            curve_name = str(name).lower()
+            if "pump_power_vs_it_load" in curve_name or ("pump" in curve_name and ("power" in output_name or "kw" in output_name)):
+                pump_curve_refs.append(name)
     pumps_enabled = bool(pumps_cfg.get("enabled", True))
 
     fan_cfg = _get(input_obj, ["equipment", "cooling", "fans"], {})
@@ -1439,7 +1450,11 @@ def compute_pue_project(input_obj):
                 "wet_bulb_C": wet_c,
                 "relative_humidity_percent": None,
                 "IT_load_kW": it_kw,
-                "cooling_power_kW": out.get("_breakdown_v04", {}).get("cooling_kw"),
+                "chiller_power_kW": out.get("_breakdown_v04", {}).get("chiller_kw", 0.0),
+                "cooling_power_kW": out.get("_breakdown_v04", {}).get("cooling_kw", 0.0),
+                "pump_power_kW": out.get("_breakdown_v04", {}).get("pumps_kw", 0.0),
+                "pumps_kw": out.get("_breakdown_v04", {}).get("pumps_kw", 0.0),
+                "airflow_power_kW": out.get("_breakdown_v04", {}).get("airflow_kw", 0.0),
                 "electrical_loss_kW": out.get("_breakdown_v04", {}).get("power_distribution_loss_kw"),
                 "auxiliary_power_kW": out.get("_breakdown_v04", {}).get("aux_kw", 0.0) + out.get("_breakdown_v04", {}).get("other_kw", 0.0),
                 "total_facility_power_kW": out.get("power", {}).get("total_facility_power_kw"),
@@ -1449,14 +1464,30 @@ def compute_pue_project(input_obj):
         it_energy = it_kw
         facility_energy = out.get("power", {}).get("total_facility_power_kw", 0.0)
         cooling_energy = out.get("_breakdown_v04", {}).get("cooling_kw", 0.0)
+        chiller_energy = out.get("_breakdown_v04", {}).get("chiller_kw", 0.0)
+        dry_cooler_energy = 0.0
+        pump_energy = out.get("_breakdown_v04", {}).get("pumps_kw", 0.0)
+        terminal_fan_energy = out.get("_breakdown_v04", {}).get("airflow_kw", 0.0)
         electrical_loss_energy = out.get("_breakdown_v04", {}).get("power_distribution_loss_kw", 0.0)
         auxiliary_energy = out.get("_breakdown_v04", {}).get("aux_kw", 0.0) + out.get("_breakdown_v04", {}).get("other_kw", 0.0)
         annual_pue = facility_energy / it_energy if it_energy > 0 else None
         result["annual_results"] = {
             "annual_average_PUE": annual_pue,
             "annual_IT_energy_kWh": it_energy,
+            "annual_it_energy_kWh": it_energy,
             "annual_facility_energy_kWh": facility_energy,
+            # Current cooling_kw is chiller + dry cooler only; keep legacy key for compatibility.
             "annual_cooling_energy_kWh": cooling_energy,
+            "annual_chiller_plus_dry_cooler_energy_kWh": cooling_energy,
+            "annual_total_cooling_system_energy_kWh": chiller_energy + dry_cooler_energy + pump_energy + terminal_fan_energy,
+            "annual_dry_cooler_fan_energy_kWh": 0.0,
+            "average_dry_cooler_fan_power_kW": 0.0,
+            "max_dry_cooler_fan_power_kW": 0.0,
+            "dry_cooler_pue_contribution": 0.0,
+            "dry_cooler_over_capacity_hours": 0,
+            "dry_cooler_max_heat_rejection_kW": None,
+            "dry_cooler_max_load_ratio_raw": None,
+            "annual_pump_energy_kWh": pump_energy,
             "annual_electrical_loss_kWh": electrical_loss_energy,
             "annual_auxiliary_energy_kWh": auxiliary_energy
         }
@@ -1474,6 +1505,7 @@ def compute_pue_project(input_obj):
         return result
 
     n = max(len(hourly_it_load), len(dry_bulb))
+    dry_cooler_over_capacity_count = 0
     for i in range(n):
         it_kw = _num(hourly_it_load[i], 0.0) if i < len(hourly_it_load) else 0.0
         oat_c = _num(dry_bulb[i], None)
@@ -1506,41 +1538,69 @@ def compute_pue_project(input_obj):
 
         # Simplified variable loads (pumps, fans, etc.)
         pumps_kw = 0.01 * it_kw  # 1% of IT load
+        pump_debug_rows = []
         if pumps_enabled and pump_curve_refs:
             pump_values = []
             for pump_ref in pump_curve_refs:
-                pump_curve_value = _curve_value(curve_lib, str(pump_ref), load_ratio, None)
+                pump_curve_value = None
+                pump_curve_load_value = load_ratio
+                pump_source = "curve_missing"
+                raw_curve = curve_lib.get("raw_curves", {}).get(str(pump_ref), {}) if isinstance(curve_lib, dict) else {}
+                if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
+                    raw_points = raw_curve.get("points")
+                    if not isinstance(raw_points, list):
+                        raw_points = raw_curve.get("data", [])
+                    x_axis = raw_curve.get("x_axis")
+                    output = raw_curve.get("output")
+                    pts = []
+                    for point in raw_points if isinstance(raw_points, list) else []:
+                        if isinstance(point, dict):
+                            x = _num(point.get(x_axis), None)
+                            y = _num(point.get(output), None)
+                        elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                            x = _num(point[0], None)
+                            y = _num(point[1], None)
+                        else:
+                            continue
+                        if x is None or y is None:
+                            continue
+                        pts.append([x, y])
+                    if pts:
+                        max_x = max(point[0] for point in pts)
+                        if max_x > 2.0 and load_ratio <= 1.0:
+                            pump_curve_load_value = load_ratio * 100.0
+                        pump_curve_value = _num(eval_curve_1d(pts, pump_curve_load_value, raw_curve.get("interpolation", "linear")), None)
+                        pump_source = "raw_points"
+                if pump_curve_value is None:
+                    pump_curve_value = _curve_value(curve_lib, str(pump_ref), pump_curve_load_value, None)
+                    if pump_curve_value is not None:
+                        pump_source = "curve_value"
                 if pump_curve_value is None:
                     continue
-                raw_curve = curve_lib.get("raw_curves", {}).get(str(pump_ref), {}) if isinstance(curve_lib, dict) else {}
                 output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
                 if "kw" in output_name or "power_kw" in output_name:
-                    pump_values.append(max(0.0, float(pump_curve_value)))
+                    pump_kw = max(0.0, float(pump_curve_value))
+                    pump_source = f"{pump_source}_power_kw_direct"
                 else:
                     rated_each = (0.01 * float(design_it_load or 0.0)) / max(len(pump_curve_refs), 1)
-                    pump_values.append(max(0.0, float(pump_curve_value) * rated_each))
+                    pump_kw = max(0.0, float(pump_curve_value) * rated_each)
+                    pump_source = f"{pump_source}_power_factor_times_rated"
+                pump_values.append(pump_kw)
+                pump_debug_rows.append({
+                    "curve_ref": str(pump_ref),
+                    "source": pump_source,
+                    "load_ratio": pump_curve_load_value,
+                    "curve_value": pump_curve_value,
+                    "power_kW": pump_kw
+                })
             if pump_values:
                 pumps_kw = sum(pump_values)
         airflow_kw = 0.02 * it_kw  # 2% of IT load
+        fan_curve_value = None
+        fan_curve_load_value = load_ratio
+        fan_power_source = "disabled" if not fans_enabled else "curve_missing"
         if fans_enabled and fan_curve_ref:
-            fan_curve_value = _curve_value(curve_lib, fan_curve_ref, load_ratio, None)
-            if fan_curve_value is not None:
-                raw_curve = curve_lib.get("raw_curves", {}).get(fan_curve_ref, {}) if isinstance(curve_lib, dict) else {}
-                output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
-                if "kw" in output_name or "power_kw" in output_name:
-                    airflow_kw = max(0.0, float(fan_curve_value))
-                else:
-                    airflow_kw = max(0.0, float(fan_curve_value) * float(fan_rated_power_kw or 0.0))
-        aux_kw = aux_coeff * it_kw
-        other_kw = 0.0
-
-        dry_cooler_kw = 0.0
-        dry_curve_value = None
-        dry_curve_load_value = load_ratio
-        dry_cooler_power_source = "no_curve"
-        if dry_cooler_curve_ref:
-            dry_cooler_power_source = "curve_missing"
-            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_curve_ref, {}) if isinstance(curve_lib, dict) else {}
+            raw_curve = curve_lib.get("raw_curves", {}).get(fan_curve_ref, {}) if isinstance(curve_lib, dict) else {}
             if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
                 raw_points = raw_curve.get("points")
                 if not isinstance(raw_points, list):
@@ -1563,21 +1623,45 @@ def compute_pue_project(input_obj):
                 if pts:
                     max_x = max(point[0] for point in pts)
                     if max_x > 2.0 and load_ratio <= 1.0:
-                        dry_curve_load_value = load_ratio * 100.0
-                    dry_curve_value = _num(eval_curve_1d(pts, dry_curve_load_value, raw_curve.get("interpolation", "linear")), None)
-                    dry_cooler_power_source = "raw_points"
-            if dry_curve_value is None:
-                dry_curve_value = _curve_value(curve_lib, dry_cooler_curve_ref, dry_curve_load_value, None)
-                if dry_curve_value is not None:
-                    dry_cooler_power_source = "curve_value"
-            if dry_curve_value is not None:
+                        fan_curve_load_value = load_ratio * 100.0
+                    fan_curve_value = _num(eval_curve_1d(pts, fan_curve_load_value, raw_curve.get("interpolation", "linear")), None)
+                    fan_power_source = "raw_points"
+            if fan_curve_value is None:
+                fan_curve_value = _curve_value(curve_lib, fan_curve_ref, fan_curve_load_value, None)
+                if fan_curve_value is not None:
+                    fan_power_source = "curve_value"
+            if fan_curve_value is not None:
+                raw_curve = curve_lib.get("raw_curves", {}).get(fan_curve_ref, {}) if isinstance(curve_lib, dict) else {}
                 output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
+                fan_value = float(fan_curve_value)
+                rated_fan_kw = float(fan_rated_power_kw or 0.0)
                 if "kw" in output_name or "power_kw" in output_name:
-                    dry_cooler_kw = max(0.0, float(dry_curve_value))
-                    dry_cooler_power_source = f"{dry_cooler_power_source}_power_kw_direct"
+                    if rated_fan_kw > 0.0 and fan_value > rated_fan_kw * 2.0:
+                        airflow_kw = max(0.0, fan_value / 100.0 * rated_fan_kw)
+                        fan_power_source = f"{fan_power_source}_power_percent_times_rated"
+                    else:
+                        airflow_kw = max(0.0, fan_value)
+                        fan_power_source = f"{fan_power_source}_power_kw_direct"
                 else:
-                    dry_cooler_kw = max(0.0, float(dry_curve_value) * float(dry_cooler_rated_power_kw or 0.0))
-                    dry_cooler_power_source = f"{dry_cooler_power_source}_power_factor_times_rated"
+                    if fan_value > 2.0:
+                        airflow_kw = max(0.0, fan_value / 100.0 * rated_fan_kw)
+                        fan_power_source = f"{fan_power_source}_power_percent_times_rated"
+                    else:
+                        airflow_kw = max(0.0, fan_value * rated_fan_kw)
+                        fan_power_source = f"{fan_power_source}_power_factor_times_rated"
+        aux_kw = aux_coeff * it_kw
+        other_kw = 0.0
+
+        dry_cooler_kw = 0.0
+        dry_curve_value = None
+        dry_curve_load_value = load_ratio
+        heat_rejection_to_dry_cooler_kw = None
+        dry_cooler_load_kw = None
+        facility_load_kw = it_kw + pumps_kw + airflow_kw + aux_kw + other_kw
+        dry_cooler_load_ratio_raw = None
+        dry_cooler_load_ratio = None
+        dry_cooler_capacity_warning = None
+        dry_cooler_power_source = "no_curve"
 
         condenser_entering_water_c = oat_c
         if dry_cooler_leaving_water_ref:
@@ -1712,6 +1796,66 @@ def compute_pue_project(input_obj):
             cop = 3.0  # Default COP = 3.0
             cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
+        heat_rejection_to_dry_cooler_kw = it_kw
+        dry_cooler_load_kw = heat_rejection_to_dry_cooler_kw
+        dry_cooler_load_ratio_raw = (
+            heat_rejection_to_dry_cooler_kw / dry_cooler_heat_rejection_capacity_kw
+            if dry_cooler_heat_rejection_capacity_kw and dry_cooler_heat_rejection_capacity_kw > 0
+            else None
+        )
+        if dry_cooler_load_ratio_raw is not None:
+            if dry_cooler_load_ratio_raw > 1.0:
+                dry_cooler_over_capacity_count += 1
+                dry_cooler_capacity_warning = (
+                    "Dry cooler heat rejection load exceeds rated heat rejection capacity. "
+                    f"Load {heat_rejection_to_dry_cooler_kw:.2f} kW; "
+                    f"capacity {dry_cooler_heat_rejection_capacity_kw:.2f} kW."
+                )
+            dry_cooler_load_ratio = min(dry_cooler_load_ratio_raw, 1.0)
+            dry_curve_load_value = dry_cooler_load_ratio
+
+        if dry_cooler_curve_ref:
+            dry_cooler_power_source = "curve_missing"
+            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_curve_ref, {}) if isinstance(curve_lib, dict) else {}
+            if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
+                raw_points = raw_curve.get("points")
+                if not isinstance(raw_points, list):
+                    raw_points = raw_curve.get("data", [])
+                x_axis = raw_curve.get("x_axis")
+                output = raw_curve.get("output")
+                pts = []
+                for point in raw_points if isinstance(raw_points, list) else []:
+                    if isinstance(point, dict):
+                        x = _num(point.get(x_axis), None)
+                        y = _num(point.get(output), None)
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        x = _num(point[0], None)
+                        y = _num(point[1], None)
+                    else:
+                        continue
+                    if x is None or y is None:
+                        continue
+                    pts.append([x, y])
+                if pts:
+                    max_x = max(point[0] for point in pts)
+                    lookup_x = dry_curve_load_value
+                    if max_x > 2.0 and lookup_x <= 1.0:
+                        lookup_x = lookup_x * 100.0
+                    dry_curve_load_value = lookup_x
+                    dry_curve_value = _num(eval_curve_1d(pts, dry_curve_load_value, raw_curve.get("interpolation", "linear")), None)
+                    dry_cooler_power_source = "raw_points"
+            if dry_curve_value is None:
+                dry_curve_value = _curve_value(curve_lib, dry_cooler_curve_ref, dry_curve_load_value, None)
+                if dry_curve_value is not None:
+                    dry_cooler_power_source = "curve_value"
+            if dry_curve_value is not None:
+                output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
+                if "kw" in output_name or "power_kw" in output_name:
+                    dry_cooler_kw = max(0.0, float(dry_curve_value))
+                    dry_cooler_power_source = f"{dry_cooler_power_source}_fan_power_kw_direct"
+                else:
+                    dry_cooler_kw = max(0.0, float(dry_curve_value) * float(dry_cooler_rated_power_kw or 0.0))
+                    dry_cooler_power_source = f"{dry_cooler_power_source}_fan_power_factor_times_rated"
         cooling_kw = chiller_kw + dry_cooler_kw
 
         # Total facility power
@@ -1729,14 +1873,32 @@ def compute_pue_project(input_obj):
             "cooling_power_kW": cooling_kw,
             "chiller_power_kW": chiller_kw,
             "dry_cooler_power_kW": dry_cooler_kw,
+            "dry_cooler_fan_power_kW": dry_cooler_kw,
             "dry_cooler_power_source": dry_cooler_power_source,
-            "dry_cooler_load_ratio": dry_curve_load_value,
+            "heat_rejection_to_dry_cooler_kW": heat_rejection_to_dry_cooler_kw,
+            "dry_cooler_heat_rejection_capacity_kW": dry_cooler_heat_rejection_capacity_kw,
+            "dry_cooler_load_ratio": dry_cooler_load_ratio,
+            "dry_cooler_load_ratio_raw": dry_cooler_load_ratio_raw,
+            "dry_cooler_load_kW": dry_cooler_load_kw,
+            "facility_load_kW": facility_load_kw,
             "dry_cooler_curve_value": dry_curve_value,
+            "dry_cooler_curve_lookup_value": dry_curve_load_value,
             "dry_cooler_rated_power_kw": dry_cooler_rated_power_kw,
+            "dry_cooler_capacity_warning": dry_cooler_capacity_warning,
             "condenser_entering_water_C": condenser_entering_water_c,
             "chiller_cop": cop,
             "cop_source": cop_source,
+            "pump_power_kW": pumps_kw,
+            "pumps_kw": pumps_kw,
+            "pump_power_details": pump_debug_rows,
+            "airflow_power_kW": airflow_kw,
             "terminal_fan_power_kW": airflow_kw,
+            "terminal_fan_curve_ref": fan_curve_ref,
+            "terminal_fan_enabled": fans_enabled,
+            "terminal_fan_rated_power_kW": fan_rated_power_kw,
+            "terminal_fan_load_ratio": fan_curve_load_value,
+            "terminal_fan_curve_value": fan_curve_value,
+            "terminal_fan_power_source": fan_power_source,
             "electrical_loss_kW": power_dist_loss,
             "auxiliary_power_kW": aux_kw + other_kw,
             "total_facility_power_kW": total_facility_power,
@@ -1748,6 +1910,24 @@ def compute_pue_project(input_obj):
     annual_cooling = sum(item.get("cooling_power_kW", 0.0) for item in result["hourly_results"])
     annual_chiller = sum(item.get("chiller_power_kW", 0.0) for item in result["hourly_results"])
     annual_dry_cooler = sum(item.get("dry_cooler_power_kW", 0.0) for item in result["hourly_results"])
+    dry_cooler_fan_values = [item.get("dry_cooler_fan_power_kW", item.get("dry_cooler_power_kW", 0.0)) for item in result["hourly_results"]]
+    dry_cooler_heat_rejection_values = [
+        item.get("heat_rejection_to_dry_cooler_kW")
+        for item in result["hourly_results"]
+        if item.get("heat_rejection_to_dry_cooler_kW") is not None
+    ]
+    dry_cooler_load_ratio_raw_values = [
+        item.get("dry_cooler_load_ratio_raw")
+        for item in result["hourly_results"]
+        if item.get("dry_cooler_load_ratio_raw") is not None
+    ]
+    annual_dry_cooler_fan = sum(dry_cooler_fan_values)
+    average_dry_cooler_fan = annual_dry_cooler_fan / len(dry_cooler_fan_values) if dry_cooler_fan_values else 0.0
+    max_dry_cooler_fan = max(dry_cooler_fan_values) if dry_cooler_fan_values else 0.0
+    dry_cooler_over_capacity_hours = sum(1 for item in result["hourly_results"] if item.get("dry_cooler_capacity_warning"))
+    dry_cooler_max_heat_rejection = max(dry_cooler_heat_rejection_values) if dry_cooler_heat_rejection_values else None
+    dry_cooler_max_load_ratio_raw = max(dry_cooler_load_ratio_raw_values) if dry_cooler_load_ratio_raw_values else None
+    annual_pump = sum(item.get("pump_power_kW", 0.0) for item in result["hourly_results"])
     annual_terminal_fan = sum(item.get("terminal_fan_power_kW", 0.0) for item in result["hourly_results"])
     annual_loss = sum(item.get("electrical_loss_kW", 0.0) for item in result["hourly_results"])
     annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
@@ -1762,10 +1942,22 @@ def compute_pue_project(input_obj):
     result["annual_results"] = {
         "annual_average_PUE": annual_pue,
         "annual_IT_energy_kWh": annual_it,
+        "annual_it_energy_kWh": annual_it,
         "annual_facility_energy_kWh": annual_facility,
+        # Current cooling_kw is chiller + dry cooler only; keep legacy key for compatibility.
         "annual_cooling_energy_kWh": annual_cooling,
+        "annual_chiller_plus_dry_cooler_energy_kWh": annual_cooling,
+        "annual_total_cooling_system_energy_kWh": annual_chiller + annual_dry_cooler + annual_pump + annual_terminal_fan,
         "annual_chiller_energy_kWh": annual_chiller,
         "annual_dry_cooler_energy_kWh": annual_dry_cooler,
+        "annual_dry_cooler_fan_energy_kWh": annual_dry_cooler_fan,
+        "average_dry_cooler_fan_power_kW": average_dry_cooler_fan,
+        "max_dry_cooler_fan_power_kW": max_dry_cooler_fan,
+        "dry_cooler_pue_contribution": annual_dry_cooler_fan / annual_it if annual_it > 0 else None,
+        "dry_cooler_over_capacity_hours": dry_cooler_over_capacity_hours,
+        "dry_cooler_max_heat_rejection_kW": dry_cooler_max_heat_rejection,
+        "dry_cooler_max_load_ratio_raw": dry_cooler_max_load_ratio_raw,
+        "annual_pump_energy_kWh": annual_pump,
         "annual_terminal_fan_energy_kWh": annual_terminal_fan,
         "annual_electrical_loss_kWh": annual_loss,
         "annual_auxiliary_energy_kWh": annual_aux,
@@ -1793,6 +1985,12 @@ def compute_pue_project(input_obj):
             validation["warnings"].append("peak hour PUE does not match highest dry bulb hour")
     else:
         validation["checks"]["peak_hour_consistency_check"] = True
+    if dry_cooler_over_capacity_count > 0:
+        validation["warnings"].append(
+            "Dry cooler heat rejection load exceeds rated heat rejection capacity in "
+            f"{dry_cooler_over_capacity_count} hourly records; dry cooler load_ratio was capped at 1.0 "
+            "for fan power curve lookup."
+        )
     result["validation"] = validation
     return result
 
