@@ -555,5 +555,19 @@
     "confidence": "high",
     "already_cached": true,
     "master_index_records": 97487
+  },
+  {
+    "query_location": "上海",
+    "project_latitude": 50.1,
+    "project_longitude": 121.3,
+    "matched_station": "Tulihe",
+    "distance_km": 50.6,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_2_Asia/CHN_China/NM_Nei_Mongol/CHN_NM_Tulihe.504340_TMYx.2011-2025.zip",
+    "epw_file": "CHN_NM_Tulihe.504340_TMYx.2011-2025.epw",
+    "downloaded_at": "2026-06-11T09:58:10.302427+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
   }
 ]

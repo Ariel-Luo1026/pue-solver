@@ -191,12 +191,191 @@ function summarizeNumericArray(values) {
     };
 }
 
+function extractEpwPeriodFromFileName(fileName) {
+    const text = String(fileName || "");
+    const tmyMatch = text.match(/(?:^|[\s._-])(TMYx?|IWEC[0-9]?|CSWD)[\s._-]*(\d{4})-(\d{4})(?:\b|$)/i);
+    if (tmyMatch) return `${tmyMatch[1]} ${tmyMatch[2]}-${tmyMatch[3]}`;
+    const rangeMatch = text.match(/(?:^|[^\d])(19\d{2}|20\d{2})-(19\d{2}|20\d{2})(?!\d)/);
+    if (rangeMatch) return `${rangeMatch[1]}-${rangeMatch[2]}`;
+    const tmyOnly = text.match(/(?:^|[\s._-])(TMYx?|IWEC[0-9]?|CSWD)(?:[\s._-]|$)/i);
+    if (tmyOnly) return tmyOnly[1];
+    return "";
+}
+
+function getWeatherPeriod(weatherObj) {
+    if (!weatherObj || typeof weatherObj !== "object") return "N/A";
+    const metadata = weatherObj.metadata && typeof weatherObj.metadata === "object"
+        ? weatherObj.metadata.weather_source
+        : null;
+    const candidates = [
+        metadata && metadata.weather_period,
+        weatherObj.weather_period,
+        weatherObj.source_file,
+        metadata && metadata.epw_file,
+        weatherObj.local_epw_match && weatherObj.local_epw_match.epw_path
+    ];
+    for (const candidate of candidates) {
+        const period = extractEpwPeriodFromFileName(candidate);
+        if (period) return period;
+    }
+    return "N/A";
+}
+
+function monthNameShort(month) {
+    return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1] || "";
+}
+
+function hourIndexToDateTime(index) {
+    const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let remaining = Math.max(0, Math.floor(index));
+    let month = 1;
+    for (let i = 0; i < monthDays.length; i++) {
+        const hours = monthDays[i] * 24;
+        if (remaining < hours) {
+            month = i + 1;
+            break;
+        }
+        remaining -= hours;
+    }
+    const day = Math.floor(remaining / 24) + 1;
+    const hour = remaining % 24;
+    return {
+        month,
+        day,
+        hour,
+        label: `${monthNameShort(month)} ${day} ${String(hour).padStart(2, "0")}:00`
+    };
+}
+
+function epwDateTimeFromWeatherData(weatherData, index) {
+    const month = Number(weatherData.month && weatherData.month[index]);
+    const day = Number(weatherData.day && weatherData.day[index]);
+    const rawHour = Number(weatherData.epw_hour && weatherData.epw_hour[index]);
+    if (Number.isFinite(month) && Number.isFinite(day) && Number.isFinite(rawHour)) {
+        const hour = Math.max(0, Math.min(23, Math.floor(rawHour - 1)));
+        return {
+            month,
+            day,
+            hour,
+            label: `${monthNameShort(month)} ${day} ${String(hour).padStart(2, "0")}:00`
+        };
+    }
+    return hourIndexToDateTime(index);
+}
+
+function buildTemperatureDistribution(weatherData) {
+    const rawDry = Array.isArray(weatherData && weatherData.dry_bulb_C)
+        ? weatherData.dry_bulb_C
+        : [];
+    if (!rawDry.length) return null;
+    const bins = new Map();
+    let minTemp = Infinity;
+    let maxTemp = -Infinity;
+    let sum = 0;
+    let peakIndex = 0;
+    let validCount = 0;
+    rawDry.forEach((value, index) => {
+        const temp = Number(value);
+        if (!Number.isFinite(temp)) return;
+        const bin = Math.floor(temp);
+        bins.set(bin, (bins.get(bin) || 0) + 1);
+        sum += temp;
+        validCount += 1;
+        if (temp < minTemp) minTemp = temp;
+        if (temp > maxTemp) {
+            maxTemp = temp;
+            peakIndex = index;
+        }
+    });
+    if (!validCount) return null;
+    const rows = Array.from(bins.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([bin, hours]) => ({ bin, label: `${bin}°C`, hours }));
+    const peakTime = epwDateTimeFromWeatherData(weatherData || {}, peakIndex);
+    return {
+        rows,
+        totalHours: validCount,
+        minTemp,
+        avgTemp: sum / validCount,
+        maxTemp,
+        peakIndex,
+        hourOfYear: peakIndex + 1,
+        peakTime
+    };
+}
+
+function temperatureDistributionTableHtml(distribution, maxRows = Infinity) {
+    if (!distribution || !Array.isArray(distribution.rows)) return "";
+    const rows = distribution.rows.slice(0, maxRows);
+    return `<table class="mini"><thead><tr><th>Temperature Bin (°C)</th><th>Hours</th></tr></thead><tbody>${
+        rows.map(row => `<tr><td>${esc(row.label)}</td><td>${esc(row.hours)}</td></tr>`).join("")
+    }</tbody></table>`;
+}
+
+function renderTemperatureDistributionPanel() {
+    const panel = document.getElementById("temperatureDistributionPanel");
+    const summary = document.getElementById("temperatureDistributionSummary");
+    if (!panel || !summary) return;
+    const weather = standardDataFiles.weather || {};
+    const weatherData = weather.data || weather.hourly_data || {};
+    const distribution = buildTemperatureDistribution(weatherData);
+    if (!distribution) {
+        panel.style.display = "none";
+        summary.innerHTML = "";
+        return;
+    }
+    panel.style.display = "block";
+    const cards = [
+        ["Average Dry Bulb", `${fmtNumber(distribution.avgTemp, 1)} °C`],
+        ["Minimum Dry Bulb", `${fmtNumber(distribution.minTemp, 1)} °C`],
+        ["Maximum Dry Bulb", `${fmtNumber(distribution.maxTemp, 1)} °C`],
+        ["Peak Dry Bulb Time", distribution.peakTime.label],
+        ["Peak Dry Bulb Hour of Year", distribution.hourOfYear],
+        ["Distribution Hours", distribution.totalHours]
+    ];
+    summary.innerHTML = cards.map(([label, value]) => `
+        <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">
+            <div class="muted" style="font-size:12px;">${label}</div>
+            <div style="font-weight:700; margin-top:4px;">${value}</div>
+        </div>
+    `).join("");
+    createChart("temperatureDistributionChart", {
+        type: "bar",
+        data: {
+            labels: distribution.rows.map(row => row.label),
+            datasets: [{
+                label: "Hours",
+                data: distribution.rows.map(row => row.hours),
+                backgroundColor: "#0f766e",
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.label}: ${ctx.raw} hours`
+                    }
+                }
+            },
+            scales: {
+                x: { title: { display: true, text: "Temperature Bin (deg C)" }, ticks: { maxTicksLimit: 18 } },
+                y: { title: { display: true, text: "Hours" }, beginAtZero: true }
+            }
+        }
+    });
+}
+
 function renderWeatherReportPanel() {
     const panel = document.getElementById("weatherReportPanel");
     if (!panel) return;
     const weather = standardDataFiles.weather || {};
     const data = weather.data || weather.hourly_data || {};
     const source = String(weather.source_format || "").toLowerCase();
+    const weatherPeriod = getWeatherPeriod(weather);
     const dry = summarizeNumericArray(data.dry_bulb_C);
     const rh = summarizeNumericArray(data.relative_humidity_percent);
     const ghi = summarizeNumericArray(data.global_horizontal_radiation_Wh_m2);
@@ -214,6 +393,7 @@ function renderWeatherReportPanel() {
     const items = [];
     if (place) items.push(`地点：<b>${place}</b>`);
     if (source) items.push(`来源：<b>${source.toUpperCase()}</b>`);
+    items.push(`数据周期：<b>${weatherPeriod}</b>`);
     if (dry) items.push(`干球温度：<b>${fmtNumber(dry.min, 1)}-${fmtNumber(dry.max, 1)} °C</b>，平均 <b>${fmtNumber(dry.avg, 1)} °C</b>`);
     if (rh) items.push(`相对湿度：平均 <b>${fmtNumber(rh.avg, 0)}%</b>`);
     if (ghi) items.push(`全年全球水平太阳辐射：<b>${fmtInteger(ghi.sum / 1000)} kWh/m²</b>，峰值 <b>${fmtInteger(ghi.max)} W/m²</b>`);
@@ -506,6 +686,7 @@ function restoreProjectMemory(key = "") {
         renderProjectInfoReportPanel();
         renderSolarGainReportPanel();
         renderWeatherReportPanel();
+        renderTemperatureDistributionPanel();
         setProjectMemoryStatus(`已恢复项目输入：${projectMemoryLabelFromKey(memoryKey)}`, "ok");
     } catch (e) {
         setProjectMemoryStatus(`恢复失败：${String(e.message || e)}`, "error");
@@ -1091,6 +1272,8 @@ function buildHtmlReport(context) {
     const reportCurves = collectReportCurves();
     const curveGroups = groupReportCurves(reportCurves);
     const drySummary = summarizeNumericArray(dry);
+    const tempDistribution = buildTemperatureDistribution(weatherData);
+    const weatherPeriod = getWeatherPeriod(weather);
     const itSummary = summarizeNumericArray(it);
     const ghiSummary = summarizeNumericArray(weatherData.global_horizontal_radiation_Wh_m2);
     const windSummary = summarizeNumericArray(weatherData.wind_speed_m_s);
@@ -1215,6 +1398,7 @@ function buildHtmlReport(context) {
             ["Weather Source", esc(weatherSource.source || "N/A")],
             ["Weather Station", esc(weatherSource.matched_station || weatherSource.station || "N/A")],
             ["Distance to Weather Station", weatherSource.distance_km !== null && weatherSource.distance_km !== undefined ? `${reportValue(weatherSource.distance_km, " km", 1)}` : "N/A"],
+            ["Weather Data Period", esc(weatherSource.weather_period || weatherPeriod || "N/A")],
             ["EPW File", esc(weatherSource.epw_file || "N/A")],
             ["Location", esc(weatherSource.location || "N/A")],
             ["Weather Hours", esc(weatherSource.weather_hours ?? "N/A")]
@@ -1223,7 +1407,24 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>3. Methodology</h2>
+    <h2>3. Climate Temperature Profile</h2>
+    ${tempDistribution ? `
+        <div class="grid">
+            <div class="card"><h3>Dry Bulb Summary</h3><table><tbody>${tableRows([
+                ["Minimum Dry Bulb", reportValue(tempDistribution.minTemp, " °C", 1)],
+                ["Average Dry Bulb", reportValue(tempDistribution.avgTemp, " °C", 1)],
+                ["Maximum Dry Bulb", reportValue(tempDistribution.maxTemp, " °C", 1)],
+                ["Peak Dry Bulb Time", esc(tempDistribution.peakTime.label)],
+                ["Peak Dry Bulb Hour of Year", esc(tempDistribution.hourOfYear)],
+                ["Distribution Total Hours", esc(tempDistribution.totalHours)]
+            ])}</tbody></table></div>
+            <div class="card"><h3>Temperature Bin Hours</h3>${temperatureDistributionTableHtml(tempDistribution)}</div>
+        </div>
+    ` : `<div class="empty">Temperature distribution unavailable: weather data not loaded.</div>`}
+</section>
+
+<section>
+    <h2>4. Methodology</h2>
     <p>The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured.</p>
     <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
     <h3>Mathematical Framework</h3>
@@ -1238,7 +1439,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>4. Input Datasets and Weather Analysis</h2>
+    <h2>5. Input Datasets and Weather Analysis</h2>
     <div class="grid">
         <div class="card"><h3>IT Load Profile</h3><table><tbody>${tableRows([
             ["Source File", esc(standardDataFiles.itLoad?.source_file || "N/A")],
@@ -1250,6 +1451,7 @@ function buildHtmlReport(context) {
         <div class="card"><h3>Weather Profile</h3><table><tbody>${tableRows([
             ["Source File", esc(weather.source_file || "N/A")],
             ["Source", esc(weather.source_format || "N/A")],
+            ["Weather Data Period", esc(weatherPeriod || "N/A")],
             ["Dry Bulb Average", reportValue(drySummary?.avg, " °C", 1)],
             ["Dry Bulb Peak", reportValue(drySummary?.max, " °C", 1)],
             ["Dry Bulb Minimum", reportValue(drySummary?.min, " °C", 1)],
@@ -1263,7 +1465,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>5. Equipment Curve Register</h2>
+    <h2>6. Equipment Curve Register</h2>
     <p>All imported equipment parameter curves are represented below in a common technical format. These are the curve inputs available to the frontend and solver workflow at report generation time.</p>
     ${curveRegisterRows.length ? `
         <table>
@@ -1282,7 +1484,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>6. Annual Simulation Results</h2>
+    <h2>7. Annual Simulation Results</h2>
     <table><tbody>${tableRows([
         ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
         ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
@@ -1304,7 +1506,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>7. Engineering Discussion</h2>
+    <h2>8. Engineering Discussion</h2>
     <p>The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.</p>
     <table><tbody>${tableRows([
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
@@ -1314,7 +1516,7 @@ function buildHtmlReport(context) {
 </section>
 
 <section>
-    <h2>8. Conclusion</h2>
+    <h2>9. Conclusion</h2>
     <p>This report provides a transparent annual PUE assessment based on the currently loaded input datasets and solver outputs. Values that are not produced by the solver are explicitly marked as contextual or not modeled.</p>
 </section>
 </main>
@@ -1801,7 +2003,9 @@ function setWeatherSourceMetadata(weatherObj, metadata) {
     weatherObj.metadata = weatherObj.metadata && typeof weatherObj.metadata === "object"
         ? weatherObj.metadata
         : {};
-    weatherObj.metadata.weather_source = metadata;
+    const sourceMeta = { ...(metadata || {}) };
+    sourceMeta.weather_period = sourceMeta.weather_period || extractEpwPeriodFromFileName(sourceMeta.epw_file || weatherObj.source_file || "");
+    weatherObj.metadata.weather_source = sourceMeta;
 }
 
 function getWeatherSourceMetadata(weatherObj) {
@@ -1820,6 +2024,7 @@ function getWeatherSourceMetadata(weatherObj) {
         project_latitude: null,
         project_longitude: null,
         distance_km: null,
+        weather_period: getWeatherPeriod(weatherObj),
         weather_hours: getWeatherHours(weatherObj) || null
     };
 }
@@ -1893,6 +2098,7 @@ async function applyMatchedEpw(match, locationText, coordinates = null, statusTe
     }
     previewInputCurves(standardDataFiles);
     renderWeatherReportPanel();
+    renderTemperatureDistributionPanel();
     refreshStandardInputStatus();
     return json;
 }
@@ -2411,6 +2617,7 @@ async function handleStandardFile(slot, statusId, file) {
         }
         previewInputCurves(standardDataFiles);
         renderWeatherReportPanel();
+        renderTemperatureDistributionPanel();
         refreshStandardInputStatus();
     } catch (e) {
         standardDataFiles[slot] = null;
@@ -2570,6 +2777,7 @@ function showProjectVisualization(outObj) {
     renderProjectInfoReportPanel();
     renderSolarGainReportPanel();
     renderWeatherReportPanel();
+    renderTemperatureDistributionPanel();
 
     const sampled = decimateHourlyRows(hourly);
     const labels = sampled.map((row, index) => {
@@ -2810,6 +3018,7 @@ function showSinglePointVisualization(outObj) {
     renderProjectInfoReportPanel();
     renderSolarGainReportPanel();
     renderWeatherReportPanel();
+    renderTemperatureDistributionPanel();
 
     const onePoint = [{
         hour_index: "Current",

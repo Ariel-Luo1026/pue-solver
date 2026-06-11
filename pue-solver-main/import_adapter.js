@@ -160,6 +160,10 @@
         const albedo = [];
         const liquidPrecipitationDepth = [];
         const hourIndex = [];
+        const year = [];
+        const month = [];
+        const day = [];
+        const epwHour = [];
 
         const pushIfNumber = (arr, value) => {
             if (value !== null) arr.push(value);
@@ -173,6 +177,10 @@
             const relHumidity = num(cols[8]);
             if (dryBulb === null) return;
             hourIndex.push(i + 1);
+            pushIfNumber(year, num(cols[0]));
+            pushIfNumber(month, num(cols[1]));
+            pushIfNumber(day, num(cols[2]));
+            pushIfNumber(epwHour, num(cols[3]));
             dry.push(dryBulb);
             pushIfNumber(dew, dewPoint);
             pushIfNumber(rh, relHumidity);
@@ -236,6 +244,10 @@
             },
             data: {
                 hour_index: hourIndex,
+                year,
+                month,
+                day,
+                epw_hour: epwHour,
                 dry_bulb_C: dry,
                 dew_point_C: dew,
                 relative_humidity_percent: rh,

@@ -570,6 +570,13 @@
             </div>
             <div class="calcBox" id="solarGainReportPanel" style="display:none; margin-bottom:14px;"></div>
             <div class="calcBox" id="weatherReportPanel" style="display:none; margin-bottom:14px;"></div>
+            <div class="panel" id="temperatureDistributionPanel" style="display:none; margin-bottom:20px;">
+                <div class="panelTitle">Annual Dry Bulb Temperature Distribution</div>
+                <div id="temperatureDistributionSummary" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom:12px;"></div>
+                <div class="resultChartBox">
+                    <canvas id="temperatureDistributionChart"></canvas>
+                </div>
+            </div>
 
             <!-- Charts Row -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
