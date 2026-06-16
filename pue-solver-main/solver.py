@@ -1690,41 +1690,11 @@ def compute_pue_project(input_obj):
         dry_cooler_capacity_warning = None
         dry_cooler_power_source = "no_curve"
 
-        condenser_entering_water_c = oat_c
-        if dry_cooler_leaving_water_ref:
-            leaving_water = None
-            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_leaving_water_ref, {}) if isinstance(curve_lib, dict) else {}
-            if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
-                raw_points = raw_curve.get("points")
-                if not isinstance(raw_points, list):
-                    raw_points = raw_curve.get("data", [])
-                x_axis = raw_curve.get("x_axis")
-                output = raw_curve.get("output")
-                pts = []
-                for point in raw_points if isinstance(raw_points, list) else []:
-                    if isinstance(point, dict):
-                        x = _num(point.get(x_axis), None)
-                        y = _num(point.get(output), None)
-                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
-                        x = _num(point[0], None)
-                        y = _num(point[1], None)
-                    else:
-                        continue
-                    if x is None or y is None:
-                        continue
-                    pts.append([x, y])
-                if pts and oat_c is not None:
-                    leaving_water = _num(eval_curve_1d(pts, oat_c, raw_curve.get("interpolation", "linear")), None)
-            if leaving_water is None:
-                leaving_water = _curve_value(curve_lib, dry_cooler_leaving_water_ref, oat_c, None)
-            if leaving_water is not None:
-                condenser_entering_water_c = float(leaving_water)
-        if condenser_entering_water_c is None and oat_c is not None:
+        condenser_entering_water_source = "unavailable"
+        condenser_entering_water_c = None
+        if oat_c is not None:
             condenser_entering_water_c = float(oat_c) + float(dry_cooler_approach_c)
-        elif oat_c is not None and dry_cooler_leaving_water_ref:
-            raw_curve = curve_lib.get("raw_curves", {}).get(dry_cooler_leaving_water_ref, {}) if isinstance(curve_lib, dict) else {}
-            if not raw_curve:
-                condenser_entering_water_c = float(oat_c) + float(dry_cooler_approach_c)
+            condenser_entering_water_source = "outdoor_dry_bulb_plus_approach"
 
         # Thermal cooling load from IT heat sources
         it_heat_load = it_kw  # Simplified - IT heat load equals IT power
@@ -1893,6 +1863,7 @@ def compute_pue_project(input_obj):
         result["hourly_results"].append({
             "hour_index": idx,
             "dry_bulb_C": oat_c,
+            "outdoor_dry_bulb_C": oat_c,
             "wet_bulb_C": wet_c,
             "relative_humidity_percent": rh_val,
             "IT_load_kW": it_kw,
@@ -1922,7 +1893,9 @@ def compute_pue_project(input_obj):
             "dry_cooler_curve_lookup_value": dry_curve_load_value,
             "dry_cooler_rated_power_kw": dry_cooler_rated_power_kw,
             "dry_cooler_capacity_warning": dry_cooler_capacity_warning,
+            "dry_cooler_approach_C": dry_cooler_approach_c,
             "condenser_entering_water_C": condenser_entering_water_c,
+            "condenser_entering_water_source": condenser_entering_water_source,
             "chiller_cop": cop,
             "chiller_cop_load_ratio": cop_load_value,
             "cop_source": cop_source,
