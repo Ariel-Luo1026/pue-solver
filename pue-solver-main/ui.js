@@ -811,6 +811,66 @@ function renderPueContributionSummaryPanel(annual) {
     `).join("");
 }
 
+function mwTextFromKw(value, digits = 1) {
+    const kw = Number(value);
+    if (!Number.isFinite(kw)) return "N/A";
+    return `${fmtNumber(kw / 1000, digits)} MW`;
+}
+
+function ratioPercentText(value, digits = 2) {
+    const ratio = Number(value);
+    if (!Number.isFinite(ratio)) return "N/A";
+    return `${fmtNumber(ratio * 100, digits)}%`;
+}
+
+function buildCoolingUnitArchitectureInfo(outputObj) {
+    const hourly = Array.isArray(outputObj && outputObj.hourly_results) ? outputObj.hourly_results : [];
+    const first = hourly[0] || {};
+    const capacityKw = Number(first.cooling_unit_capacity_kW);
+    const count = Number(first.cooling_unit_count);
+    const totalCapacityKw = Number(first.cooling_unit_total_capacity_kW);
+    const unitLoadRatio = Number(first.unit_load_ratio);
+    if (!Number.isFinite(capacityKw) && !Number.isFinite(count) && !Number.isFinite(totalCapacityKw)) return null;
+    return {
+        capacityKw: Number.isFinite(capacityKw) ? capacityKw : null,
+        count: Number.isFinite(count) ? count : null,
+        totalCapacityKw: Number.isFinite(totalCapacityKw) ? totalCapacityKw : null,
+        unitLoadRatio: Number.isFinite(unitLoadRatio) ? unitLoadRatio : null
+    };
+}
+
+function renderCoolingUnitArchitecturePanel(outputObj) {
+    const panel = document.getElementById("coolingUnitArchitecturePanel");
+    const body = document.getElementById("coolingUnitArchitectureBody");
+    if (!panel || !body) return;
+    const info = buildCoolingUnitArchitectureInfo(outputObj);
+    if (!info) {
+        panel.style.display = "none";
+        body.innerHTML = "";
+        return;
+    }
+    panel.style.display = "block";
+    const architecture = info.count && info.capacityKw
+        ? `${fmtInteger(info.count)} × ${mwTextFromKw(info.capacityKw)} cooling units`
+        : "N/A";
+    const rows = [
+        ["Cooling Unit Capacity", mwTextFromKw(info.capacityKw)],
+        ["Cooling Unit Count", info.count !== null ? fmtInteger(info.count) : "N/A"],
+        ["Total Cooling Unit Capacity", mwTextFromKw(info.totalCapacityKw)],
+        ["Architecture", architecture],
+        ["Dispatch Strategy", "All units running"],
+        ["Load Sharing", "Equal load sharing"],
+        ["Unit Load Ratio", "IT Load / Total Cooling Unit Capacity"],
+        ["Current Unit Load Ratio", ratioPercentText(info.unitLoadRatio)]
+    ];
+    body.innerHTML = rows.map(([label, value]) => `
+        <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">
+            <div class="muted" style="font-size:12px;">${label}</div>
+            <div style="font-weight:700; margin-top:4px;">${value}</div>
+        </div>
+    `).join("");
+}
+
 function linearTicks(min, max, count = 5) {
     if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
     if (Math.abs(max - min) < 1e-12) return [min];
@@ -1369,6 +1429,7 @@ function buildHtmlReport(context) {
     const energyChart = svgBarChart(energyRows.map(([label, value]) => ({ label: label.replace(" Energy", "").replace("Electrical ", "Elec "), value: Number(value) / 1000 })), { yLabel: "MWh" });
     const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value })), { yLabel: "PUE" });
     const contributionSummary = buildPueContributionSummary(annual);
+    const coolingUnitInfo = buildCoolingUnitArchitectureInfo(output);
     const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
     const pueContribution = (value) => itEnergy > 0 ? (Number(value) || 0) / itEnergy : null;
     const pueContributionText = (value, signed = true) => {
@@ -1524,6 +1585,21 @@ function buildHtmlReport(context) {
     <h2>4. Methodology</h2>
     <p>The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured.</p>
     <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
+    ${coolingUnitInfo ? `
+        <div class="card">
+            <h3>Cooling Unit Architecture</h3>
+            <p>The model assumes <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} cooling units (total cooling capacity = ${mwTextFromKw(coolingUnitInfo.totalCapacityKw)})` : "N/A")}</b>. All chiller and dry cooler units are assumed to run throughout the year with equal load sharing. Unit load ratio is calculated as IT Load divided by total cooling unit capacity. N+1 or staged dispatch control is not included in this version.</p>
+            <table><tbody>${tableRows([
+                ["Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.capacityKw))],
+                ["Cooling Unit Count", coolingUnitInfo.count !== null ? esc(fmtInteger(coolingUnitInfo.count)) : "N/A"],
+                ["Total Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.totalCapacityKw))],
+                ["Dispatch Strategy", "All units running"],
+                ["Load Sharing", "Equal load sharing across all cooling units"],
+                ["Unit Load Ratio", "<code>IT Load / Total Cooling Unit Capacity</code>"],
+                ["N+1 / Staged Dispatch", "Not included"]
+            ])}</tbody></table>
+        </div>
+    ` : ""}
     <h3>Mathematical Framework</h3>
     ${formulasHtml()}
     <table><tbody>${tableRows([
@@ -3036,6 +3112,7 @@ function showProjectVisualization(outObj) {
     renderWeatherReportPanel();
     renderTemperatureDistributionPanel();
     renderPueContributionSummaryPanel(annual);
+    renderCoolingUnitArchitecturePanel(outObj);
 
     const sampled = decimateHourlyRows(hourly);
     const labels = sampled.map((row, index) => {
@@ -3278,6 +3355,7 @@ function showSinglePointVisualization(outObj) {
     renderWeatherReportPanel();
     renderTemperatureDistributionPanel();
     renderPueContributionSummaryPanel(null);
+    renderCoolingUnitArchitecturePanel(null);
 
     const onePoint = [{
         hour_index: "Current",
