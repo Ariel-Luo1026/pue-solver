@@ -283,18 +283,30 @@
             "load_kw",
             "power_kw"
         ]);
-        if (!it) throw new Error("Could not find IT load column. Expected IT_load_kW or hourly_it_load_kW.");
+        const itPercent = !it ? rowsColumn(rows, [
+            "hourly_it_load_%",
+            "hourly_it_load_percent",
+            "hourly_it_load_pct",
+            "IT_load_%",
+            "IT Load %",
+            "it_load_percent",
+            "it_load_pct",
+            "load_percent",
+            "load_%"
+        ]) : null;
+        if (!it && !itPercent) throw new Error("Could not find IT load column. Expected IT_load_kW/hourly_it_load_kW or hourly_it_load_%.");
+        const values = it || itPercent;
         const hour = rowsColumn(rows, ["hour_index", "hour", "hour_of_year"]) ||
-            Array.from({ length: it.length }, (_, i) => i + 1);
+            Array.from({ length: values.length }, (_, i) => i + 1);
+        const data = { hour_index: hour.slice(0, values.length) };
+        if (it) data.hourly_it_load_kW = it;
+        if (itPercent) data.hourly_it_load_percent = itPercent;
         return {
             schema_version: "pue.timeseries.it_load.v1",
             type: "annual_it_load",
             source_format: "excel",
-            units: { hour_index: "1-8760", hourly_it_load_kW: "kW" },
-            data: {
-                hour_index: hour.slice(0, it.length),
-                hourly_it_load_kW: it
-            }
+            units: { hour_index: "1-8760", hourly_it_load_kW: "kW", hourly_it_load_percent: "%" },
+            data
         };
     }
 

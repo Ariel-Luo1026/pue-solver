@@ -1712,6 +1712,12 @@ function numericArray(value) {
     return out.length > 1 ? out : null;
 }
 
+function numericArrayAny(value) {
+    if (!Array.isArray(value)) return null;
+    const out = value.map(Number).filter(v => Number.isFinite(v));
+    return out.length > 0 ? out : null;
+}
+
 function columnFromRows(rows, key) {
     if (!Array.isArray(rows)) return null;
     const out = rows.map(row => row && Number(row[key])).filter(v => Number.isFinite(v));
@@ -1724,6 +1730,85 @@ function firstNumericArray(obj, paths) {
         if (arr) return arr;
     }
     return null;
+}
+
+function firstNumericArrayAny(obj, paths) {
+    for (const path of paths) {
+        const arr = numericArrayAny(getPath(obj, path));
+        if (arr) return arr;
+    }
+    return null;
+}
+
+function projectDesignCapacityKw() {
+    const info = getProjectReportInfo();
+    return info.capacityMw !== null ? Number(info.capacityMw) * 1000 : null;
+}
+
+function percentLoadToFraction(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return n > 1 ? n / 100 : n;
+}
+
+function percentArrayToKw(values, designCapacityKw) {
+    if (!Array.isArray(values) || !(designCapacityKw > 0)) return null;
+    const converted = values
+        .map(value => {
+            const fraction = percentLoadToFraction(value);
+            return fraction === null ? null : fraction * designCapacityKw;
+        })
+        .filter(value => Number.isFinite(value));
+    return converted.length > 0 ? converted : null;
+}
+
+function findItLoadPercentArray(obj) {
+    return firstNumericArrayAny(obj, [
+        ["data", "hourly_it_load_percent"],
+        ["data", "hourly_it_load_pct"],
+        ["data", "hourly_it_load_%"],
+        ["hourly_it_load_percent"],
+        ["hourly_it_load_pct"],
+        ["hourly_it_load_%"],
+        ["project", "it_load", "hourly_it_load_percent"],
+        ["project", "it_load", "hourly_it_load_pct"],
+        ["project", "it_load", "hourly_it_load_%"],
+        ["it_load", "hourly_it_load_percent"],
+        ["it_load", "hourly_it_load_pct"],
+        ["it_load", "hourly_it_load_%"]
+    ]);
+}
+
+function normalizeItLoadPercentFile(itLoadObj) {
+    if (!itLoadObj || typeof itLoadObj !== "object") return itLoadObj;
+    const existingKw = firstNumericArray(itLoadObj, [
+        ["data", "hourly_it_load_kW"],
+        ["hourly_it_load_kW"],
+        ["project", "it_load", "hourly_it_load_kW"]
+    ]);
+    if (existingKw) return itLoadObj;
+    const percent = findItLoadPercentArray(itLoadObj);
+    if (!percent) return itLoadObj;
+    const designCapacityKw = projectDesignCapacityKw();
+    if (!(designCapacityKw > 0)) {
+        throw new Error("IT load file uses hourly_it_load_%. Please enter IT Design Capacity (MW) before importing it.");
+    }
+    const converted = percentArrayToKw(percent, designCapacityKw);
+    if (!converted) throw new Error("Could not convert hourly_it_load_% to hourly_it_load_kW.");
+    itLoadObj.data = itLoadObj.data && typeof itLoadObj.data === "object" ? itLoadObj.data : {};
+    itLoadObj.data.hourly_it_load_percent = percent;
+    itLoadObj.data.hourly_it_load_kW = converted;
+    itLoadObj.units = itLoadObj.units && typeof itLoadObj.units === "object" ? itLoadObj.units : {};
+    itLoadObj.units.hourly_it_load_percent = "%";
+    itLoadObj.units.hourly_it_load_kW = "kW";
+    itLoadObj.design_it_capacity_kW = designCapacityKw;
+    itLoadObj.design_it_capacity_MW = designCapacityKw / 1000;
+    itLoadObj.conversion = {
+        source: "hourly_it_load_percent",
+        formula: "IT_load_kW = percent * IT Design Capacity (MW) * 1000",
+        percent_rule: "values > 1 are divided by 100; values <= 1 are treated as fractions"
+    };
+    return itLoadObj;
 }
 
 function sumModuleItLoadArrays(modules) {
@@ -1747,6 +1832,25 @@ function scalarNumberFromPaths(obj, paths) {
         if (Number.isFinite(num)) return num;
     }
     return null;
+}
+
+function designCapacityKwFromInput(inputObj) {
+    const directKw = scalarNumberFromPaths(inputObj, [
+        ["project", "it_load", "design_it_load_kW"],
+        ["project", "design_it_load_kW"],
+        ["it_load", "design_it_load_kW"],
+        ["design_it_load_kW"]
+    ]);
+    if (directKw !== null) return directKw;
+    const mw = scalarNumberFromPaths(inputObj, [
+        ["project", "capacity_mw"],
+        ["project", "capacityMw"],
+        ["project", "it_design_capacity_MW"],
+        ["project", "it_design_capacity_mw"],
+        ["it_design_capacity_MW"],
+        ["it_design_capacity_mw"]
+    ]);
+    return mw !== null ? mw * 1000 : null;
 }
 
 function scalarModuleItLoad(modules) {
@@ -1782,6 +1886,19 @@ function normalizeAnnualProjectInput(inputObj) {
         ["power", "hourly_it_power_kw"],
         ["power", "total_it_power_kw"]
     ]);
+
+    if (!hourlyIt) {
+        const percentIt = findItLoadPercentArray(normalized);
+        if (percentIt) {
+            const designCapacityKw = designCapacityKwFromInput(normalized);
+            hourlyIt = percentArrayToKw(percentIt, designCapacityKw);
+            if (hourlyIt) {
+                project.it_load = project.it_load && typeof project.it_load === "object" ? project.it_load : {};
+                project.it_load.design_it_load_kW = project.it_load.design_it_load_kW || designCapacityKw;
+                project.it_load.hourly_it_load_percent = percentIt;
+            }
+        }
+    }
 
     if (!hourlyIt) {
         hourlyIt =
@@ -2517,6 +2634,10 @@ function buildSolverInputFromStandardFiles(files) {
         ? Number(dryApproachInput.value)
         : 5;
     const n = Math.min(it.length, dry.length);
+    const designItLoadKw =
+        scalarNumberFromPaths(files.itLoad || {}, [["design_it_capacity_kW"], ["project", "it_load", "design_it_load_kW"]]) ||
+        projectDesignCapacityKw() ||
+        Math.max(...it);
     return {
         project: {
             name: "Frontend Standardized Annual PUE Project",
@@ -2524,7 +2645,7 @@ function buildSolverInputFromStandardFiles(files) {
             project_mode: true,
             it_load: {
                 hourly_it_load_kW: it.slice(0, n),
-                design_it_load_kW: Math.max(...it)
+                design_it_load_kW: designItLoadKw
             },
             auxiliary_loads: {
                 auxiliary_fixed_load_coefficient: auxCoeff
@@ -2723,6 +2844,9 @@ async function handleStandardFile(slot, statusId, file) {
             ? await window.PueImportAdapter.adaptFile(slot, file)
             : await readJsonFile(file);
         if (json && typeof json === "object") json.source_file = file.name;
+        if (slot === "itLoad") {
+            normalizeItLoadPercentFile(json);
+        }
         if (slot === "weather" && json && json.source_format === "epw") {
             setWeatherSourceMetadata(json, {
                 source: "Manual Upload",

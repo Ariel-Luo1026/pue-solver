@@ -6,7 +6,7 @@
 # - WUE/CUE interface: WU  E = water(L)/E_IT(kWh), CUE = CO2e(kg)/E_IT(kWh) for energy mode (future)
 # Pyodide-friendly: no external deps.
 
-from math import isfinite
+from math import ceil, isfinite
 from copy import deepcopy
 
 # -------------------------
@@ -1367,6 +1367,23 @@ def compute_pue_project(input_obj):
         aux_coeff = 0.005
     aux_coeff = _clamp(float(aux_coeff), 0.0, 1.0)
 
+    cooling_cfg = _get(input_obj, ["equipment", "cooling"], {})
+    if not isinstance(cooling_cfg, dict):
+        cooling_cfg = {}
+    cooling_unit_capacity_kw = _num(cooling_cfg.get("cooling_unit_capacity_kW"), None)
+    if cooling_unit_capacity_kw is None:
+        cooling_unit_capacity_kw = _num(cooling_cfg.get("cooling_unit_capacity_kw"), None)
+    if cooling_unit_capacity_kw is None:
+        cooling_unit_capacity_kw = _num(_get(input_obj, ["project", "it_load", "cooling_unit_capacity_kW"], None), None)
+    if cooling_unit_capacity_kw is None:
+        cooling_unit_capacity_kw = 2000.0
+    cooling_unit_count = _num(cooling_cfg.get("cooling_unit_count"), None)
+    if cooling_unit_count is None:
+        cooling_unit_count = _num(_get(input_obj, ["project", "it_load", "cooling_unit_count"], None), None)
+    if cooling_unit_count is None:
+        cooling_unit_count = ceil(float(design_it_load or 0.0) / cooling_unit_capacity_kw) if cooling_unit_capacity_kw > 0 else 1
+    cooling_unit_count = max(1, int(ceil(float(cooling_unit_count))))
+
     dry_cooler_cfg = _get(input_obj, ["equipment", "cooling", "dry_cooler"], {})
     if not isinstance(dry_cooler_cfg, dict):
         dry_cooler_cfg = {}
@@ -1381,7 +1398,7 @@ def compute_pue_project(input_obj):
     if dry_cooler_rated_power_kw is None:
         dry_cooler_rated_power_kw = _num(dry_cooler_cfg.get("rated_power_kw"), None)
     if dry_cooler_rated_power_kw is None:
-        dry_cooler_rated_power_kw = 0.03 * float(design_it_load or 0.0)
+        dry_cooler_rated_power_kw = 0.03 * float(cooling_unit_capacity_kw or 0.0)
     dry_cooler_heat_rejection_capacity_kw = _num(dry_cooler_cfg.get("heat_rejection_capacity_kW"), None)
     if dry_cooler_heat_rejection_capacity_kw is None:
         dry_cooler_heat_rejection_capacity_kw = _num(dry_cooler_cfg.get("heat_rejection_capacity_kw"), None)
@@ -1515,6 +1532,14 @@ def compute_pue_project(input_obj):
 
         load_ratio = (it_kw / design_it_load) if design_it_load and design_it_load > 0 else 0.0
         load_ratio = _clamp(load_ratio, 0.0, 1.0)
+        project_load_ratio = load_ratio
+        cooling_unit_total_capacity_kw = cooling_unit_count * cooling_unit_capacity_kw
+        unit_load_ratio_raw = (
+            it_kw / cooling_unit_total_capacity_kw
+            if cooling_unit_total_capacity_kw and cooling_unit_total_capacity_kw > 0
+            else 0.0
+        )
+        unit_load_ratio = _clamp(unit_load_ratio_raw, 0.0, 1.0)
 
         # Direct calculation using curve_lib with simplified assumptions
         # Assume standard electrical chain: UPS + transformers
@@ -1653,9 +1678,11 @@ def compute_pue_project(input_obj):
         other_kw = 0.0
 
         dry_cooler_kw = 0.0
+        dry_cooler_power_per_unit_kw = 0.0
         dry_curve_value = None
-        dry_curve_load_value = load_ratio
+        dry_curve_load_value = unit_load_ratio
         heat_rejection_to_dry_cooler_kw = None
+        heat_rejection_per_dry_cooler_unit_kw = None
         dry_cooler_load_kw = None
         facility_load_kw = it_kw + pumps_kw + airflow_kw + aux_kw + other_kw
         dry_cooler_load_ratio_raw = None
@@ -1707,7 +1734,7 @@ def compute_pue_project(input_obj):
         total_thermal_load = it_heat_load + pumps_heat + airflow_heat + other_heat
 
         # Cooling power calculation using COP curve
-        cop_load_value = load_ratio
+        cop_load_value = unit_load_ratio
         raw_chiller_curve = curve_lib.get("raw_curves", {}).get(chiller_curve_ref, {}) if isinstance(curve_lib, dict) else {}
         chiller_y_axis = str(raw_chiller_curve.get("y_axis", "")).lower() if isinstance(raw_chiller_curve, dict) else ""
         cop_uses_percent_load = "percent" in chiller_y_axis or "pct" in chiller_y_axis
@@ -1731,8 +1758,8 @@ def compute_pue_project(input_obj):
                 if y is not None and y > 2.0:
                     cop_uses_percent_load = True
                     break
-        if cop_uses_percent_load and load_ratio <= 1.0:
-            cop_load_value = load_ratio * 100.0
+        if cop_uses_percent_load and unit_load_ratio <= 1.0:
+            cop_load_value = unit_load_ratio * 100.0
 
         cop = _curve_value(curve_lib, chiller_curve_ref, x=condenser_entering_water_c, y=cop_load_value)
         cop_source = "curve_value"
@@ -1797,19 +1824,16 @@ def compute_pue_project(input_obj):
             cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
         heat_rejection_to_dry_cooler_kw = it_kw
+        heat_rejection_per_dry_cooler_unit_kw = heat_rejection_to_dry_cooler_kw / cooling_unit_count if cooling_unit_count > 0 else heat_rejection_to_dry_cooler_kw
         dry_cooler_load_kw = heat_rejection_to_dry_cooler_kw
-        dry_cooler_load_ratio_raw = (
-            heat_rejection_to_dry_cooler_kw / dry_cooler_heat_rejection_capacity_kw
-            if dry_cooler_heat_rejection_capacity_kw and dry_cooler_heat_rejection_capacity_kw > 0
-            else None
-        )
+        dry_cooler_load_ratio_raw = unit_load_ratio_raw
         if dry_cooler_load_ratio_raw is not None:
             if dry_cooler_load_ratio_raw > 1.0:
                 dry_cooler_over_capacity_count += 1
                 dry_cooler_capacity_warning = (
-                    "Dry cooler heat rejection load exceeds rated heat rejection capacity. "
-                    f"Load {heat_rejection_to_dry_cooler_kw:.2f} kW; "
-                    f"capacity {dry_cooler_heat_rejection_capacity_kw:.2f} kW."
+                    "Dry cooler unit load exceeds installed cooling unit capacity. "
+                    f"Project load {heat_rejection_to_dry_cooler_kw:.2f} kW; "
+                    f"installed capacity {cooling_unit_total_capacity_kw:.2f} kW."
                 )
             dry_cooler_load_ratio = min(dry_cooler_load_ratio_raw, 1.0)
             dry_curve_load_value = dry_cooler_load_ratio
@@ -1851,10 +1875,12 @@ def compute_pue_project(input_obj):
             if dry_curve_value is not None:
                 output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
                 if "kw" in output_name or "power_kw" in output_name:
-                    dry_cooler_kw = max(0.0, float(dry_curve_value))
+                    dry_cooler_power_per_unit_kw = max(0.0, float(dry_curve_value))
+                    dry_cooler_kw = dry_cooler_power_per_unit_kw * cooling_unit_count
                     dry_cooler_power_source = f"{dry_cooler_power_source}_fan_power_kw_direct"
                 else:
-                    dry_cooler_kw = max(0.0, float(dry_curve_value) * float(dry_cooler_rated_power_kw or 0.0))
+                    dry_cooler_power_per_unit_kw = max(0.0, float(dry_curve_value) * float(dry_cooler_rated_power_kw or 0.0))
+                    dry_cooler_kw = dry_cooler_power_per_unit_kw * cooling_unit_count
                     dry_cooler_power_source = f"{dry_cooler_power_source}_fan_power_factor_times_rated"
         cooling_kw = chiller_kw + dry_cooler_kw
 
@@ -1870,15 +1896,26 @@ def compute_pue_project(input_obj):
             "wet_bulb_C": wet_c,
             "relative_humidity_percent": rh_val,
             "IT_load_kW": it_kw,
+            "design_it_load_kW": design_it_load,
+            "cooling_unit_capacity_kW": cooling_unit_capacity_kw,
+            "cooling_unit_count": cooling_unit_count,
+            "cooling_unit_total_capacity_kW": cooling_unit_total_capacity_kw,
+            "project_load_ratio": project_load_ratio,
+            "unit_load_ratio": unit_load_ratio,
+            "unit_load_ratio_raw": unit_load_ratio_raw,
             "cooling_power_kW": cooling_kw,
             "chiller_power_kW": chiller_kw,
             "dry_cooler_power_kW": dry_cooler_kw,
             "dry_cooler_fan_power_kW": dry_cooler_kw,
+            "dry_cooler_power_per_unit_kW": dry_cooler_power_per_unit_kw,
             "dry_cooler_power_source": dry_cooler_power_source,
             "heat_rejection_to_dry_cooler_kW": heat_rejection_to_dry_cooler_kw,
+            "heat_rejection_per_dry_cooler_unit_kW": heat_rejection_per_dry_cooler_unit_kw,
             "dry_cooler_heat_rejection_capacity_kW": dry_cooler_heat_rejection_capacity_kw,
+            "dry_cooler_total_heat_rejection_capacity_kW": cooling_unit_total_capacity_kw,
             "dry_cooler_load_ratio": dry_cooler_load_ratio,
             "dry_cooler_load_ratio_raw": dry_cooler_load_ratio_raw,
+            "dry_cooler_unit_load_ratio": dry_cooler_load_ratio,
             "dry_cooler_load_kW": dry_cooler_load_kw,
             "facility_load_kW": facility_load_kw,
             "dry_cooler_curve_value": dry_curve_value,
@@ -1887,6 +1924,7 @@ def compute_pue_project(input_obj):
             "dry_cooler_capacity_warning": dry_cooler_capacity_warning,
             "condenser_entering_water_C": condenser_entering_water_c,
             "chiller_cop": cop,
+            "chiller_cop_load_ratio": cop_load_value,
             "cop_source": cop_source,
             "pump_power_kW": pumps_kw,
             "pumps_kw": pumps_kw,
