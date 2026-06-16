@@ -747,6 +747,70 @@ function tableRows(rows) {
     return rows.map(([label, value]) => `<tr><th>${esc(label)}</th><td>${value}</td></tr>`).join("");
 }
 
+function buildPueContributionSummary(annual = {}) {
+    const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
+    const annualPue = Number(annual.annual_average_PUE) || 0;
+    const nonItPue = annualPue > 1 ? annualPue - 1 : 0;
+    const ppue = (value) => itEnergy > 0 ? (Number(value) || 0) / itEnergy : null;
+    const share = (value) => nonItPue > 0 && Number.isFinite(Number(value)) ? Number(value) / nonItPue : null;
+    const drivers = [
+        { key: "cooling", label: "Cooling System", ppue: ppue(annual.annual_total_cooling_system_energy_kWh) },
+        { key: "electrical", label: "Electrical Loss", ppue: ppue(annual.annual_electrical_loss_kWh) },
+        { key: "auxiliary", label: "Auxiliary", ppue: ppue(annual.annual_auxiliary_energy_kWh) }
+    ];
+    const rankedDrivers = drivers
+        .filter(driver => Number.isFinite(Number(driver.ppue)))
+        .sort((a, b) => Number(b.ppue) - Number(a.ppue));
+    return {
+        itEnergy,
+        annualPue,
+        nonItPue,
+        coolingPPUE: drivers[0].ppue,
+        electricalPPUE: drivers[1].ppue,
+        auxiliaryPPUE: drivers[2].ppue,
+        coolingShare: share(drivers[0].ppue),
+        electricalShare: share(drivers[1].ppue),
+        auxiliaryShare: share(drivers[2].ppue),
+        largestDriver: rankedDrivers[0] || null
+    };
+}
+
+function signedPpueText(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "N/A";
+    return `${Number(value) >= 0 ? "+" : ""}${fmtNumber(value, 3)}`;
+}
+
+function percentText(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "N/A";
+    return `${fmtNumber(Number(value) * 100, 0)}%`;
+}
+
+function renderPueContributionSummaryPanel(annual) {
+    const panel = document.getElementById("pueContributionSummaryPanel");
+    const body = document.getElementById("pueContributionSummaryBody");
+    if (!panel || !body) return;
+    const summary = buildPueContributionSummary(annual || {});
+    if (!(summary.itEnergy > 0)) {
+        panel.style.display = "none";
+        body.innerHTML = "";
+        return;
+    }
+    panel.style.display = "block";
+    const rows = [
+        ["Cooling System pPUE", signedPpueText(summary.coolingPPUE)],
+        ["Electrical Loss pPUE", signedPpueText(summary.electricalPPUE)],
+        ["Auxiliary pPUE", signedPpueText(summary.auxiliaryPPUE)],
+        ["Largest PUE Driver", summary.largestDriver ? summary.largestDriver.label : "N/A"],
+        ["Cooling Share of Non-IT Overhead", percentText(summary.coolingShare)]
+    ];
+    body.innerHTML = rows.map(([label, value]) => `
+        <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">
+            <div class="muted" style="font-size:12px;">${label}</div>
+            <div style="font-weight:700; margin-top:4px;">${value}</div>
+        </div>
+    `).join("");
+}
+
 function linearTicks(min, max, count = 5) {
     if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
     if (Math.abs(max - min) < 1e-12) return [min];
@@ -1043,7 +1107,14 @@ function renderChillerSurfacePlot(points) {
             x: pts.map(p => p[0]),
             y: pts.map(p => p[1]),
             z: pts.map(p => p[2]),
-            marker: { size: 4, color: "#dc2626", opacity: 0.95 },
+            marker: {
+                size: 4,
+                color: "rgba(255,255,255,0.95)",
+                line: {
+                    color: "rgba(80,80,80,0.4)",
+                    width: 1
+                }
+            },
             name: "Original table points",
             hovertemplate: "T=%{x:.2f}<br>" + loadLabel + "=%{y:.3f}<br>COP=%{z:.3f}<extra></extra>"
         }
@@ -1297,6 +1368,26 @@ function buildHtmlReport(context) {
     ].filter(([, value]) => Number(value) > 0);
     const energyChart = svgBarChart(energyRows.map(([label, value]) => ({ label: label.replace(" Energy", "").replace("Electrical ", "Elec "), value: Number(value) / 1000 })), { yLabel: "MWh" });
     const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value })), { yLabel: "PUE" });
+    const contributionSummary = buildPueContributionSummary(annual);
+    const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
+    const pueContribution = (value) => itEnergy > 0 ? (Number(value) || 0) / itEnergy : null;
+    const pueContributionText = (value, signed = true) => {
+        if (value === null || value === undefined) return "N/A";
+        if (!Number.isFinite(Number(value))) return "N/A";
+        const formatted = reportValue(value, "", 3);
+        return signed && Number(value) >= 0 ? `+${formatted}` : formatted;
+    };
+    const pueContributionRows = [
+        { label: "IT Base", value: 1, css: "base", signed: false },
+        { label: "Cooling System pPUE", value: contributionSummary.coolingPPUE, css: "", signed: true },
+        { label: "├─ Chiller", value: pueContribution(annual.annual_chiller_energy_kWh), css: "child", signed: true },
+        { label: "├─ Dry Cooler", value: pueContribution(annual.annual_dry_cooler_energy_kWh), css: "child", signed: true },
+        { label: "├─ Pump", value: pueContribution(annual.annual_pump_energy_kWh), css: "child", signed: true },
+        { label: "└─ Terminal Fan", value: pueContribution(annual.annual_terminal_fan_energy_kWh), css: "child", signed: true },
+        { label: "Electrical Loss pPUE", value: contributionSummary.electricalPPUE, css: "", signed: true },
+        { label: "Auxiliary pPUE", value: contributionSummary.auxiliaryPPUE, css: "", signed: true },
+        { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
+    ];
     const curveRegisterRows = reportCurves.map(curve => [
         curve.category,
         esc(curve.curveId),
@@ -1356,6 +1447,12 @@ function buildHtmlReport(context) {
     .formulaName { font: 700 12px Arial, sans-serif; color:var(--muted); text-transform:uppercase; letter-spacing:.035em; margin-bottom:8px; }
     .math { font-family: "Times New Roman", Georgia, serif; font-size:18px; color:#111827; }
     .math i { font-style: italic; }
+    .breakdown { font-size: 13px; }
+    .breakdown th { width:auto; }
+    .breakdown td:last-child { text-align:right; font-variant-numeric: tabular-nums; font-weight:700; }
+    .breakdown .base td { background:#F8FAFC; font-weight:700; }
+    .breakdown .child td:first-child { padding-left:24px; color:var(--muted); }
+    .breakdown .total td { border-top:2px solid var(--ink); font-size:14px; background:#F8FAFC; }
     .frac { display:inline-flex; flex-direction:column; vertical-align:middle; text-align:center; line-height:1.12; margin:0 4px; }
     .frac span:first-child { border-bottom:1px solid #111; padding:0 5px 2px; }
     .frac span:last-child { padding-top:2px; }
@@ -1497,6 +1594,42 @@ function buildHtmlReport(context) {
         ["Annual Electrical Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
         ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
     ])}</tbody></table>
+    <div class="grid">
+        <div class="card">
+            <h3>PUE Contribution Breakdown</h3>
+            <table class="breakdown">
+                <thead><tr><th>Component</th><th>pPUE Contribution</th></tr></thead>
+                <tbody>${pueContributionRows.map(row => `
+                    <tr class="${esc(row.css || "")}">
+                        <td>${esc(row.label)}</td>
+                        <td>${pueContributionText(row.value, row.signed)}</td>
+                    </tr>
+                `).join("")}</tbody>
+            </table>
+        </div>
+        <div class="card">
+            <h3>Key Findings</h3>
+            <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
+            <p>Electrical losses contribute <b>${esc(percentText(contributionSummary.electricalShare))}</b> of the non-IT PUE overhead.</p>
+            <p>Auxiliary loads contribute <b>${esc(percentText(contributionSummary.auxiliaryShare))}</b> of the non-IT PUE overhead.</p>
+            <table><tbody>${tableRows([
+                ["Non-IT PUE Overhead", contributionSummary.nonItPue > 0 ? reportValue(contributionSummary.nonItPue, "", 3) : "N/A"],
+                ["Largest PUE Driver", esc(contributionSummary.largestDriver ? contributionSummary.largestDriver.label : "N/A")]
+            ])}</tbody></table>
+        </div>
+        <div class="card">
+            <h3>Breakdown Basis</h3>
+            <table><tbody>${tableRows([
+                ["Base IT PUE", "1.000"],
+                ["Cooling System pPUE", "<code>annual_total_cooling_system_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Cooling System Includes", "Chiller + Dry Cooler + Pump + Terminal Fan"],
+                ["Electrical Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
+                ["Auxiliary pPUE", "<code>annual_auxiliary_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
+            ])}</tbody></table>
+            <div class="note">This section is a report-only decomposition of the existing annual results. It does not recalculate or overwrite <code>annual_average_PUE</code>.</div>
+        </div>
+    </div>
     <div class="grid">
         <div class="card"><h3>8760 Annual PUE Timeseries</h3>${svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year" })}</div>
         <div class="card"><h3>Facility Power Timeseries</h3>${svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year" })}</div>
@@ -2778,6 +2911,7 @@ function showProjectVisualization(outObj) {
     renderSolarGainReportPanel();
     renderWeatherReportPanel();
     renderTemperatureDistributionPanel();
+    renderPueContributionSummaryPanel(annual);
 
     const sampled = decimateHourlyRows(hourly);
     const labels = sampled.map((row, index) => {
@@ -3019,6 +3153,7 @@ function showSinglePointVisualization(outObj) {
     renderSolarGainReportPanel();
     renderWeatherReportPanel();
     renderTemperatureDistributionPanel();
+    renderPueContributionSummaryPanel(null);
 
     const onePoint = [{
         hour_index: "Current",
