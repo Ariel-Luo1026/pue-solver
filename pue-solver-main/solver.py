@@ -1563,12 +1563,17 @@ def compute_pue_project(input_obj):
 
         # Simplified variable loads (pumps, fans, etc.)
         pumps_kw = 0.01 * it_kw  # 1% of IT load
+        pump_load_ratio = unit_load_ratio
+        chw_pump_power_per_unit_kw = 0.0
+        cw_pump_power_per_unit_kw = 0.0
+        pump_power_per_unit_kw = 0.0
+        pump_power_total_check = True
         pump_debug_rows = []
         if pumps_enabled and pump_curve_refs:
-            pump_values = []
+            pump_values_per_unit = []
             for pump_ref in pump_curve_refs:
                 pump_curve_value = None
-                pump_curve_load_value = load_ratio
+                pump_curve_load_value = pump_load_ratio
                 pump_source = "curve_missing"
                 raw_curve = curve_lib.get("raw_curves", {}).get(str(pump_ref), {}) if isinstance(curve_lib, dict) else {}
                 if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
@@ -1592,8 +1597,8 @@ def compute_pue_project(input_obj):
                         pts.append([x, y])
                     if pts:
                         max_x = max(point[0] for point in pts)
-                        if max_x > 2.0 and load_ratio <= 1.0:
-                            pump_curve_load_value = load_ratio * 100.0
+                        if max_x > 2.0 and pump_load_ratio <= 1.0:
+                            pump_curve_load_value = pump_load_ratio * 100.0
                         pump_curve_value = _num(eval_curve_1d(pts, pump_curve_load_value, raw_curve.get("interpolation", "linear")), None)
                         pump_source = "raw_points"
                 if pump_curve_value is None:
@@ -1607,19 +1612,27 @@ def compute_pue_project(input_obj):
                     pump_kw = max(0.0, float(pump_curve_value))
                     pump_source = f"{pump_source}_power_kw_direct"
                 else:
-                    rated_each = (0.01 * float(design_it_load or 0.0)) / max(len(pump_curve_refs), 1)
+                    rated_each = (0.01 * float(cooling_unit_capacity_kw or 0.0)) / max(len(pump_curve_refs), 1)
                     pump_kw = max(0.0, float(pump_curve_value) * rated_each)
                     pump_source = f"{pump_source}_power_factor_times_rated"
-                pump_values.append(pump_kw)
+                pump_values_per_unit.append(pump_kw)
+                pump_ref_lower = str(pump_ref).lower()
+                if "chw" in pump_ref_lower:
+                    chw_pump_power_per_unit_kw += pump_kw
+                elif "cw" in pump_ref_lower:
+                    cw_pump_power_per_unit_kw += pump_kw
                 pump_debug_rows.append({
                     "curve_ref": str(pump_ref),
                     "source": pump_source,
                     "load_ratio": pump_curve_load_value,
                     "curve_value": pump_curve_value,
-                    "power_kW": pump_kw
+                    "power_per_unit_kW": pump_kw,
+                    "total_power_kW": pump_kw * cooling_unit_count
                 })
-            if pump_values:
-                pumps_kw = sum(pump_values)
+            if pump_values_per_unit:
+                pump_power_per_unit_kw = sum(pump_values_per_unit)
+                pumps_kw = pump_power_per_unit_kw * cooling_unit_count
+                pump_power_total_check = abs((pump_power_per_unit_kw * cooling_unit_count) - pumps_kw) <= 1e-9
         airflow_kw = 0.02 * it_kw  # 2% of IT load
         fan_curve_value = None
         fan_curve_load_value = load_ratio
@@ -1730,6 +1743,40 @@ def compute_pue_project(input_obj):
                     break
         if cop_uses_percent_load and unit_load_ratio <= 1.0:
             cop_load_value = unit_load_ratio * 100.0
+
+        cop_surface_x_min = None
+        cop_surface_x_max = None
+        cop_lookup_x = condenser_entering_water_c
+        cop_lookup_y = cop_load_value
+        cop_x_values = []
+        if isinstance(raw_chiller_curve, dict) and str(raw_chiller_curve.get("type", "")).lower() == "2d_lookup_table":
+            raw_points_for_debug = raw_chiller_curve.get("points")
+            if not isinstance(raw_points_for_debug, list):
+                raw_points_for_debug = raw_chiller_curve.get("data", [])
+            x_axis_for_debug = raw_chiller_curve.get("x_axis")
+            for point in raw_points_for_debug if isinstance(raw_points_for_debug, list) else []:
+                if isinstance(point, dict):
+                    x_item = _num(point.get(x_axis_for_debug), None)
+                elif isinstance(point, (list, tuple)) and len(point) >= 1:
+                    x_item = _num(point[0], None)
+                else:
+                    x_item = None
+                if x_item is not None:
+                    cop_x_values.append(x_item)
+        if not cop_x_values:
+            cop_surfaces = curve_lib.get("cop_surfaces", {}) if isinstance(curve_lib, dict) else {}
+            surface = cop_surfaces.get(chiller_curve_ref) if isinstance(cop_surfaces, dict) else None
+            if isinstance(surface, dict):
+                for slice_item in surface.get("oat_slices", []) if isinstance(surface.get("oat_slices", []), list) else []:
+                    if isinstance(slice_item, dict):
+                        x_item = _num(slice_item.get("oat_c"), None)
+                        if x_item is not None:
+                            cop_x_values.append(x_item)
+        if cop_x_values:
+            cop_surface_x_min = min(cop_x_values)
+            cop_surface_x_max = max(cop_x_values)
+            if condenser_entering_water_c is not None:
+                cop_lookup_x = _clamp(float(condenser_entering_water_c), cop_surface_x_min, cop_surface_x_max)
 
         cop = _curve_value(curve_lib, chiller_curve_ref, x=condenser_entering_water_c, y=cop_load_value)
         cop_source = "curve_value"
@@ -1898,7 +1945,16 @@ def compute_pue_project(input_obj):
             "condenser_entering_water_source": condenser_entering_water_source,
             "chiller_cop": cop,
             "chiller_cop_load_ratio": cop_load_value,
+            "cop_lookup_x": cop_lookup_x,
+            "cop_lookup_y": cop_lookup_y,
+            "cop_surface_x_min": cop_surface_x_min,
+            "cop_surface_x_max": cop_surface_x_max,
             "cop_source": cop_source,
+            "pump_load_ratio": pump_load_ratio,
+            "chw_pump_power_per_unit_kW": chw_pump_power_per_unit_kw,
+            "cw_pump_power_per_unit_kW": cw_pump_power_per_unit_kw,
+            "pump_power_per_unit_kW": pump_power_per_unit_kw,
+            "pump_power_total_check": pump_power_total_check,
             "pump_power_kW": pumps_kw,
             "pumps_kw": pumps_kw,
             "pump_power_details": pump_debug_rows,

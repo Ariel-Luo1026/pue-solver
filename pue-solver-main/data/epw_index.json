@@ -466,6 +466,33 @@
     "lon": 4.7897
   },
   {
+    "city": "Riyadh",
+    "country": "SAU",
+    "aliases": [
+      "Riyadh",
+      "SAU Riyadh",
+      "404380",
+      "Custom-404380",
+      "SAU RI",
+      "SAU RI Riyadh",
+      "SAU RI Riyadh AB 404380 TMYx 2004-2018",
+      "SAU_RI_Riyadh AB 404380_TMYx 2004-2018",
+      "SAU_RI_Riyadh-AB-404380_TMYx-2004-2018",
+      "SAU_RI_Riyadh.AB.404380_TMYx.2004-2018",
+      "DUBAI",
+      "Riyadh.AB",
+      "Riyadh AB RI SAU",
+      "Riyadh AB"
+    ],
+    "station": "Riyadh",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/SAU_RI_Riyadh.AB.404380_TMYx.2004-2018.epw",
+    "epw_file": "SAU_RI_Riyadh.AB.404380_TMYx.2004-2018.epw",
+    "wmo": "404380",
+    "lat": 24.71,
+    "lon": 46.725
+  },
+  {
     "city": "Singapore",
     "country": "Singapore",
     "aliases": [

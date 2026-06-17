@@ -569,5 +569,19 @@
     "confidence": "high",
     "already_cached": false,
     "master_index_records": 97487
+  },
+  {
+    "query_location": "DUBAI",
+    "project_latitude": 24.7136,
+    "project_longitude": 46.6753,
+    "matched_station": "Riyadh.AB",
+    "distance_km": 5.0,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_2_Asia/SAU_Saudi_Arabia/RI_Riyadh/SAU_RI_Riyadh.AB.404380_TMYx.2004-2018.zip",
+    "epw_file": "SAU_RI_Riyadh.AB.404380_TMYx.2004-2018.epw",
+    "downloaded_at": "2026-06-17T09:06:29.282671+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
   }
 ]

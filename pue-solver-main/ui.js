@@ -6,6 +6,7 @@ const elIn = document.getElementById("jsonInput");
 const elOut = document.getElementById("jsonOutput");
 const btnRun = document.getElementById("btnRun");
 const btnExportHtmlReport = document.getElementById("btnExportHtmlReport");
+const btnExportJson = document.getElementById("btnExportJson");
 const elSolverDataStatus = document.getElementById("solverDataStatus");
 const resultCharts = {};
 const standardDataFiles = {
@@ -1751,6 +1752,30 @@ function exportHtmlReport() {
     link.remove();
     URL.revokeObjectURL(url);
     setSolverDataStatus("HTML 报告已生成。", "ok");
+}
+
+function timestampForFileName(date = new Date()) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function exportOutputJson() {
+    if (!lastReportContext || !lastReportContext.output) {
+        setSolverDataStatus("请先运行一次计算，再导出 JSON。", "error");
+        return;
+    }
+    const filename = `pue_results_${timestampForFileName()}.json`;
+    const json = JSON.stringify(lastReportContext.output, null, 2);
+    const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setSolverDataStatus(`JSON 已导出：${filename}`, "ok");
 }
 
 function setSolverDataStatus(text, tone = "info") {
@@ -3662,6 +3687,7 @@ async function run() {
             const d = job.diagnostics || {};
             lastReportContext = null;
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+            if (btnExportJson) btnExportJson.disabled = true;
             hideProjectVisualization();
             elOut.value = pretty({
                 error: job.error,
@@ -3686,6 +3712,7 @@ async function run() {
             showProjectVisualization(job.output);
             lastReportContext = { input: job.input, output: job.output, job, generatedAt: new Date().toISOString() };
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
+            if (btnExportJson) btnExportJson.disabled = false;
             setSolverDataStatus(
                 `Using precomputed solver output: hourly rows=${job.diagnostics.hourlyRows}`,
                 "ok"
@@ -3720,6 +3747,7 @@ json.dumps(out, indent=2)
             showProjectVisualization(outObj);
             lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
+            if (btnExportJson) btnExportJson.disabled = false;
             const annual = outObj.annual_results || {};
             const peak = outObj.peak_results || {};
             const hourlyCount = Array.isArray(outObj.hourly_results) ? outObj.hourly_results.length : 0;
@@ -3744,6 +3772,7 @@ json.dumps(out, indent=2)
             showSinglePointVisualization(outObj);
             lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
+            if (btnExportJson) btnExportJson.disabled = false;
             setSolverDataStatus(
                 `Solver: ${job.solverFn} | single-point schema`,
                 "info"
@@ -3803,6 +3832,7 @@ json.dumps(out, indent=2)
         console.error(e);
         lastReportContext = null;
         if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+        if (btnExportJson) btnExportJson.disabled = true;
         setSolverDataStatus(`运行失败：${String(e.message || e)}`, "error");
         log("❌ Run 失败：\n" + String(e));
     }
@@ -3810,6 +3840,7 @@ json.dumps(out, indent=2)
 
 btnRun.addEventListener("click", run);
 if (btnExportHtmlReport) btnExportHtmlReport.addEventListener("click", exportHtmlReport);
+if (btnExportJson) btnExportJson.addEventListener("click", exportOutputJson);
 elIn.addEventListener("input", () => {
     preferStandardFiles = false;
     if (standardSolverInput) {
