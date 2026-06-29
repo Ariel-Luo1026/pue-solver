@@ -1,5 +1,96 @@
 let pyodide = null;
 
+const WHITE_SPACE_BY_MODEL = {
+    1: ["CDU_1", "RTC_1", "RTC_2", "MAU_1", "MAU_2"],
+    2: ["CDU_2", "RTC_1", "RTC_2", "MAU_1", "MAU_2"],
+    3: ["CDU_3", "RTC_1", "RTC_2", "MAU_1", "MAU_2"]
+};
+
+function coolingUnitConfiguration(whiteModel, grayIds, engineId, requiredCurves, smokeWaterHx = false) {
+    const gasEquipment = [...grayIds, "ENGINE_RADIATOR_1", engineId];
+    const gasCurves = [...requiredCurves, "Engine efficiency curve", "Engine radiator performance curve"];
+    if (smokeWaterHx) {
+        gasEquipment.push("SMOKE_WATER_HX_1");
+        gasCurves.push("Smoke-water HX performance curve");
+    }
+    return { power_sources: {
+        Grid: { white_space_equipment: [...WHITE_SPACE_BY_MODEL[whiteModel]], gray_space_equipment: [...grayIds], required_curves: [...requiredCurves] },
+        "Gas Engine": { white_space_equipment: [...WHITE_SPACE_BY_MODEL[whiteModel]], gray_space_equipment: gasEquipment, required_curves: gasCurves }
+    } };
+}
+
+const COOLING_SYSTEM_CONFIG = Object.freeze({
+    "ABS + Dry Cooler": {
+        cooling_unit_capacities: {
+            "1": coolingUnitConfiguration(1, ["ABS_1", "DRY_COOLER_1", "CHW_PUMP_1", "CW_PUMP_1"], "ENGINE_2", ["ABS performance / COP curve", "Dry-cooler performance curve", "Pump power curve"], true),
+            "1.5": coolingUnitConfiguration(2, ["ABS_2", "DRY_COOLER_2", "CHW_PUMP_2", "CW_PUMP_2"], "ENGINE_2", ["ABS performance / COP curve", "Dry-cooler performance curve", "Pump power curve"], true)
+        },
+        implemented: false
+    },
+    "Chiller + Dry Cooler": {
+        cooling_unit_capacities: {
+            "1.5": coolingUnitConfiguration(1, ["CHILLER_1", "DRY_COOLER_1", "CHW_PUMP_1", "CW_PUMP_1"], "ENGINE_2", ["Chiller COP surface", "Dry-cooler performance curve", "Pump power curve"]),
+            "2": coolingUnitConfiguration(2, ["CHILLER_2", "DRY_COOLER_2", "CHW_PUMP_2", "CW_PUMP_2"], "ENGINE_2", ["Chiller COP surface", "Dry-cooler performance curve", "Pump power curve"]),
+            "4": coolingUnitConfiguration(3, ["CHILLER_3", "DRY_COOLER_3", "CHW_PUMP_3", "CW_PUMP_3"], "ENGINE_3", ["Chiller COP surface", "Dry-cooler performance curve", "Pump power curve"])
+        },
+        implemented: true
+    },
+    "ACC": {
+        cooling_unit_capacities: {
+            "1": coolingUnitConfiguration(1, ["ACC_1", "CHW_PUMP_1"], "ENGINE_2", ["ACC capacity and COP curves", "Pump power curve"]),
+            "1.5": coolingUnitConfiguration(2, ["ACC_2", "CHW_PUMP_2"], "ENGINE_2", ["ACC capacity and COP curves", "Pump power curve"]),
+            "2": coolingUnitConfiguration(3, ["ACC_2", "CHW_PUMP_3"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"])
+        },
+        implemented: false
+    },
+    "Chiller + Cooling Tower": {
+        cooling_unit_capacities: {
+            "2": coolingUnitConfiguration(2, ["CHILLER_2", "COOLING_TOWER_2", "CHW_PUMP_2", "CW_PUMP_2"], "ENGINE_2", ["Chiller COP surface", "Cooling-tower performance curve", "Pump power curve"]),
+            "4": coolingUnitConfiguration(3, ["CHILLER_3", "COOLING_TOWER_3", "CHW_PUMP_3", "CW_PUMP_3"], "ENGINE_3", ["Chiller COP surface", "Cooling-tower performance curve", "Pump power curve"])
+        },
+        implemented: false
+    },
+    "ABS + Cooling Tower": {
+        cooling_unit_capacities: {
+            "1": coolingUnitConfiguration(1, ["ABS_1", "COOLING_TOWER_1", "CHW_PUMP_1", "CW_PUMP_1"], "ENGINE_2", ["ABS performance / COP curve", "Cooling-tower performance curve", "Pump power curve"], true),
+            "1.5": coolingUnitConfiguration(2, ["ABS_2", "COOLING_TOWER_2", "CHW_PUMP_2", "CW_PUMP_2"], "ENGINE_2", ["ABS performance / COP curve", "Cooling-tower performance curve", "Pump power curve"], true),
+            "2": coolingUnitConfiguration(3, ["ABS_3", "COOLING_TOWER_3", "CHW_PUMP_3", "CW_PUMP_3"], "ENGINE_3", ["ABS performance / COP curve", "Cooling-tower performance curve", "Pump power curve"], true)
+        },
+        implemented: false
+    }
+});
+window.COOLING_SYSTEM_CONFIG = COOLING_SYSTEM_CONFIG;
+
+const DEFAULT_COOLING_SYSTEM_TYPE = "Chiller + Dry Cooler";
+const DEFAULT_COOLING_UNIT_CAPACITY_MW = 2;
+const DEFAULT_POWER_SOURCE = "Grid";
+const DEFAULT_SCENARIO_KEY = "normal_75";
+const SCENARIO_REGISTRY = Object.freeze({
+    normal_75: {
+        scenario_key: "normal_75",
+        display_name: "Normal / 75% cooling operation",
+        description: "Normal case with 4 energy modules operating.",
+        active_energy_modules: 4,
+        failure_count: 0,
+        cooling_operation_ratio: 0.75,
+        notes: "Normal case: 4 energy modules operating."
+    },
+    one_failure_three_active: {
+        scenario_key: "one_failure_three_active",
+        display_name: "1 Failure / 3 active energy modules",
+        description: "Failure case with 4 IT modules supported by 3 active energy modules.",
+        active_energy_modules: 3,
+        failure_count: 1,
+        cooling_operation_ratio: null,
+        notes: "Failure case: 4 IT modules supported by 3 active energy modules."
+    }
+});
+window.SCENARIO_REGISTRY = SCENARIO_REGISTRY;
+const COOLING_MODEL_UNAVAILABLE_MESSAGE = "This cooling system configuration is available for selection, but the calculation model has not been implemented yet.";
+const POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE = "This power source configuration is available for selection, but the calculation model has not been implemented yet.";
+const CHECKED_DEFAULT_CURVE_FILES = new Set();
+const AVAILABLE_DEFAULT_CURVE_FILES = new Set();
+
 const elStatus = document.getElementById("status");
 const elLog = document.getElementById("log");
 const elIn = document.getElementById("jsonInput");
@@ -21,10 +112,228 @@ const standardDataFiles = {
 let standardSolverInput = null;
 let preferStandardFiles = false;
 let lastReportContext = null;
+let scenarioResults = [];
+window.scenario_results = scenarioResults;
 const equipmentPdfSpecs = {};
 
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
+
+function getCoolingSystemSelection() {
+    const type = document.getElementById("coolingSystemType")?.value || DEFAULT_COOLING_SYSTEM_TYPE;
+    const capacityMw = Number(document.getElementById("coolingUnitCapacity")?.value || DEFAULT_COOLING_UNIT_CAPACITY_MW);
+    const powerSource = document.getElementById("powerSource")?.value || DEFAULT_POWER_SOURCE;
+    const scenarioKey = document.getElementById("scenarioSelect")?.value || DEFAULT_SCENARIO_KEY;
+    const scenario = SCENARIO_REGISTRY[scenarioKey] || SCENARIO_REGISTRY[DEFAULT_SCENARIO_KEY];
+    const config = COOLING_SYSTEM_CONFIG[type];
+    const unitConfig = config?.cooling_unit_capacities?.[String(capacityMw)];
+    const powerConfig = unitConfig?.power_sources?.[powerSource];
+    return { type, capacityMw, powerSource, scenarioKey, scenario, config, unitConfig, powerConfig };
+}
+
+function equipmentIdDisplayName(equipmentId) {
+    const parts = String(equipmentId).split("_");
+    const modelNumber = parts.pop();
+    const type = parts.join("_");
+    const typeNames = {
+        CHW_PUMP: "CHW Pump",
+        CW_PUMP: "CW Pump",
+        DRY_COOLER: "Dry Cooler",
+        COOLING_TOWER: "Cooling Tower",
+        ENGINE_RADIATOR: "Engine Radiator",
+        SMOKE_WATER_HX: "Smoke-Water HX",
+        CHILLER: "Chiller",
+        ENGINE: "Engine"
+    };
+    return `${typeNames[type] || type} ${modelNumber}`;
+}
+
+function curveTypeForEquipmentId(equipmentId) {
+    if (/^(CHW|CW)_PUMP_/.test(equipmentId)) return "pump_power_curve";
+    const rules = [
+        [/^ACC_/, "acc_performance_curve"], [/^ABS_/, "abs_performance_curve"],
+        [/^CHILLER_/, "chiller_cop_curve"], [/^DRY_COOLER_/, "dry_cooler_performance_curve"],
+        [/^COOLING_TOWER_/, "cooling_tower_performance_curve"], [/^ENGINE_RADIATOR_/, "engine_radiator_performance_curve"],
+        [/^ENGINE_/, "engine_efficiency_curve"], [/^SMOKE_WATER_HX_/, "heat_exchanger_performance_curve"],
+        [/^CDU_/, "cdu_performance_curve"], [/^RTC_/, "rtc_performance_curve"], [/^MAU_/, "mau_performance_curve"]
+    ];
+    return rules.find(([pattern]) => pattern.test(equipmentId))?.[1] || "equipment_performance_curve";
+}
+
+function curveDirectoryForEquipmentId(equipmentId) {
+    if (/^(CHW|CW|HW)_PUMP_/.test(equipmentId)) return "pump";
+    const rules = [
+        [/^DRY_COOLER_/, "dry_cooler"], [/^COOLING_TOWER_/, "cooling_tower"],
+        [/^ENGINE_RADIATOR_/, "engine_radiator"], [/^SMOKE_WATER_HX_/, "heat_exchanger"],
+        [/^CHILLER_/, "chiller"], [/^ENGINE_/, "engine"], [/^ACC_/, "acc"],
+        [/^ABS_/, "abs"], [/^CDU_/, "cdu"], [/^RTC_/, "rtc"], [/^MAU_/, "mau"]
+    ];
+    return rules.find(([pattern]) => pattern.test(equipmentId))?.[1] || "other";
+}
+
+function buildFrontendDefaultCurvePath(equipmentId) {
+    return `data/performance_curves/${curveDirectoryForEquipmentId(equipmentId)}/${equipmentId}.xlsx`;
+}
+
+function uploadedCurveForEquipment(equipmentId) {
+    let file = null;
+    if (/^CHILLER_/.test(equipmentId)) file = standardDataFiles.chiller;
+    else if (/^DRY_COOLER_/.test(equipmentId)) file = standardDataFiles.dryCooler;
+    else if (/^(CHW|CW)_PUMP_/.test(equipmentId)) file = standardDataFiles.pumps;
+    else if (/^(RTC|MAU)_/.test(equipmentId)) file = standardDataFiles.fans;
+    return file ? (file.source_file || "user_uploaded_curve") : null;
+}
+
+function buildSelectedCurveSources(powerConfig) {
+    const equipmentIds = [
+        ...(powerConfig?.white_space_equipment || []),
+        ...(powerConfig?.gray_space_equipment || [])
+    ];
+    return Object.fromEntries(equipmentIds.map(equipmentId => {
+        const uploaded = uploadedCurveForEquipment(equipmentId);
+        const defaultFile = buildFrontendDefaultCurvePath(equipmentId);
+        const defaultFilename = `${equipmentId}.xlsx`;
+        const hasDefault = AVAILABLE_DEFAULT_CURVE_FILES.has(defaultFile);
+        return [equipmentId, {
+            source_type: uploaded ? "uploaded" : hasDefault ? "default" : "missing",
+            file: uploaded || (hasDefault ? defaultFile : null),
+            default_curve_directory: `data/performance_curves/${curveDirectoryForEquipmentId(equipmentId)}/`,
+            default_curve_filename: defaultFilename,
+            default_curve_path: defaultFile,
+            curve_type: curveTypeForEquipmentId(equipmentId),
+            warning: uploaded ? null : `Default curve file not yet available: ${defaultFile}`
+        }];
+    }));
+}
+
+async function checkSelectedDefaultCurveFiles(powerConfig) {
+    const equipmentIds = [...(powerConfig?.white_space_equipment || []), ...(powerConfig?.gray_space_equipment || [])];
+    const pending = equipmentIds.map(buildFrontendDefaultCurvePath)
+        .filter(path => !CHECKED_DEFAULT_CURVE_FILES.has(path));
+    if (!pending.length) return;
+    await Promise.all(pending.map(async path => {
+        CHECKED_DEFAULT_CURVE_FILES.add(path);
+        try {
+            const response = await fetch(path, { method: "HEAD", cache: "no-store" });
+            if (response.ok) AVAILABLE_DEFAULT_CURVE_FILES.add(path);
+        } catch (_) {
+            // Missing/unreachable defaults remain warnings; uploads still work.
+        }
+    }));
+    renderCoolingSystemSelection();
+}
+
+function renderCoolingSystemSelection() {
+    const { type, capacityMw, powerSource, scenario, config, powerConfig } = getCoolingSystemSelection();
+    const renderList = (id, values) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = values.map(value => `<li>${esc(value)}</li>`).join("");
+    };
+    renderList("whiteSpaceEquipmentList", (powerConfig?.white_space_equipment || []).map(equipmentIdDisplayName));
+    renderList("graySpaceEquipmentList", (powerConfig?.gray_space_equipment || []).map(equipmentIdDisplayName));
+    const curveSources = buildSelectedCurveSources(powerConfig);
+    const curveRows = [
+        ...(powerConfig?.required_curves || []).map(name => `Required: ${name}`),
+        ...Object.entries(curveSources).map(([equipmentId, source]) => {
+            const status = source.source_type === "uploaded" ? "Using uploaded curve" :
+                source.source_type === "default" ? `Using default curve (${source.default_curve_filename})` : "Missing curve";
+            return `${equipmentIdDisplayName(equipmentId)} — ${status}`;
+        })
+    ];
+    renderList("coolingPerformanceCurveList", curveRows);
+    checkSelectedDefaultCurveFiles(powerConfig);
+    const status = document.getElementById("coolingSystemStatus");
+    if (status) {
+        const runnable = config?.implemented && powerSource === DEFAULT_POWER_SOURCE;
+        status.textContent = runnable ? `${type}, ${capacityMw} MW, ${powerSource}, ${scenario.display_name}: calculation model available.`
+            : powerSource !== DEFAULT_POWER_SOURCE ? POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE : COOLING_MODEL_UNAVAILABLE_MESSAGE;
+        status.style.color = runnable ? "#059669" : "#b45309";
+    }
+    renderScenarioSummary();
+}
+
+function renderScenarioSummary() {
+    const body = document.getElementById("scenarioSummaryBody");
+    if (!body) return;
+    const selection = getCoolingSystemSelection();
+    const scheme = `${selection.type} / ${selection.capacityMw} MW / ${selection.powerSource}`;
+    body.innerHTML = Object.values(SCENARIO_REGISTRY).map(scenario => {
+        const result = scenarioResults.find(item => item.scenario_key === scenario.scenario_key);
+        const annualPue = result?.annual_results?.annual_average_PUE;
+        const activeEngines = selection.powerSource === "Gas Engine" ? scenario.active_energy_modules : "—";
+        return `<tr>
+            <td>${esc(scheme)}</td><td>${esc(scenario.display_name)}</td><td>—</td>
+            <td>${activeEngines}</td><td>—</td><td>—</td>
+            <td>${Number.isFinite(Number(annualPue)) ? fmtNumber(annualPue, 3) : "—"}</td>
+        </tr>`;
+    }).join("");
+}
+
+function recordScenarioResult(scenarioKey, annualResults) {
+    const scenario = SCENARIO_REGISTRY[scenarioKey] || SCENARIO_REGISTRY[DEFAULT_SCENARIO_KEY];
+    scenarioResults = scenarioResults.filter(item => item.scenario_key !== scenario.scenario_key);
+    scenarioResults.push({
+        scenario_key: scenario.scenario_key,
+        scenario_name: scenario.display_name,
+        annual_results: annualResults || null
+    });
+    window.scenario_results = scenarioResults;
+    renderScenarioSummary();
+}
+
+function resetScenarioResults() {
+    scenarioResults = [];
+    window.scenario_results = scenarioResults;
+}
+
+function updateCoolingUnitCapacityOptions(preferredCapacity) {
+    const type = document.getElementById("coolingSystemType")?.value || DEFAULT_COOLING_SYSTEM_TYPE;
+    const select = document.getElementById("coolingUnitCapacity");
+    if (!select) return;
+    const capacities = Object.keys(COOLING_SYSTEM_CONFIG[type]?.cooling_unit_capacities || {}).map(Number);
+    select.innerHTML = capacities.map(value => `<option value="${value}">${value} MW</option>`).join("");
+    const requested = Number(preferredCapacity);
+    select.value = capacities.includes(requested) ? String(requested) : String(capacities[0]);
+    renderCoolingSystemSelection();
+}
+
+function initCoolingSystemSelection() {
+    const typeSelect = document.getElementById("coolingSystemType");
+    const capacitySelect = document.getElementById("coolingUnitCapacity");
+    const powerSourceSelect = document.getElementById("powerSource");
+    const scenarioSelect = document.getElementById("scenarioSelect");
+    if (!typeSelect || !capacitySelect || !powerSourceSelect || !scenarioSelect) return;
+    typeSelect.innerHTML = Object.keys(COOLING_SYSTEM_CONFIG).map(type => `<option value="${type}">${type}</option>`).join("");
+    typeSelect.value = DEFAULT_COOLING_SYSTEM_TYPE;
+    powerSourceSelect.value = DEFAULT_POWER_SOURCE;
+    scenarioSelect.innerHTML = Object.values(SCENARIO_REGISTRY)
+        .map(scenario => `<option value="${scenario.scenario_key}">${scenario.display_name}</option>`).join("");
+    scenarioSelect.value = DEFAULT_SCENARIO_KEY;
+    updateCoolingUnitCapacityOptions(DEFAULT_COOLING_UNIT_CAPACITY_MW);
+    typeSelect.addEventListener("change", () => {
+        resetScenarioResults();
+        updateCoolingUnitCapacityOptions();
+        standardSolverInput = null;
+        refreshStandardInputStatus();
+    });
+    capacitySelect.addEventListener("change", () => {
+        resetScenarioResults();
+        renderCoolingSystemSelection();
+        standardSolverInput = null;
+        refreshStandardInputStatus();
+    });
+    powerSourceSelect.addEventListener("change", () => {
+        resetScenarioResults();
+        renderCoolingSystemSelection();
+        standardSolverInput = null;
+        refreshStandardInputStatus();
+    });
+    scenarioSelect.addEventListener("change", () => {
+        renderCoolingSystemSelection();
+        standardSolverInput = null;
+        refreshStandardInputStatus();
+    });
+}
 
 function fmtNumber(value, digits = 2) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
@@ -609,6 +918,7 @@ function setProjectMemoryStatus(text, tone = "info") {
 }
 
 function collectProjectMemoryPayload() {
+    const coolingSelection = getCoolingSystemSelection();
     return {
         saved_at: new Date().toISOString(),
         project_info: {
@@ -625,6 +935,12 @@ function collectProjectMemoryPayload() {
             solar_gain_peak_kw: document.getElementById("solarGainPeakKw")?.value || "",
             aux_fixed_coeff: document.getElementById("auxFixedCoeff")?.value || "0.005",
             dry_cooler_approach_c: document.getElementById("dryCoolerApproachC")?.value || "5"
+        },
+        cooling_system_selection: {
+            type: coolingSelection.type,
+            capacity_mw: coolingSelection.capacityMw,
+            power_source: coolingSelection.powerSource,
+            scenario_key: coolingSelection.scenarioKey
         },
         standard_data_files: standardDataFiles,
         standard_solver_input: standardSolverInput,
@@ -670,7 +986,18 @@ function restoreProjectMemory(key = "") {
         if (document.getElementById("auxFixedCoeff")) document.getElementById("auxFixedCoeff").value = report.aux_fixed_coeff || "0.005";
         if (document.getElementById("dryCoolerApproachC")) document.getElementById("dryCoolerApproachC").value = report.dry_cooler_approach_c || "5";
 
+        const coolingSelection = payload.cooling_system_selection || {};
+        const restoredType = COOLING_SYSTEM_CONFIG[coolingSelection.type] ? coolingSelection.type : DEFAULT_COOLING_SYSTEM_TYPE;
+        if (document.getElementById("coolingSystemType")) document.getElementById("coolingSystemType").value = restoredType;
+        updateCoolingUnitCapacityOptions(coolingSelection.capacity_mw ?? DEFAULT_COOLING_UNIT_CAPACITY_MW);
+        const restoredPowerSource = ["Grid", "Gas Engine"].includes(coolingSelection.power_source) ? coolingSelection.power_source : DEFAULT_POWER_SOURCE;
+        if (document.getElementById("powerSource")) document.getElementById("powerSource").value = restoredPowerSource;
+        const restoredScenario = SCENARIO_REGISTRY[coolingSelection.scenario_key] ? coolingSelection.scenario_key : DEFAULT_SCENARIO_KEY;
+        if (document.getElementById("scenarioSelect")) document.getElementById("scenarioSelect").value = restoredScenario;
+        renderCoolingSystemSelection();
+
         Object.keys(standardDataFiles).forEach(key => { standardDataFiles[key] = payload.standard_data_files?.[key] || null; });
+        renderCoolingSystemSelection();
         standardSolverInput = payload.standard_solver_input || null;
         preferStandardFiles = Boolean(standardSolverInput || standardDataFiles.itLoad || standardDataFiles.weather);
         window.curveLib = payload.curve_lib || window.curveLib || { curves_1d: {}, cop_surfaces: {} };
@@ -2739,7 +3066,7 @@ function buildSolverInputFromStandardFiles(files) {
         scalarNumberFromPaths(files.itLoad || {}, [["design_it_capacity_kW"], ["project", "it_load", "design_it_load_kW"]]) ||
         projectDesignCapacityKw() ||
         Math.max(...it);
-    return {
+    const solverInput = {
         project: {
             name: "Frontend Standardized Annual PUE Project",
             calculation_mode: "project_8760",
@@ -2784,6 +3111,11 @@ function buildSolverInputFromStandardFiles(files) {
             }
         }
     };
+    const selection = getCoolingSystemSelection();
+    solverInput.curve_sources = buildSelectedCurveSources(selection.powerConfig);
+    return window.PueImportAdapter.applyCoolingSystemSelection(
+        solverInput, selection.type, selection.capacityMw, selection.powerSource, selection.scenarioKey
+    );
 }
 
 function previewInputCurves(files) {
@@ -2974,6 +3306,7 @@ async function handleStandardFile(slot, statusId, file) {
             updateFileStatus(statusId, `${file.name} 已导入为 ${json.type || "standard_json"}`, "ok");
         }
         previewInputCurves(standardDataFiles);
+        renderCoolingSystemSelection();
         renderWeatherReportPanel();
         renderTemperatureDistributionPanel();
         refreshStandardInputStatus();
@@ -2982,6 +3315,7 @@ async function handleStandardFile(slot, statusId, file) {
         standardSolverInput = null;
         preferStandardFiles = true;
         updateFileStatus(statusId, `读取失败：${String(e.message || e)}`, "error");
+        renderCoolingSystemSelection();
         refreshStandardInputStatus();
     }
 }
@@ -2989,6 +3323,7 @@ async function handleStandardFile(slot, statusId, file) {
 function loadDemoStandardData() {
     const demo = buildDemoStandardData();
     Object.assign(standardDataFiles, demo);
+    renderCoolingSystemSelection();
     syncStandardChillerSurfaceToCurveLib(demo.chiller);
     standardSolverInput = null;
     preferStandardFiles = true;
@@ -3028,6 +3363,7 @@ function buildStandardSolverInputToTextarea() {
 }
 
 function initStandardDataInputs() {
+    initCoolingSystemSelection();
     const bindings = [
         ["fileItLoad", "itLoad", "statusItLoad"],
         ["fileWeather", "weather", "statusWeather"],
@@ -3668,6 +4004,35 @@ async function run() {
     if (!pyodide) return;
 
     try {
+        const coolingSelection = getCoolingSystemSelection();
+        if (coolingSelection.powerSource !== DEFAULT_POWER_SOURCE) {
+            lastReportContext = null;
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+            if (btnExportJson) btnExportJson.disabled = true;
+            elOut.value = pretty({
+                error: POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE,
+                cooling_system_type: coolingSelection.type,
+                cooling_unit_capacity_mw: coolingSelection.capacityMw,
+                power_source: coolingSelection.powerSource
+            });
+            setSolverDataStatus(POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE, "error");
+            log(POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE);
+            return;
+        }
+        if (!coolingSelection.config?.implemented) {
+            lastReportContext = null;
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+            if (btnExportJson) btnExportJson.disabled = true;
+            elOut.value = pretty({
+                error: COOLING_MODEL_UNAVAILABLE_MESSAGE,
+                cooling_system_type: coolingSelection.type,
+                cooling_unit_capacity_mw: coolingSelection.capacityMw,
+                power_source: coolingSelection.powerSource
+            });
+            setSolverDataStatus(COOLING_MODEL_UNAVAILABLE_MESSAGE, "error");
+            log(COOLING_MODEL_UNAVAILABLE_MESSAGE);
+            return;
+        }
         if (!standardSolverInput && preferStandardFiles) {
             standardSolverInput = buildSolverInputFromStandardFiles(standardDataFiles);
             syncStandardChillerSurfaceToCurveLib(standardDataFiles.chiller);
@@ -3710,6 +4075,7 @@ async function run() {
         if (job.kind === "precomputed_project") {
             elOut.value = pretty(job.output);
             showProjectVisualization(job.output);
+            recordScenarioResult(coolingSelection.scenarioKey, job.output.annual_results);
             lastReportContext = { input: job.input, output: job.output, job, generatedAt: new Date().toISOString() };
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
             if (btnExportJson) btnExportJson.disabled = false;
@@ -3745,6 +4111,7 @@ json.dumps(out, indent=2)
         if (isProjectResult) {
             // Show visualization for 8760-hour results
             showProjectVisualization(outObj);
+            recordScenarioResult(coolingSelection.scenarioKey, outObj.annual_results);
             lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;
             if (btnExportJson) btnExportJson.disabled = false;

@@ -397,6 +397,65 @@
         <div id="projectMemoryStatus" class="hint">项目输入存档保存在当前浏览器本地。</div>
     </div>
 
+    <!-- ================= Cooling System Selection ================= -->
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;">Cooling System Configuration</h3>
+        <div class="fileGrid">
+            <div class="fileSlot">
+                <div class="panelTitle">Cooling System Type</div>
+                <select id="coolingSystemType"></select>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Cooling Unit Capacity</div>
+                <select id="coolingUnitCapacity"></select>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Power Source</div>
+                <select id="powerSource">
+                    <option value="Grid" selected>Grid</option>
+                    <option value="Gas Engine">Gas Engine</option>
+                </select>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Scenario</div>
+                <select id="scenarioSelect"></select>
+            </div>
+        </div>
+        <div class="fileGrid" style="margin-top:12px;">
+            <div class="fileSlot">
+                <div class="panelTitle">White Space Equipment</div>
+                <ul id="whiteSpaceEquipmentList" style="margin-bottom:0;"></ul>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Gray Space Equipment</div>
+                <ul id="graySpaceEquipmentList" style="margin-bottom:0;"></ul>
+            </div>
+            <div class="fileSlot">
+                <div class="panelTitle">Required Performance Curves</div>
+                <ul id="coolingPerformanceCurveList" style="margin-bottom:0;"></ul>
+            </div>
+        </div>
+        <div id="coolingSystemStatus" class="hint" style="margin-top:10px;"></div>
+        <div class="panel" style="margin-top:14px; overflow-x:auto;">
+            <div class="panelTitle">Scenario Summary</div>
+            <table style="width:100%; border-collapse:collapse; min-width:920px;">
+                <thead>
+                    <tr>
+                        <th>Scheme</th>
+                        <th>Scenario</th>
+                        <th>Group Elec Power (kW)</th>
+                        <th>Active Engines</th>
+                        <th>Single Engine Output (kW)</th>
+                        <th>Engine Continuous Power Requirement (kW)</th>
+                        <th>Annual PUE</th>
+                    </tr>
+                </thead>
+                <tbody id="scenarioSummaryBody"></tbody>
+            </table>
+            <div class="hint" style="margin-top:8px;">Scenario engineering values remain placeholders until scenario-specific equipment models are implemented.</div>
+        </div>
+    </div>
+
     <!-- ================= Standardized Data Inputs ================= -->
     <div class="card">
         <h3 style="margin:0 0 10px 0;">输入文件</h3>

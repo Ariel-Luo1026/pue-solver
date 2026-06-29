@@ -133,6 +133,21 @@
         return json;
     }
 
+    // Adds cooling-selection metadata without reshaping any existing
+    // standardized input or calculation fields.
+    function applyCoolingSystemSelection(input, systemType, capacityMw, powerSource, scenarioKey) {
+        const target = input || {};
+        const capacity = Number(capacityMw);
+        target.cooling_system_type = String(systemType || "");
+        target.cooling_unit_capacity_mw = capacity;
+        target.power_source = String(powerSource || "Grid");
+        target.scenario_key = String(scenarioKey || "normal_75");
+        if (!target.equipment || typeof target.equipment !== "object") target.equipment = {};
+        if (!target.equipment.cooling || typeof target.equipment.cooling !== "object") target.equipment.cooling = {};
+        target.equipment.cooling.cooling_unit_capacity_kW = capacity * 1000;
+        return target;
+    }
+
     function adaptEpw(text) {
         const lines = text.split(/\r?\n/).filter(Boolean);
         const locationCols = (lines[0] || "").split(",");
@@ -634,6 +649,7 @@
         adaptFile,
         adaptEpw,
         adaptJson,
+        applyCoolingSystemSelection,
         adaptXml,
         adaptItExcelRows,
         adaptWeatherExcelRows,

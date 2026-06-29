@@ -571,6 +571,32 @@
     "lon": -2.25
   },
   {
+    "city": "Albuquerque Intl Sunport",
+    "country": "United States",
+    "aliases": [
+      "Albuquerque Intl Sunport",
+      "United States Albuquerque Intl Sunport",
+      "723650",
+      "SRC-TMYx",
+      "USA NM",
+      "USA NM Albuquerque",
+      "USA NM Albuquerque Intl Sunport 723650 TMYx 2011-2025",
+      "USA_NM_Albuquerque Intl Sunport 723650_TMYx 2011-2025",
+      "USA_NM_Albuquerque-Intl-Sunport-723650_TMYx-2011-2025",
+      "USA_NM_Albuquerque.Intl.Sunport.723650_TMYx.2011-2025",
+      "LBUQUERQUE INTL",
+      "Albuquerque.Intl.Sunport",
+      "Albuquerque Intl Sunport NM USA"
+    ],
+    "station": "Albuquerque Intl Sunport",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/USA_NM_Albuquerque.Intl.Sunport.723650_TMYx.2011-2025.epw",
+    "epw_file": "USA_NM_Albuquerque.Intl.Sunport.723650_TMYx.2011-2025.epw",
+    "wmo": "723650",
+    "lat": 35.03778,
+    "lon": -106.6219
+  },
+  {
     "city": "CGB Honolulu Oahu",
     "country": "United States",
     "aliases": [
