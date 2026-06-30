@@ -42,6 +42,7 @@ _CATALOG_SPECS = [
     ("MAU_2", "MAU", 2, "MAU 2", "white_space"),
     ("ACC_1", "ACC", 1, "ACC 1", "gray_space"),
     ("ACC_2", "ACC", 2, "ACC 2", "gray_space"),
+    ("ACC_3", "ACC", 3, "ACC 3", "gray_space"),
     ("ABS_1", "ABS", 1, "ABS 1", "gray_space"),
     ("ABS_2", "ABS", 2, "ABS 2", "gray_space"),
     ("ABS_3", "ABS", 3, "ABS 3", "gray_space"),

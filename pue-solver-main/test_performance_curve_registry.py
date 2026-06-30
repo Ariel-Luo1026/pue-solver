@@ -34,6 +34,11 @@ class PerformanceCurveRegistrySmokeTest(unittest.TestCase):
                     f"{metadata['default_curve_directory']}{metadata['default_curve_filename']}",
                 )
 
+    def test_acc_three_uses_hierarchical_default_path(self):
+        metadata = get_default_curve_for_equipment("ACC_3")
+        self.assertEqual(metadata["equipment_type"], "acc")
+        self.assertEqual(metadata["default_curve_path"], "data/performance_curves/acc/ACC_3.xlsx")
+
     def test_uploaded_curve_has_priority_over_default(self):
         with patch("performance_curve_registry.Path.is_file", return_value=True):
             resolved = resolve_curve_source("ACC_1", {"ACC_1": "user/ACC_override.xlsx"})

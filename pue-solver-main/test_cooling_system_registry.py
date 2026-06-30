@@ -11,11 +11,12 @@ class CoolingSystemRegistrySmokeTest(unittest.TestCase):
     def test_catalog_and_distinct_model_items_exist(self):
         self.assertTrue(EQUIPMENT_CATALOG)
         for equipment_id in (
-            "ACC_1", "ACC_2", "CHW_PUMP_1", "CHW_PUMP_2", "CHW_PUMP_3",
+            "ACC_1", "ACC_2", "ACC_3", "CHW_PUMP_1", "CHW_PUMP_2", "CHW_PUMP_3",
             "ENGINE_2", "ENGINE_3", "ENGINE_RADIATOR_1",
         ):
             self.assertEqual(get_equipment_item(equipment_id)["id"], equipment_id)
         self.assertIsNot(EQUIPMENT_CATALOG["ACC_1"], EQUIPMENT_CATALOG["ACC_2"])
+        self.assertEqual(len({id(EQUIPMENT_CATALOG[f"ACC_{n}"]) for n in (1, 2, 3)}), 3)
         self.assertEqual(
             len({id(EQUIPMENT_CATALOG[f"CHW_PUMP_{n}"]) for n in (1, 2, 3)}), 3
         )
@@ -43,6 +44,22 @@ class CoolingSystemRegistrySmokeTest(unittest.TestCase):
             sources["Gas Engine"]["gray_space_equipment"],
             ["ACC_1", "CHW_PUMP_1", "ENGINE_RADIATOR_1", "ENGINE_2"],
         )
+
+    def test_corrected_acc_model_and_engine_mapping_for_all_capacities(self):
+        units = COOLING_SYSTEM_REGISTRY["ACC"]["cooling_unit_capacities"]
+        expected = {
+            "1": ("CDU_1", "ACC_1", "CHW_PUMP_1", "ENGINE_2"),
+            "1.5": ("CDU_2", "ACC_2", "CHW_PUMP_2", "ENGINE_3"),
+            "2": ("CDU_3", "ACC_3", "CHW_PUMP_3", "ENGINE_3"),
+        }
+        for capacity, (cdu, acc, pump, engine) in expected.items():
+            sources = units[capacity]["power_sources"]
+            self.assertEqual(sources["Grid"]["white_space_equipment"][0], cdu)
+            self.assertEqual(sources["Grid"]["gray_space_equipment"], [acc, pump])
+            self.assertEqual(
+                sources["Gas Engine"]["gray_space_equipment"],
+                [acc, pump, "ENGINE_RADIATOR_1", engine],
+            )
 
     def test_existing_grid_chiller_dry_cooler_path_is_valid(self):
         system = COOLING_SYSTEM_REGISTRY["Chiller + Dry Cooler"]

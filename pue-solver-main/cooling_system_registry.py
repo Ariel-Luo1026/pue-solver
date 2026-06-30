@@ -59,8 +59,8 @@ COOLING_SYSTEM_REGISTRY = {
     "ACC": {
         "cooling_unit_capacities": {
             "1": _unit(1, ["ACC_1", "CHW_PUMP_1"], "ENGINE_2", ["ACC capacity and COP curves", "Pump power curve"]),
-            "1.5": _unit(2, ["ACC_2", "CHW_PUMP_2"], "ENGINE_2", ["ACC capacity and COP curves", "Pump power curve"]),
-            "2": _unit(3, ["ACC_2", "CHW_PUMP_3"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"]),
+            "1.5": _unit(2, ["ACC_2", "CHW_PUMP_2"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"]),
+            "2": _unit(3, ["ACC_3", "CHW_PUMP_3"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"]),
         },
         "calculation_implemented": False,
     },

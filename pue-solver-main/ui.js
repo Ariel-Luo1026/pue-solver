@@ -38,8 +38,8 @@ const COOLING_SYSTEM_CONFIG = Object.freeze({
     "ACC": {
         cooling_unit_capacities: {
             "1": coolingUnitConfiguration(1, ["ACC_1", "CHW_PUMP_1"], "ENGINE_2", ["ACC capacity and COP curves", "Pump power curve"]),
-            "1.5": coolingUnitConfiguration(2, ["ACC_2", "CHW_PUMP_2"], "ENGINE_2", ["ACC capacity and COP curves", "Pump power curve"]),
-            "2": coolingUnitConfiguration(3, ["ACC_2", "CHW_PUMP_3"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"])
+            "1.5": coolingUnitConfiguration(2, ["ACC_2", "CHW_PUMP_2"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"]),
+            "2": coolingUnitConfiguration(3, ["ACC_3", "CHW_PUMP_3"], "ENGINE_3", ["ACC capacity and COP curves", "Pump power curve"])
         },
         implemented: false
     },
