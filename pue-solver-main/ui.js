@@ -1769,6 +1769,10 @@ function buildHtmlReport(context) {
     const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
     const annual = output.annual_results || {};
     const peak = output.peak_results || {};
+    const isBenchmarkMode = output.calculation_mode === "excel_benchmark_compatible" || annual.calculation_mode === "excel_benchmark_compatible";
+    const isAccMode = isBenchmarkMode || context.input?.cooling_system_type === "ACC" || annual.annual_acc_energy_kWh != null;
+    const benchmark = output.benchmark_components || {};
+    const benchmarkAverage = benchmark.component_average_kW || {};
     const projectInfo = getProjectReportInfo();
     const solar = getSolarGainReportInput();
     const weather = standardDataFiles.weather || {};
@@ -1794,9 +1798,20 @@ function buildHtmlReport(context) {
     const projectCoordinates = Number.isFinite(Number(projectLat)) && Number.isFinite(Number(projectLon))
         ? `${fmtNumber(Number(projectLat), 4)}, ${fmtNumber(Number(projectLon), 4)}`
         : "N/A";
-    const reportTitle = projectInfo.name || "Annual Data Center PUE Performance Assessment";
+    const reportTitle = isBenchmarkMode
+        ? "Annual Data Center PUE Performance Assessment — ACC Benchmark Mode"
+        : (projectInfo.name || "Annual Data Center PUE Performance Assessment");
     const generated = new Date().toISOString();
-    const energyRows = [
+    const energyRows = (isAccMode ? [
+        ["IT Energy", annual.annual_IT_energy_kWh],
+        ["ACC Energy", annual.annual_acc_energy_kWh],
+        ["Pump Energy", annual.annual_pump_energy_kWh || 0],
+        ["Indoor Equipment Energy", annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh],
+        ["Engine Radiator Energy", annual.annual_engine_radiator_energy_kWh],
+        ["Electrical Loss", annual.annual_electrical_loss_kWh],
+        ...(Number(annual.annual_terminal_fan_energy_kWh) > 0 ? [["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh]] : []),
+        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]] : [])
+    ] : [
         ["IT Energy", annual.annual_IT_energy_kWh],
         [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh],
@@ -1805,7 +1820,7 @@ function buildHtmlReport(context) {
         ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh],
         ["Electrical Loss", annual.annual_electrical_loss_kWh],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
-    ].filter(([, value]) => Number(value) > 0);
+    ]).filter(([, value]) => Number(value) > 0);
     const energyChart = svgBarChart(energyRows.map(([label, value]) => ({ label: label.replace(" Energy", "").replace("Electrical ", "Elec "), value: Number(value) / 1000 })), { yLabel: "MWh" });
     const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value })), { yLabel: "PUE" });
     const contributionSummary = buildPueContributionSummary(annual);
@@ -1818,7 +1833,16 @@ function buildHtmlReport(context) {
         const formatted = reportValue(value, "", 3);
         return signed && Number(value) >= 0 ? `+${formatted}` : formatted;
     };
-    const pueContributionRows = [
+    const pueContributionRows = isAccMode ? [
+        { label: "IT Base", value: 1, css: "base", signed: false },
+        { label: "ACC pPUE", value: pueContribution(annual.annual_acc_energy_kWh), css: "", signed: true },
+        { label: "Pump pPUE", value: pueContribution(annual.annual_pump_energy_kWh), css: "", signed: true },
+        { label: "Indoor Equipment pPUE", value: pueContribution(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh), css: "", signed: true },
+        { label: "Engine Radiator pPUE", value: pueContribution(annual.annual_engine_radiator_energy_kWh), css: "", signed: true },
+        { label: "Electrical Loss pPUE", value: pueContribution(annual.annual_electrical_loss_kWh), css: "", signed: true },
+        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [{ label: "Auxiliary pPUE", value: pueContribution(annual.annual_auxiliary_energy_kWh), css: "", signed: true }] : []),
+        { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
+    ] : [
         { label: "IT Base", value: 1, css: "base", signed: false },
         { label: "Cooling System pPUE", value: contributionSummary.coolingPPUE, css: "", signed: true },
         { label: "├─ Chiller", value: pueContribution(annual.annual_chiller_energy_kWh), css: "child", signed: true },
@@ -1829,6 +1853,16 @@ function buildHtmlReport(context) {
         { label: "Auxiliary pPUE", value: contributionSummary.auxiliaryPPUE, css: "", signed: true },
         { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
     ];
+    const benchmarkComponentRows = isBenchmarkMode ? [
+        ["IT Load", benchmarkAverage.IT, annual.annual_IT_energy_kWh],
+        ["ACC Power", benchmarkAverage.ACC, annual.annual_acc_energy_kWh],
+        ["CHW Pump Power", benchmarkAverage.pump, annual.annual_pump_energy_kWh],
+        ["Indoor CDU / RTC / MAU Equivalent", benchmarkAverage.indoor_CDU_RTC_MAU_equivalent, annual.annual_indoor_equipment_energy_kWh],
+        ["Engine Radiator Power", benchmarkAverage.engine_radiator, annual.annual_engine_radiator_energy_kWh],
+        ["IT Electrical Loss", benchmarkAverage.IT_electrical_loss, annual.annual_it_electrical_loss_kWh],
+        ["MEP Electrical Loss", benchmarkAverage.MEP_electrical_loss, annual.annual_mep_electrical_loss_kWh],
+        ["Facility Power", benchmarkAverage.facility, annual.annual_facility_energy_kWh]
+    ] : [];
     const curveRegisterRows = reportCurves.map(curve => [
         curve.category,
         esc(curve.curveId),
@@ -1911,6 +1945,7 @@ function buildHtmlReport(context) {
 
 <section>
     <h2>1. Executive Summary</h2>
+    ${output.calculation_mode === "excel_benchmark_compatible" ? `<p><b>This result uses Excel Benchmark Compatible Mode based on scenario peak power and annual temperature factor.</b></p>` : ""}
     <div class="meta">
         <div class="metric"><div class="label">Annual Average PUE</div><div class="value">${reportValue(annual.annual_average_PUE, "", 3)}</div></div>
         <div class="metric"><div class="label">Peak Facility Power</div><div class="value">${reportValue(peak.peak_total_facility_power_kW, " kW", 0)}</div></div>
@@ -1919,6 +1954,16 @@ function buildHtmlReport(context) {
     </div>
     <table><tbody>${tableRows([
         ["Site Location", esc(place)],
+        ...(isBenchmarkMode ? [
+            ["Cooling System", "ACC / Gas Engine"],
+            ["Calculation Method", "Scenario peak power × annual factor"],
+            ["Scenario", esc(benchmark.scenario || output.project?.scenario_name || "N/A")],
+            ["Active Energy Modules / Engines", esc(output.project?.active_units ?? "N/A")],
+            ["Annual IT Load Factor", reportValue(benchmark.it_annual_load_factor, "", 3)],
+            ["ACC Annual Temperature Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)],
+            ["IT Efficiency", percentText(benchmark.it_efficiency, 4)],
+            ["MEP Efficiency", percentText(benchmark.mep_efficiency, 4)]
+        ] : []),
         ["Design IT Load", projectInfo.capacityMw !== null ? `${reportValue(projectInfo.capacityMw, " MW", 1)}` : "N/A"],
         ["Project Stage", esc(projectInfo.stage || "N/A")],
         ["Minimum Hourly PUE", reportValue(annual.min_hourly_PUE, "", 3)],
@@ -1929,6 +1974,7 @@ function buildHtmlReport(context) {
 
 <section>
     <h2>2. Climate Data</h2>
+    ${isBenchmarkMode ? `<div class="note">In Benchmark Mode, the EPW weather profile is represented through the annual temperature factor rather than direct hourly ACC interpolation.</div>` : ""}
     <div class="grid">
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
             ["Project Location", esc(weatherSource.project_location || projectInfo.location || "N/A")],
@@ -1963,16 +2009,36 @@ function buildHtmlReport(context) {
 
 <section>
     <h2>4. Methodology</h2>
-    <p>The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured.</p>
+    ${isBenchmarkMode ? `
+        <p>The annual calculation uses the <b>Excel Benchmark Compatible Mode</b>. Scenario peak equipment powers are multiplied by annual factors, and electrical losses are calculated from the benchmark IT and MEP path efficiencies.</p>
+        <div class="card">
+            <h3>ACC Unit Architecture</h3>
+            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(benchmark.scenario || output.project?.scenario_name || "N/A")} scenario. Benchmark Mode uses scenario peak equipment powers and annual factors rather than detailed hourly dispatch.</p>
+            <table><tbody>${tableRows([
+                ["ACC Unit Capacity", `${reportValue(context.input?.cooling_unit_capacity_mw, " MW", 1)}`],
+                ["Active ACC Units", esc(output.project?.active_units ?? "N/A")],
+                ["Calculation Method", "Scenario peak power × annual factor"],
+                ["Hourly Dispatch", "Not used in Excel Benchmark Compatible Mode"]
+            ])}</tbody></table>
+        </div>
+        <h3>Benchmark Mathematical Framework</h3>
+        <table><tbody>${tableRows([
+            ["ACC Average Power", "<code>Scenario peak ACC power × ACC annual temperature factor</code>"],
+            ["Other Equipment", "<code>Scenario peak equipment power × annual IT load factor</code>"],
+            ["Electrical Loss", "<code>Load / path efficiency − load</code>"],
+            ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
+        ])}</tbody></table>
+    ` : `
+    <p>${isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, pumps, indoor equipment, engine radiator power, and electrical losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured."}</p>
     <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
     ${coolingUnitInfo ? `
         <div class="card">
-            <h3>Cooling Unit Architecture</h3>
-            <p>The model assumes <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} cooling units (total cooling capacity = ${mwTextFromKw(coolingUnitInfo.totalCapacityKw)})` : "N/A")}</b>. All chiller and dry cooler units are assumed to run throughout the year with equal load sharing. Unit load ratio is calculated as IT Load divided by total cooling unit capacity. N+1 or staged dispatch control is not included in this version.</p>
+            <h3>${isAccMode ? "ACC Unit Architecture" : "Cooling Unit Architecture"}</h3>
+            <p>${isAccMode ? `The model uses <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} ACC units` : "N/A")}</b>. Dynamic mode evaluates ACC operation hour by hour.` : `The model assumes <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} cooling units (total cooling capacity = ${mwTextFromKw(coolingUnitInfo.totalCapacityKw)})` : "N/A")}</b>. All chiller and dry cooler units are assumed to run throughout the year with equal load sharing. Unit load ratio is calculated as IT Load divided by total cooling unit capacity. N+1 or staged dispatch control is not included in this version.`}</p>
             <table><tbody>${tableRows([
-                ["Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.capacityKw))],
-                ["Cooling Unit Count", coolingUnitInfo.count !== null ? esc(fmtInteger(coolingUnitInfo.count)) : "N/A"],
-                ["Total Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.totalCapacityKw))],
+                [isAccMode ? "ACC Unit Capacity" : "Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.capacityKw))],
+                [isAccMode ? "ACC Unit Count" : "Cooling Unit Count", coolingUnitInfo.count !== null ? esc(fmtInteger(coolingUnitInfo.count)) : "N/A"],
+                [isAccMode ? "Total ACC Capacity" : "Total Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.totalCapacityKw))],
                 ["Dispatch Strategy", "All units running"],
                 ["Load Sharing", "Equal load sharing across all cooling units"],
                 ["Unit Load Ratio", "<code>IT Load / Total Cooling Unit Capacity</code>"],
@@ -1981,14 +2047,19 @@ function buildHtmlReport(context) {
         </div>
     ` : ""}
     <h3>Mathematical Framework</h3>
-    ${formulasHtml()}
+    ${isAccMode ? `<table><tbody>${tableRows([
+        ["Annual PUE", "<code>Annual facility energy / Annual IT energy</code>"],
+        ["ACC Power", "Dynamic hourly ACC model"],
+        ["Electrical Loss", "<code>Load / path efficiency − load</code>"]
+    ])}</tbody></table>` : `${formulasHtml()}
     <table><tbody>${tableRows([
         ["PUE Definition", "<code>PUE = P_facility / P_IT</code>"],
         ["Cooling Power", "<code>P_cooling = P_chiller + P_dry_cooler</code> plus pump/fan terms reported separately where available"],
         ["Chiller COP", "<code>COP = Q_cooling / P_compressor</code>"],
         ["Dry Cooler Approach", "<code>T_LWT = T_ambient + Approach</code> when no explicit leaving-water curve is supplied"],
         ["Not Currently Modeled", "Cooling mode classification, free-cooling hours, solar heat gain impact on cooling load"]
-    ])}</tbody></table>
+    ])}</tbody></table>`}
+    `}
 </section>
 
 <section>
@@ -2019,6 +2090,15 @@ function buildHtmlReport(context) {
 
 <section>
     <h2>6. Equipment Curve Register</h2>
+    ${isAccMode ? `
+        <p>${isBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in Excel Benchmark Compatible Mode. ACC power is represented through scenario peak ACC power and the annual temperature factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."}</p>
+        <table><tbody>${tableRows([
+            ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
+            ["ACC Power Basis", isBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"],
+            ["Annual Adjustment", isBenchmarkMode ? "ACC annual temperature factor" : "Hourly weather and ACC model"],
+            ["Weather Representation", isBenchmarkMode ? "EPW-derived annual factor" : "Hourly EPW weather"]
+        ])}</tbody></table>
+    ` : `
     <p>All imported equipment parameter curves are represented below in a common technical format. These are the curve inputs available to the frontend and solver workflow at report generation time.</p>
     ${curveRegisterRows.length ? `
         <table>
@@ -2034,10 +2114,30 @@ function buildHtmlReport(context) {
             </div>
         `).join("")}</div>
     ` : `<div class="empty">No equipment curves were imported.</div>`}
+    `}
 </section>
 
 <section>
     <h2>7. Annual Simulation Results</h2>
+    ${isAccMode ? `
+    ${isBenchmarkMode ? `<h3>ACC Benchmark Components</h3>
+    <table>
+        <thead><tr><th>Component</th><th>Average Power (kW)</th><th>Annual Energy (kWh)</th></tr></thead>
+        <tbody>${benchmarkComponentRows.map(([label, averageKw, annualKwh]) => `<tr><td>${esc(label)}</td><td>${reportValue(averageKw, "", 3)}</td><td>${reportValue(annualKwh, "", 0)}</td></tr>`).join("")}</tbody>
+    </table>` : ""}
+    <table><tbody>${tableRows([
+        ["Annual PUE", reportValue(annual.annual_average_PUE, "", 9)],
+        ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
+        ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
+        ["Annual Cooling System Energy", reportValue(annual.annual_total_cooling_system_energy_kWh, " kWh", 0)],
+        ["Annual ACC Energy", reportValue(annual.annual_acc_energy_kWh, " kWh", 0)],
+        ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
+        ["Annual Indoor Equipment Energy", reportValue(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
+        ["Annual Engine Radiator Energy", reportValue(annual.annual_engine_radiator_energy_kWh, " kWh", 0)],
+        ["Annual IT Electrical Loss", reportValue(annual.annual_it_electrical_loss_kWh, " kWh", 0)],
+        ["Annual MEP Electrical Loss", reportValue(annual.annual_mep_electrical_loss_kWh, " kWh", 0)]
+    ])}</tbody></table>
+    ` : `
     <table><tbody>${tableRows([
         ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
         ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
@@ -2065,6 +2165,7 @@ function buildHtmlReport(context) {
         ["Annual Electrical Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
         ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
     ])}</tbody></table>
+    `}
     <div class="grid">
         <div class="card">
             <h3>PUE Contribution Breakdown</h3>
@@ -2080,9 +2181,14 @@ function buildHtmlReport(context) {
         </div>
         <div class="card">
             <h3>Key Findings</h3>
-            <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
-            <p>Electrical losses contribute <b>${esc(percentText(contributionSummary.electricalShare))}</b> of the non-IT PUE overhead.</p>
-            <p>Auxiliary loads contribute <b>${esc(percentText(contributionSummary.auxiliaryShare))}</b> of the non-IT PUE overhead.</p>
+            ${isBenchmarkMode ? `
+                <p>ACC, pump, indoor equipment, and engine radiator energy are calculated from scenario peak values and annual factors.</p>
+                <p>Electrical losses use separate benchmark IT and MEP path efficiencies.</p>
+            ` : `
+                <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
+                <p>Electrical losses contribute <b>${esc(percentText(contributionSummary.electricalShare))}</b> of the non-IT PUE overhead.</p>
+                <p>Auxiliary loads contribute <b>${esc(percentText(contributionSummary.auxiliaryShare))}</b> of the non-IT PUE overhead.</p>
+            `}
             <table><tbody>${tableRows([
                 ["Non-IT PUE Overhead", contributionSummary.nonItPue > 0 ? reportValue(contributionSummary.nonItPue, "", 3) : "N/A"],
                 ["Largest PUE Driver", esc(contributionSummary.largestDriver ? contributionSummary.largestDriver.label : "N/A")]
@@ -2090,7 +2196,15 @@ function buildHtmlReport(context) {
         </div>
         <div class="card">
             <h3>Breakdown Basis</h3>
-            <table><tbody>${tableRows([
+            <table><tbody>${tableRows(isBenchmarkMode ? [
+                ["Base IT PUE", "1.000"],
+                ["ACC pPUE", "<code>annual_acc_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Pump pPUE", "<code>annual_pump_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Indoor Equipment pPUE", "<code>annual_indoor_equipment_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Engine Radiator pPUE", "<code>annual_engine_radiator_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Electrical Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
+                ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
+            ] : [
                 ["Base IT PUE", "1.000"],
                 ["Cooling System pPUE", "<code>annual_total_cooling_system_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Cooling System Includes", "Chiller + Dry Cooler + Pump + Terminal Fan"],
@@ -2102,17 +2216,22 @@ function buildHtmlReport(context) {
         </div>
     </div>
     <div class="grid">
-        <div class="card"><h3>8760 Annual PUE Timeseries</h3>${svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year" })}</div>
-        <div class="card"><h3>Facility Power Timeseries</h3>${svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year" })}</div>
+        <div class="card"><h3>${isBenchmarkMode ? "Benchmark annual-average series — PUE" : "8760 Annual PUE Timeseries"}</h3>${svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year" })}</div>
+        <div class="card"><h3>${isBenchmarkMode ? "Benchmark annual-average series — Facility Power" : "Facility Power Timeseries"}</h3>${svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year" })}</div>
         <div class="card"><h3>Annual Energy Breakdown</h3>${energyChart}</div>
-        <div class="card"><h3>Monthly Average PUE</h3>${monthlyChart}</div>
+        <div class="card"><h3>${isBenchmarkMode ? "Monthly PUE — benchmark annual-average repeated series" : "Monthly Average PUE"}</h3>${monthlyChart}</div>
     </div>
 </section>
 
 <section>
     <h2>8. Engineering Discussion</h2>
-    <p>The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.</p>
-    <table><tbody>${tableRows([
+    <p>${isBenchmarkMode
+        ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the Excel Benchmark Compatible Method. ACC power is calculated from scenario peak ACC power multiplied by the annual temperature factor. Pump, indoor equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical losses are calculated from the benchmark IT and MEP efficiency assumptions.`
+        : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`}</p>
+    <table><tbody>${tableRows(isBenchmarkMode ? [
+        ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
+        ["Hourly Dispatch Classification", "Not applicable in Excel Benchmark Compatible Mode"]
+    ] : [
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
         ["Free Cooling Hours", "Not modeled in current solver"],
         ["Mechanical Cooling Hours", "Not modeled in current solver"]
@@ -3478,10 +3597,10 @@ function selectLibrarySolverCurve(equipmentPackage, scenarioName) {
     return { status: "Missing Curve", sheet_name: null, curve: null };
 }
 
-function buildFrontendSolverInputFromLibrary(data) {
+function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) {
     const totalCapacityMw = getProjectReportInfo().capacityMw;
     if (!(Number(totalCapacityMw) > 0)) return null;
-    const scenarioName = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
+    const scenarioName = scenarioNameOverride || (document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal");
     const sizing = calculateFrontendUnitRequirements(totalCapacityMw, data.cooling_unit_capacity_mw);
     const activeUnits = scenarioName === "Normal" ? sizing.normalActiveUnits : sizing.failureActiveUnits;
     const designItLoadKw = Number(totalCapacityMw) * 1000;
@@ -3640,6 +3759,7 @@ async function runUsingConfigurationLibrary() {
         if (status) status.textContent = "Load Configuration Library first.";
         return;
     }
+    const calculationMode = document.getElementById("configurationCalculationMode")?.value || "dynamic_hourly";
     const libraryInput = buildFrontendSolverInputFromLibrary(configurationLibraryData);
     if (!libraryInput) {
         if (status) status.textContent = "Enter Total IT Capacity before running the configuration.";
@@ -3648,8 +3768,29 @@ async function runUsingConfigurationLibrary() {
     configurationLibraryData.standardized_solver_input = libraryInput;
     const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput);
     elIn.value = pretty(adaptedInput);
-    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name}...`;
-    await run({ libraryRun: true, libraryInput: adaptedInput });
+    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name} / ${calculationMode === "excel_benchmark_compatible" ? "Excel Benchmark Compatible Mode" : "Dynamic Hourly Simulation"}...`;
+    if (calculationMode === "excel_benchmark_compatible") {
+        const alternatives = [
+            ["Normal", "normal_75"],
+            ["Failure", "one_failure_three_active"]
+        ];
+        alternatives.forEach(([scenarioName, scenarioKey]) => {
+            if (scenarioName === libraryInput.scenario_name) return;
+            const alternative = convertFrontendLibraryInputToSolverInput(
+                buildFrontendSolverInputFromLibrary(configurationLibraryData, scenarioName)
+            );
+            pyodide.globals.set("benchmark_json_str", JSON.stringify(alternative));
+            const output = JSON.parse(pyodide.runPython(`
+import json
+benchmark_input = json.loads(benchmark_json_str)
+json.dumps(compute_acc_excel_benchmark(benchmark_input))
+            `));
+            recordScenarioResult(scenarioKey, output.annual_results);
+        });
+        await run({ libraryRun: true, libraryInput: adaptedInput, solverFn: "compute_acc_excel_benchmark" });
+    } else {
+        await run({ libraryRun: true, libraryInput: adaptedInput });
+    }
 }
 
 function renderConfigurationLibrarySummary(data) {
@@ -4508,6 +4649,8 @@ async function init() {
 
         const pyText = await fetch("./solver.py").then(r => r.text());
         await pyodide.runPythonAsync(pyText);
+        const benchmarkText = await fetch("./acc_excel_benchmark.py").then(r => r.text());
+        await pyodide.runPythonAsync(benchmarkText);
 
         window.pyodide = pyodide;
         window.pyodideReady = true;
@@ -4547,6 +4690,7 @@ async function run(options = {}) {
     try {
         const coolingSelection = getCoolingSystemSelection();
         const libraryRun = options && options.libraryRun === true;
+        const requestedSolverFn = options && options.solverFn;
         const providedLibraryInput = libraryRun ? options.libraryInput : null;
         if (!libraryRun && coolingSelection.powerSource !== DEFAULT_POWER_SOURCE) {
             lastReportContext = null;
@@ -4634,13 +4778,14 @@ async function run(options = {}) {
             return;
         }
 
+        const executedSolverFn = requestedSolverFn || job.solverFn;
         pyodide.globals.set("dc_json_str", JSON.stringify(job.input));
-        pyodide.globals.set("solver_fn", job.solverFn);
+        pyodide.globals.set("solver_fn", executedSolverFn);
 
         const outStr = pyodide.runPython(`
 import json
 dc = json.loads(dc_json_str)
-out = compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc)
+out = compute_acc_excel_benchmark(dc) if solver_fn == "compute_acc_excel_benchmark" else (compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc))
 json.dumps(out, indent=2)
         `);
 
@@ -4672,12 +4817,12 @@ json.dumps(out, indent=2)
             const hourlyCount = Array.isArray(outObj.hourly_results) ? outObj.hourly_results.length : 0;
             const d = job.diagnostics || {};
             setSolverDataStatus(
-                `Solver: ${job.solverFn} | IT hours=${d.itHours || 0} | weather hours=${d.weatherHours || 0} | output rows=${hourlyCount}`,
+                `Solver: ${executedSolverFn} | IT hours=${d.itHours || 0} | weather hours=${d.weatherHours || 0} | output rows=${hourlyCount}`,
                 hourlyCount > 1 ? "ok" : "error"
             );
             log(
                 "Project calculation completed\n" +
-                `Solver function=${job.solverFn}\n` +
+                `Solver function=${executedSolverFn}\n` +
                 `Exact input paths=${(d.exactSolverPaths || []).join(", ")}\n` +
                 `IT hours=${d.itHours || 0}, weather hours=${d.weatherHours || 0}, output hourly rows=${hourlyCount}\n` +
                 (d.warning ? `Warning=${d.warning}\n` : "") +
