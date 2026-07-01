@@ -5,6 +5,8 @@ from performance_curve_registry import (
     PERFORMANCE_CURVE_REGISTRY,
     build_default_curve_path,
     get_default_curve_for_equipment,
+    equipment_family_key,
+    normalize_equipment_key,
     resolve_curve_source,
 )
 
@@ -62,6 +64,31 @@ class PerformanceCurveRegistrySmokeTest(unittest.TestCase):
         resolved = resolve_curve_source("UNKNOWN_MODEL", {})
         self.assertEqual(resolved["source_type"], "missing")
         self.assertIsNone(get_default_curve_for_equipment("UNKNOWN_MODEL"))
+
+    def test_labels_and_delimiters_resolve_to_catalog_models(self):
+        self.assertEqual(normalize_equipment_key("chw-pump 2"), "CHW_PUMP_2")
+        self.assertEqual(equipment_family_key("Engine Radiator 2"), "ENGINE_RADIATOR")
+        cases = {
+            "ACC 2": "acc_performance_curve",
+            "chw-pump 2": "pump_power_curve",
+            "Engine_3": "engine_efficiency_curve",
+            "engine radiator 2": "engine_radiator_performance_curve",
+            "CDU 2": "cdu_performance_curve",
+            "rtc-1": "rtc_performance_curve",
+            "mau 1": "mau_performance_curve",
+        }
+        for label, curve_type in cases.items():
+            with self.subTest(label=label):
+                self.assertEqual(get_default_curve_for_equipment(label)["curve_type"], curve_type)
+
+    def test_family_fallback_ignores_instance_number(self):
+        self.assertEqual(get_default_curve_for_equipment("ACC 99")["equipment_type"], "acc")
+        self.assertEqual(get_default_curve_for_equipment("Engine Radiator 2")["equipment_type"], "engine_radiator")
+
+    def test_uploaded_family_curve_matches_different_instance(self):
+        resolved = resolve_curve_source("Engine 3", {"ENGINE_2": "library/engine.xlsx"})
+        self.assertEqual(resolved["source_type"], "uploaded")
+        self.assertEqual(resolved["file"], "library/engine.xlsx")
 
 
 if __name__ == "__main__":

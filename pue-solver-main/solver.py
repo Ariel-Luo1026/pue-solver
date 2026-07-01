@@ -1345,12 +1345,15 @@ def _library_fixed_power_per_unit(binding, load_ratio):
     return max(0.0, float(eval_curve_1d(points, load_ratio, "linear")))
 
 
-def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active_units):
-    """Return (total power kW, COP, source) for an explicit ACC package curve."""
+def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=None):
+    """Return ACC power/COP using ambient interpolation, with load-ratio fallback."""
     if not isinstance(acc_curve, dict) or not isinstance(acc_curve.get("data"), list):
-        return None, None, "not_applied"
+        return None, None, "not_applied", None, None
     power_points = []
     cop_points = []
+    ambient_power_points = []
+    ambient_cop_points = []
+    ambient_capacity_points = []
     power_field = None
     for row in acc_curve.get("data", []):
         if not isinstance(row, dict):
@@ -1375,8 +1378,35 @@ def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active
             power_points.append([x, power])
         if cop_value is not None:
             cop_points.append([x, cop_value])
+        ambient = _num(row.get("ambient_C"), None)
+        capacity = _num(row.get("capacity_kW"), None)
+        if ambient is not None:
+            if power is not None:
+                ambient_power_points.append([ambient, power])
+            if cop_value is not None:
+                ambient_cop_points.append([ambient, cop_value])
+            if capacity is not None:
+                ambient_capacity_points.append([ambient, capacity])
     source_sheet = acc_curve.get("source_sheet") or "unknown"
     equipment_id = acc_curve.get("equipment_id") or "ACC"
+    if oat_c is not None and ambient_power_points:
+        ambient_power_points = _prep_points(ambient_power_points)
+        interpolated_power = max(0.0, float(eval_curve_1d(ambient_power_points, oat_c, "linear")))
+        design_power = ambient_power_points[-1][1]
+        temperature_power_factor = interpolated_power / design_power if design_power > 0 else None
+        ambient_cop = float(eval_curve_1d(ambient_cop_points, oat_c, "linear")) if ambient_cop_points else None
+        if (ambient_cop is None or ambient_cop <= 0) and ambient_capacity_points and interpolated_power > 0:
+            ambient_capacity = float(eval_curve_1d(ambient_capacity_points, oat_c, "linear"))
+            ambient_cop = ambient_capacity / interpolated_power
+        scenario_peak_power = _num(acc_curve.get("scenario_peak_acc_power_kw"), None)
+        if scenario_peak_power is not None and scenario_peak_power >= 0 and temperature_power_factor is not None:
+            total_power = float(scenario_peak_power) * temperature_power_factor
+            power_method = "ambient_normalized_scenario_peak"
+        else:
+            total_power = interpolated_power * max(1, int(active_units))
+            power_method = "ambient_power_input_kW"
+        return total_power, ambient_cop, f"{equipment_id}:{source_sheet}:{power_method}", float(oat_c), temperature_power_factor
+
     curve_cop = float(eval_curve_1d(cop_points, load_ratio, "linear")) if cop_points else None
     if power_points:
         per_unit_power = max(0.0, float(eval_curve_1d(power_points, load_ratio, "linear")))
@@ -1384,10 +1414,10 @@ def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active
         effective_cop = curve_cop if curve_cop is not None and curve_cop > 0 else (
             cooling_load_kw / total_power if total_power > 0 else None
         )
-        return total_power, effective_cop, f"{equipment_id}:{source_sheet}:{power_field}"
+        return total_power, effective_cop, f"{equipment_id}:{source_sheet}:{power_field}", None, None
     if curve_cop is not None and curve_cop > 0:
-        return cooling_load_kw / curve_cop, curve_cop, f"{equipment_id}:{source_sheet}:COP"
-    return None, None, f"{equipment_id}:{source_sheet}:missing_power_and_cop"
+        return cooling_load_kw / curve_cop, curve_cop, f"{equipment_id}:{source_sheet}:COP", None, None
+    return None, None, f"{equipment_id}:{source_sheet}:missing_power_and_cop", None, None
 
 
 def _evaluate_engine_curve(engine_curve, load_ratio, active_units):
@@ -2018,8 +2048,8 @@ def compute_pue_project(input_obj):
             cop = 3.0  # Default COP = 3.0
             cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
-        acc_power_kw, acc_cop, acc_curve_source = _evaluate_acc_equipment_curve(
-            acc_curve, unit_load_ratio, total_thermal_load, library_active_units
+        acc_power_kw, acc_cop, acc_curve_source, acc_ambient_c, acc_temperature_power_factor = _evaluate_acc_equipment_curve(
+            acc_curve, unit_load_ratio, total_thermal_load, library_active_units, oat_c=oat_c
         )
         if acc_power_kw is not None:
             chiller_kw = acc_power_kw
@@ -2138,6 +2168,8 @@ def compute_pue_project(input_obj):
             "acc_power_kW": acc_power_kw if acc_power_kw is not None else 0.0,
             "acc_cop": acc_cop,
             "acc_curve_source": acc_curve_source,
+            "acc_ambient_C": acc_ambient_c,
+            "acc_temperature_power_factor": acc_temperature_power_factor,
             "acc_load_ratio": unit_load_ratio,
             "dry_cooler_power_kW": dry_cooler_kw,
             "dry_cooler_fan_power_kW": dry_cooler_kw,
@@ -2243,6 +2275,7 @@ def compute_pue_project(input_obj):
     annual_white_space_equipment = sum(item.get("white_space_equipment_power_kW", 0.0) for item in result["hourly_results"])
     annual_acc = sum(item.get("acc_power_kW", 0.0) for item in result["hourly_results"])
     acc_cop_values = [item.get("acc_cop") for item in result["hourly_results"] if item.get("acc_cop") is not None]
+    acc_temperature_power_factors = [item.get("acc_temperature_power_factor") for item in result["hourly_results"] if item.get("acc_temperature_power_factor") is not None]
     max_acc_power = max((item.get("acc_power_kW", 0.0) for item in result["hourly_results"]), default=0.0)
     acc_curve_sources = [item.get("acc_curve_source") for item in result["hourly_results"] if item.get("acc_curve_source") not in (None, "not_applied")]
     annual_engine_output = sum(item.get("engine_output_kW", 0.0) for item in result["hourly_results"])
@@ -2295,6 +2328,9 @@ def compute_pue_project(input_obj):
         "annual_white_space_equipment_energy_kWh": annual_white_space_equipment,
         "annual_acc_energy_kWh": annual_acc,
         "average_acc_cop": sum(acc_cop_values) / len(acc_cop_values) if acc_cop_values else None,
+        "min_acc_cop": min(acc_cop_values) if acc_cop_values else None,
+        "max_acc_cop": max(acc_cop_values) if acc_cop_values else None,
+        "average_acc_temperature_power_factor": sum(acc_temperature_power_factors) / len(acc_temperature_power_factors) if acc_temperature_power_factors else None,
         "max_acc_power_kW": max_acc_power,
         "acc_curve_source": acc_curve_sources[0] if acc_curve_sources else "not_applied",
         "annual_engine_output_kWh": annual_engine_output,

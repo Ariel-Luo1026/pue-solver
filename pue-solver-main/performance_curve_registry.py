@@ -5,6 +5,7 @@ module remains metadata-only and is not imported by solver.py.
 """
 
 from pathlib import Path, PurePosixPath
+import re
 
 from equipment_catalog import EQUIPMENT_CATALOG
 
@@ -68,16 +69,45 @@ for _equipment_id, _item in EQUIPMENT_CATALOG.items():
     _EQUIPMENT_CURVE_INDEX[_equipment_id] = _entry
 
 
+def normalize_equipment_key(value):
+    """Normalize display labels and IDs to the catalog's ID convention."""
+    return re.sub(r"_+", "_", re.sub(r"[^A-Z0-9]+", "_", str(value or "").upper())).strip("_")
+
+
+def equipment_family_key(value):
+    """Return an equipment family key, ignoring a trailing instance number."""
+    return re.sub(r"_?\d+$", "", normalize_equipment_key(value)).rstrip("_")
+
+
+_NORMALIZED_CURVE_INDEX = {
+    normalize_equipment_key(equipment_id): entry
+    for equipment_id, entry in _EQUIPMENT_CURVE_INDEX.items()
+}
+_FAMILY_CURVE_INDEX = {}
+for _equipment_id, _entry in _EQUIPMENT_CURVE_INDEX.items():
+    _FAMILY_CURVE_INDEX.setdefault(equipment_family_key(_equipment_id), _entry)
+
+
 def get_default_curve_for_equipment(equipment_id):
-    """Return model metadata from the type-grouped registry."""
-    return _EQUIPMENT_CURVE_INDEX.get(equipment_id)
+    """Return exact model metadata, then fall back to its equipment family."""
+    normalized = normalize_equipment_key(equipment_id)
+    return _NORMALIZED_CURVE_INDEX.get(normalized) or _FAMILY_CURVE_INDEX.get(equipment_family_key(normalized))
 
 
 def resolve_curve_source(equipment_id, uploaded_curves=None):
     """Resolve uploaded > existing hierarchical default > missing warning."""
     uploaded_curves = uploaded_curves or {}
-    if equipment_id in uploaded_curves and uploaded_curves[equipment_id] is not None:
-        return {"equipment_id": equipment_id, "source_type": "uploaded", "file": uploaded_curves[equipment_id], "warning": None}
+    normalized = normalize_equipment_key(equipment_id)
+    family = equipment_family_key(normalized)
+    uploaded_match = next((
+        value for key, value in uploaded_curves.items()
+        if value is not None and (
+            normalize_equipment_key(key) == normalized
+            or equipment_family_key(key) == family
+        )
+    ), None)
+    if uploaded_match is not None:
+        return {"equipment_id": equipment_id, "source_type": "uploaded", "file": uploaded_match, "warning": None}
 
     default = get_default_curve_for_equipment(equipment_id)
     if default and (PROJECT_ROOT / default["default_curve_path"]).is_file():

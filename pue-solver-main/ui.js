@@ -176,6 +176,27 @@ function buildFrontendDefaultCurvePath(equipmentId) {
     return `data/performance_curves/${curveDirectoryForEquipmentId(equipmentId)}/${equipmentId}.xlsx`;
 }
 
+function normalizeEquipmentCurveKey(value) {
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_+/g, "_");
+}
+
+function equipmentCurveFamily(value) {
+    return normalizeEquipmentCurveKey(value).replace(/_?\d+$/, "").replace(/_+$/, "");
+}
+
+function libraryCurveForEquipment(equipmentId) {
+    const packages = Object.values(configurationLibraryData?.equipment || {});
+    const normalized = normalizeEquipmentCurveKey(equipmentId);
+    const family = equipmentCurveFamily(normalized);
+    const equipmentPackage = packages.find(item => normalizeEquipmentCurveKey(item.equipment_id) === normalized)
+        || packages.find(item => equipmentCurveFamily(item.equipment_id) === family);
+    if (!equipmentPackage) return null;
+    const scenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
+    const selected = selectLibrarySolverCurve(equipmentPackage, scenario);
+    if (!selected.sheet_name) return null;
+    return { equipmentPackage, selected };
+}
+
 function uploadedCurveForEquipment(equipmentId) {
     let file = null;
     if (/^CHILLER_/.test(equipmentId)) file = standardDataFiles.chiller;
@@ -192,24 +213,27 @@ function buildSelectedCurveSources(powerConfig) {
     ];
     return Object.fromEntries(equipmentIds.map(equipmentId => {
         const uploaded = uploadedCurveForEquipment(equipmentId);
+        const libraryCurve = libraryCurveForEquipment(equipmentId);
         const defaultFile = buildFrontendDefaultCurvePath(equipmentId);
         const defaultFilename = `${equipmentId}.xlsx`;
         const hasDefault = AVAILABLE_DEFAULT_CURVE_FILES.has(defaultFile);
         return [equipmentId, {
-            source_type: uploaded ? "uploaded" : hasDefault ? "default" : "missing",
-            file: uploaded || (hasDefault ? defaultFile : null),
+            source_type: uploaded ? "uploaded" : libraryCurve ? "library" : hasDefault ? "default" : "missing",
+            file: uploaded || libraryCurve?.equipmentPackage.package_path || (hasDefault ? defaultFile : null),
+            source_equipment_id: libraryCurve?.equipmentPackage.equipment_id || null,
+            source_sheet: libraryCurve?.selected.sheet_name || null,
             default_curve_directory: `data/performance_curves/${curveDirectoryForEquipmentId(equipmentId)}/`,
             default_curve_filename: defaultFilename,
             default_curve_path: defaultFile,
             curve_type: curveTypeForEquipmentId(equipmentId),
-            warning: uploaded ? null : `Default curve file not yet available: ${defaultFile}`
+            warning: uploaded || libraryCurve ? null : `Default curve file not yet available: ${defaultFile}`
         }];
     }));
 }
 
 async function checkSelectedDefaultCurveFiles(powerConfig) {
     const equipmentIds = [...(powerConfig?.white_space_equipment || []), ...(powerConfig?.gray_space_equipment || [])];
-    const pending = equipmentIds.map(buildFrontendDefaultCurvePath)
+    const pending = equipmentIds.filter(equipmentId => !libraryCurveForEquipment(equipmentId)).map(buildFrontendDefaultCurvePath)
         .filter(path => !CHECKED_DEFAULT_CURVE_FILES.has(path));
     if (!pending.length) return;
     await Promise.all(pending.map(async path => {
@@ -237,6 +261,7 @@ function renderCoolingSystemSelection() {
         ...(powerConfig?.required_curves || []).map(name => `Required: ${name}`),
         ...Object.entries(curveSources).map(([equipmentId, source]) => {
             const status = source.source_type === "uploaded" ? "Using uploaded curve" :
+                source.source_type === "library" ? `Using Configuration Library curve (${source.source_equipment_id} / ${source.source_sheet})` :
                 source.source_type === "default" ? `Using default curve (${source.default_curve_filename})` : "Missing curve";
             return `${equipmentIdDisplayName(equipmentId)} — ${status}`;
         })
@@ -245,8 +270,12 @@ function renderCoolingSystemSelection() {
     checkSelectedDefaultCurveFiles(powerConfig);
     const status = document.getElementById("coolingSystemStatus");
     if (status) {
-        const runnable = config?.implemented && powerSource === DEFAULT_POWER_SOURCE;
-        status.textContent = runnable ? `${type}, ${capacityMw} MW, ${powerSource}, ${scenario.display_name}: calculation model available.`
+        const libraryRunnable = configurationLibraryData
+            && configurationLibraryData.cooling_system_type === type
+            && Number(configurationLibraryData.cooling_unit_capacity_mw) === Number(capacityMw)
+            && configurationLibraryData.power_source === powerSource;
+        const runnable = (config?.implemented && powerSource === DEFAULT_POWER_SOURCE) || libraryRunnable;
+        status.textContent = runnable ? `${type}, ${capacityMw} MW, ${powerSource}, ${scenario.display_name}: ${libraryRunnable ? "Configuration Library calculation model" : "calculation model"} available.`
             : powerSource !== DEFAULT_POWER_SOURCE ? POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE : COOLING_MODEL_UNAVAILABLE_MESSAGE;
         status.style.color = runnable ? "#059669" : "#b45309";
     }
@@ -3401,9 +3430,15 @@ function buildStandardSolverInputToTextarea() {
     }
 }
 
+// The library is a sibling of pue-solver-main. Resolve every library workbook
+// from this single root so configuration, scenario, equipment, input, and
+// source files cannot accidentally fall back to the page's own directory.
+const CONFIGURATION_LIBRARY_ROOT_URL = new URL("../Configuration Library/", document.baseURI);
+
 async function fetchConfigurationWorkbook(relativePath) {
-    const response = await fetch(`/Configuration%20Library/${relativePath}`, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Could not load ${relativePath} (HTTP ${response.status}).`);
+    const workbookUrl = new URL(relativePath, CONFIGURATION_LIBRARY_ROOT_URL);
+    const response = await fetch(workbookUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Could not load ${workbookUrl.href} (HTTP ${response.status}).`);
     const workbook = XLSX.read(await response.arrayBuffer(), { type: "array" });
     const sheets = {};
     workbook.SheetNames.forEach(name => {
@@ -3518,11 +3553,12 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
 
     const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"]]);
     const wet = standardDataArray(standardDataFiles.weather || {}, [["data", "wet_bulb_C"], ["hourly_data", "wet_bulb_C"]]);
+    const hasAnnualWeather = Array.isArray(dry) && dry.length >= hours;
     const weather = { hourly_data: {
         hour_index: makeHours(hours),
-        dry_bulb_C: dry?.length ? dry.slice(0, hours) : Array(hours).fill(25),
-        wet_bulb_C: wet?.length ? wet.slice(0, hours) : []
-    }, metadata: dry?.length
+        dry_bulb_C: hasAnnualWeather ? dry.slice(0, hours) : Array(hours).fill(25),
+        wet_bulb_C: hasAnnualWeather && wet?.length >= hours ? wet.slice(0, hours) : []
+    }, metadata: hasAnnualWeather
         ? { source: "loaded_weather" }
         : { source: "library_solver_adapter_default", assumption: "25 C constant dry bulb" }
     };
@@ -4621,6 +4657,11 @@ json.dumps(out, indent=2)
             if (libraryRun && configurationLibraryData) {
                 configurationLibraryData.last_solver_output = outObj;
                 renderConfigurationLibrarySummary(configurationLibraryData);
+                const libraryStatus = document.getElementById("configurationLibraryStatus");
+                if (libraryStatus) {
+                    libraryStatus.textContent = `Completed ${configurationLibraryData.configuration_name} / ${providedLibraryInput.scenario_name}: Annual PUE ${fmtNumber(outObj.annual_results.annual_average_PUE, 3)}.`;
+                    libraryStatus.style.color = "#059669";
+                }
             }
             recordScenarioResult(coolingSelection.scenarioKey, outObj.annual_results);
             lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };

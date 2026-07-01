@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 
 from configuration_library_loader import build_solver_input_from_library
 from library_solver_adapter import convert_library_input_to_solver_input
@@ -64,6 +65,33 @@ class LibrarySolverAdapterTest(unittest.TestCase):
             self.assertEqual(len(output["hourly_results"]), 8760)
             self.assertIsInstance(output["annual_results"]["annual_average_PUE"], float)
             self.assertGreater(output["annual_results"]["annual_average_PUE"], 1.0)
+            self.assertGreater(output["annual_results"]["annual_IT_energy_kWh"], 0)
+            self.assertGreater(output["annual_results"]["annual_facility_energy_kWh"], 0)
+            self.assertGreater(output["annual_results"]["annual_acc_energy_kWh"], 0)
+
+    def test_annual_weather_is_preserved_without_manual_curve_uploads(self):
+        library_input = deepcopy(self.normal_library)
+        library_input["weather"] = {
+            "hourly_data": {"dry_bulb_C": [30.0] * 8760, "wet_bulb_C": [20.0] * 8760},
+            "metadata": {"source": "test_epw"},
+        }
+        adapted = convert_library_input_to_solver_input(library_input)
+        self.assertEqual(adapted["weather"]["metadata"]["source"], "test_epw")
+        self.assertEqual(len(adapted["weather"]["hourly_data"]["dry_bulb_C"]), 8760)
+        self.assertEqual(adapted["weather"]["hourly_data"]["hour_index"][0], 1)
+
+    def test_partial_weather_falls_back_to_valid_annual_assumption(self):
+        library_input = deepcopy(self.normal_library)
+        library_input["weather"] = {"hourly_data": {"dry_bulb_C": [30.0]}}
+        adapted = convert_library_input_to_solver_input(library_input)
+        self.assertEqual(len(adapted["weather"]["hourly_data"]["dry_bulb_C"]), 8760)
+        self.assertEqual(adapted["weather"]["metadata"]["source"], "library_solver_adapter_default")
+
+    def test_all_library_equipment_with_performance_data_selects_a_curve(self):
+        for library_input in (self.normal_library, self.failure_library):
+            for equipment_id, selected in library_input["selected_curves"].items():
+                with self.subTest(scenario=library_input["scenario_name"], equipment_id=equipment_id):
+                    self.assertNotEqual(selected["status"], "Missing Curve")
 
 
 if __name__ == "__main__":

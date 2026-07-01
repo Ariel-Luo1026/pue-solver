@@ -64,7 +64,8 @@ def convert_library_input_to_solver_input(library_input):
 
     weather = deepcopy(library_input.get("weather")) if isinstance(library_input.get("weather"), dict) else None
     weather_data = weather.get("hourly_data", {}) if weather else {}
-    if not isinstance(weather_data.get("dry_bulb_C"), list) or not weather_data.get("dry_bulb_C"):
+    dry_bulb = weather_data.get("dry_bulb_C")
+    if not isinstance(dry_bulb, list) or len(dry_bulb) != hours:
         weather = {
             "hourly_data": {
                 "hour_index": list(range(1, hours + 1)),
@@ -73,6 +74,9 @@ def convert_library_input_to_solver_input(library_input):
             },
             "metadata": {"source": "library_solver_adapter_default", "assumption": "25 C constant dry bulb"},
         }
+    else:
+        weather.setdefault("hourly_data", {})
+        weather["hourly_data"]["hour_index"] = list(range(1, hours + 1))
 
     acc_rows = _selected_curve(library_input, "ACC_2")
     pump_rows = _selected_curve(library_input, "CHW_PUMP_2")
