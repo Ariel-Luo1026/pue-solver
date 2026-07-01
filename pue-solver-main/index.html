@@ -456,6 +456,20 @@
         </div>
     </div>
 
+    <!-- ================= Configuration Library ================= -->
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;">Configuration Library</h3>
+        <div class="toolbar">
+            <select id="configurationLibrarySelect" style="max-width:360px;">
+                <option value="ACC_1.5MW_GASENGINE_CDU">ACC_1.5MW_GASENGINE_CDU</option>
+            </select>
+            <button type="button" class="secondaryButton" id="btnLoadConfigurationLibrary">Load Configuration Library</button>
+            <button type="button" class="primaryButton" id="btnRunConfigurationLibrary" disabled>Run Using Configuration Library</button>
+        </div>
+        <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Manual Excel upload remains available below.</div>
+        <div id="configurationLibrarySummary" class="fileGrid" style="margin-top:12px; display:none;"></div>
+    </div>
+
     <!-- ================= Standardized Data Inputs ================= -->
     <div class="card">
         <h3 style="margin:0 0 10px 0;">输入文件</h3>

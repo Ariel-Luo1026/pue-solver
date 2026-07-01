@@ -1,0 +1,150 @@
+"""Compatibility adapter from Phase 8 library input to solver.py input."""
+
+from copy import deepcopy
+
+
+def _selected_curve(library_input, equipment_id):
+    selected = library_input.get("selected_curves", {}).get(equipment_id, {})
+    curve = selected.get("curve")
+    return curve if isinstance(curve, list) else []
+
+
+def _acc_cop_curve(rows):
+    data = [
+        {
+            "ambient_C": row.get("ambient_C"),
+            "load_ratio": row.get("load_ratio"),
+            "COP": row.get("COP"),
+        }
+        for row in rows
+        if row.get("ambient_C") is not None and row.get("load_ratio") is not None and row.get("COP") is not None
+    ]
+    return {
+        "type": "2d_lookup_table",
+        "x_axis": "ambient_C",
+        "y_axis": "load_ratio",
+        "output": "COP",
+        "interpolation": "bilinear",
+        "data": data,
+    }
+
+
+def _power_curve(rows, curve_id):
+    data = [
+        {"load_ratio": row.get("load_ratio"), "power_kW": row.get("power_kW")}
+        for row in rows
+        if row.get("load_ratio") is not None and row.get("power_kW") is not None
+    ]
+    return {
+        "type": "1d_lookup_table",
+        "x_axis": "load_ratio",
+        "output": "power_kW",
+        "interpolation": "linear",
+        "data": data,
+        "curve_id": curve_id,
+    }
+
+
+def convert_library_input_to_solver_input(library_input):
+    """Map library fields to compute_pue_project-compatible input.
+
+    Fields that the current solver does not consume are retained under
+    library_context. No solver implementation is changed by this adapter.
+    """
+    if not isinstance(library_input, dict):
+        raise TypeError("library_input must be a dictionary")
+    project_source = library_input.get("project", {})
+    it_source = project_source.get("it_load", {})
+    hourly_it = list(it_source.get("hourly_it_load_kW", []))
+    if not hourly_it:
+        raise ValueError("library_input is missing project.it_load.hourly_it_load_kW")
+    hours = len(hourly_it)
+    active_units = int(project_source.get("active_units") or 1)
+    capacity_kw = float(project_source.get("cooling_unit_capacity_kW") or 0.0)
+
+    weather = deepcopy(library_input.get("weather")) if isinstance(library_input.get("weather"), dict) else None
+    weather_data = weather.get("hourly_data", {}) if weather else {}
+    if not isinstance(weather_data.get("dry_bulb_C"), list) or not weather_data.get("dry_bulb_C"):
+        weather = {
+            "hourly_data": {
+                "hour_index": list(range(1, hours + 1)),
+                "dry_bulb_C": [25.0] * hours,
+                "wet_bulb_C": [],
+            },
+            "metadata": {"source": "library_solver_adapter_default", "assumption": "25 C constant dry bulb"},
+        }
+
+    acc_rows = _selected_curve(library_input, "ACC_2")
+    pump_rows = _selected_curve(library_input, "CHW_PUMP_2")
+    engine_rows = _selected_curve(library_input, "ENGINE_2")
+    radiator_rows = _selected_curve(library_input, "ENGINE_RADIATOR_2")
+    acc_curve_id = "ACC_2_COP"
+    pump_curve_id = "CHW_PUMP_2_power_vs_load"
+    curves = {
+        acc_curve_id: _acc_cop_curve(acc_rows),
+        pump_curve_id: _power_curve(pump_rows, pump_curve_id),
+    }
+
+    project = deepcopy(project_source)
+    project["it_load"] = deepcopy(it_source)
+    project["it_load"]["cooling_unit_capacity_kW"] = capacity_kw
+    project["it_load"]["cooling_unit_count"] = active_units
+    project["cooling_unit_count"] = active_units
+    project["installed_units"] = project_source.get("installed_units")
+    project["active_units"] = active_units
+
+    library_context = {
+        "configuration_name": library_input.get("configuration_library", {}).get("configuration_name"),
+        "scenario_name": library_input.get("scenario_name"),
+        "acc_curve": {
+            "equipment_id": "ACC_2",
+            "source_sheet": library_input.get("selected_curves", {}).get("ACC_2", {}).get("sheet_name"),
+            "data": deepcopy(acc_rows),
+        },
+        "required_units": project_source.get("required_units"),
+        "installed_units": project_source.get("installed_units"),
+        "active_units": active_units,
+        "selected_curves": deepcopy(library_input.get("selected_curves", {})),
+        "engine_output_reference": deepcopy(library_input.get("equipment", {}).get("cooling", {}).get("engine")),
+        "engine_radiator": deepcopy(library_input.get("equipment", {}).get("cooling", {}).get("engine_radiator")),
+        "auxiliary_equipment": deepcopy(library_input.get("equipment", {}).get("auxiliary", {})),
+        "electrical_path": deepcopy(library_input.get("electrical_path")),
+        "adapter_assumptions": weather.get("metadata", {}),
+    }
+    return {
+        "cooling_system_type": library_input.get("cooling_system_type"),
+        "cooling_unit_capacity_mw": library_input.get("cooling_unit_capacity_mw"),
+        "power_source": library_input.get("power_source"),
+        "scenario_name": library_input.get("scenario_name"),
+        "acc_curve": deepcopy(library_context["acc_curve"]),
+        "engine_curve": {
+            "equipment_id": "ENGINE_2",
+            "source_sheet": library_input.get("selected_curves", {}).get("ENGINE_2", {}).get("sheet_name"),
+            "data": deepcopy(engine_rows),
+            "default_efficiency": 0.40,
+            "default_efficiency_source": "temporary_assumption_pending_vendor_fuel_map",
+        },
+        "engine_radiator_curve": {
+            "equipment_id": "ENGINE_RADIATOR_2",
+            "source_sheet": library_input.get("selected_curves", {}).get("ENGINE_RADIATOR_2", {}).get("sheet_name"),
+            "data": deepcopy(radiator_rows),
+        },
+        "project": project,
+        "weather": weather,
+        "curve_library": {"curves": curves},
+        "equipment": {
+            "cooling": {
+                "cooling_unit_capacity_kW": capacity_kw,
+                "cooling_unit_count": active_units,
+                "chiller": {"enabled": True, "curve_ref": acc_curve_id, "source_equipment_id": "ACC_2"},
+                "ACC": {"enabled": True, "curve_ref": acc_curve_id, "source_equipment_id": "ACC_2"},
+                "dry_cooler": {"enabled": False},
+                "pumps": {"enabled": True, "power_curve_refs": [pump_curve_id], "source_equipment_id": "CHW_PUMP_2"},
+                "fans": {"enabled": False},
+            },
+            "library_fixed_power": deepcopy(library_input.get("equipment", {}).get("auxiliary", {})),
+            "electrical_path": deepcopy(library_input.get("electrical_path")),
+        },
+        "electrical_path": deepcopy(library_input.get("electrical_path")),
+        "library_context": library_context,
+    }

@@ -114,6 +114,7 @@ let preferStandardFiles = false;
 let lastReportContext = null;
 let scenarioResults = [];
 window.scenario_results = scenarioResults;
+let configurationLibraryData = null;
 const equipmentPdfSpecs = {};
 
 function log(msg) { elLog.textContent = msg; }
@@ -257,16 +258,33 @@ function renderScenarioSummary() {
     if (!body) return;
     const selection = getCoolingSystemSelection();
     const scheme = `${selection.type} / ${selection.capacityMw} MW / ${selection.powerSource}`;
+    const sizing = calculateFrontendUnitRequirements(getProjectReportInfo().capacityMw, selection.capacityMw);
     body.innerHTML = Object.values(SCENARIO_REGISTRY).map(scenario => {
         const result = scenarioResults.find(item => item.scenario_key === scenario.scenario_key);
         const annualPue = result?.annual_results?.annual_average_PUE;
-        const activeEngines = selection.powerSource === "Gas Engine" ? scenario.active_energy_modules : "—";
+        const activeEngines = selection.powerSource === "Gas Engine" && sizing
+            ? (scenario.scenario_key === "normal_75" ? sizing.installedUnits : sizing.requiredUnits)
+            : "—";
         return `<tr>
             <td>${esc(scheme)}</td><td>${esc(scenario.display_name)}</td><td>—</td>
             <td>${activeEngines}</td><td>—</td><td>—</td>
             <td>${Number.isFinite(Number(annualPue)) ? fmtNumber(annualPue, 3) : "—"}</td>
         </tr>`;
     }).join("");
+}
+
+function calculateFrontendUnitRequirements(totalItCapacityMw, coolingUnitCapacityMw) {
+    const total = Number(totalItCapacityMw);
+    const unit = Number(coolingUnitCapacityMw);
+    if (!(total > 0) || !(unit > 0)) return null;
+    const requiredUnits = Math.ceil(total / unit);
+    return {
+        requiredUnits,
+        installedUnits: requiredUnits + 1,
+        normalActiveUnits: requiredUnits + 1,
+        failureActiveUnits: requiredUnits,
+        redundancy: "N+1"
+    };
 }
 
 function recordScenarioResult(scenarioKey, annualResults) {
@@ -330,6 +348,10 @@ function initCoolingSystemSelection() {
     });
     scenarioSelect.addEventListener("change", () => {
         renderCoolingSystemSelection();
+        if (configurationLibraryData) {
+            configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+            renderConfigurationLibrarySummary(configurationLibraryData);
+        }
         standardSolverInput = null;
         refreshStandardInputStatus();
     });
@@ -1747,10 +1769,11 @@ function buildHtmlReport(context) {
     const generated = new Date().toISOString();
     const energyRows = [
         ["IT Energy", annual.annual_IT_energy_kWh],
-        ["Chiller Energy", annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
+        [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh],
         ["Pump Energy", annual.annual_pump_energy_kWh || 0],
         ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh],
+        ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh],
         ["Electrical Loss", annual.annual_electrical_loss_kWh],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
     ].filter(([, value]) => Number(value) > 0);
@@ -1992,9 +2015,24 @@ function buildHtmlReport(context) {
         ["Annual Cooling System Energy", reportValue(annual.annual_total_cooling_system_energy_kWh || 0, " kWh", 0)],
         ["Annual Chiller + Dry Cooler Energy", reportValue(annual.annual_chiller_plus_dry_cooler_energy_kWh, " kWh", 0)],
         ["Annual Chiller Energy", reportValue(annual.annual_chiller_energy_kWh, " kWh", 0)],
+        ["Annual ACC Energy", reportValue(annual.annual_acc_energy_kWh, " kWh", 0)],
+        ["Average ACC COP", reportValue(annual.average_acc_cop, "", 3)],
+        ["Max ACC Power", reportValue(annual.max_acc_power_kW, " kW", 1)],
+        ["ACC Curve Source", esc(annual.acc_curve_source || "N/A")],
+        ["Annual Engine Output", reportValue(annual.annual_engine_output_kWh, " kWh", 0)],
+        ["Annual Engine Fuel Input", reportValue(annual.annual_engine_fuel_input_kWh, " kWh", 0)],
+        ["Annual Engine Waste Heat", reportValue(annual.annual_engine_waste_heat_kWh, " kWh", 0)],
+        ["Average Engine Efficiency", annual.average_engine_efficiency != null ? percentText(annual.average_engine_efficiency) : "N/A"],
+        ["Annual Engine Radiator Energy", reportValue(annual.annual_engine_radiator_energy_kWh, " kWh", 0)],
+        ["Max Engine Radiator Power", reportValue(annual.max_engine_radiator_power_kW, " kW", 1)],
+        ["Radiator Curve Source", esc(annual.engine_radiator_curve_source || "N/A")],
         ["Annual Dry Cooler Energy", reportValue(annual.annual_dry_cooler_energy_kWh, " kWh", 0)],
         ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
         ["Annual Terminal Fan Energy", reportValue(annual.annual_terminal_fan_energy_kWh, " kWh", 0)],
+        ["Annual CDU Energy", reportValue(annual.annual_cdu_energy_kWh, " kWh", 0)],
+        ["Annual RTC Energy", reportValue(annual.annual_rtc_energy_kWh, " kWh", 0)],
+        ["Annual MAU Energy", reportValue(annual.annual_mau_energy_kWh, " kWh", 0)],
+        ["Annual White Space Equipment Energy", reportValue(annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
         ["Annual Electrical Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
         ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
     ])}</tbody></table>
@@ -3113,6 +3151,7 @@ function buildSolverInputFromStandardFiles(files) {
     };
     const selection = getCoolingSystemSelection();
     solverInput.curve_sources = buildSelectedCurveSources(selection.powerConfig);
+    if (configurationLibraryData) solverInput.configuration_library = configurationLibraryData;
     return window.PueImportAdapter.applyCoolingSystemSelection(
         solverInput, selection.type, selection.capacityMw, selection.powerSource, selection.scenarioKey
     );
@@ -3362,8 +3401,454 @@ function buildStandardSolverInputToTextarea() {
     }
 }
 
+async function fetchConfigurationWorkbook(relativePath) {
+    const response = await fetch(`/Configuration%20Library/${relativePath}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Could not load ${relativePath} (HTTP ${response.status}).`);
+    const workbook = XLSX.read(await response.arrayBuffer(), { type: "array" });
+    const sheets = {};
+    workbook.SheetNames.forEach(name => {
+        sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: null });
+    });
+    return sheets;
+}
+
+function configurationKeyValues(rows, key = "Parameter", value = "Value") {
+    return Object.fromEntries((rows || []).filter(row => row[key] !== null).map(row => [row[key], row[value]]));
+}
+
+function librarySheetKeyValues(rows) {
+    const result = {};
+    (rows || []).forEach(row => {
+        const key = row.Parameter ?? row.Field ?? row.Item ?? row["Check Item"];
+        const value = Object.prototype.hasOwnProperty.call(row, "Value") ? row.Value : row.Status;
+        if (key !== null && key !== undefined) result[String(key)] = value;
+    });
+    return result;
+}
+
+function selectLibrarySolverCurve(equipmentPackage, scenarioName) {
+    const electricalPath = equipmentPackage?.electrical_path;
+    if (electricalPath && Number.isFinite(Number(electricalPath.it_efficiency)) && Number.isFinite(Number(electricalPath.mep_efficiency))) {
+        return { status: "Electrical Path Found", sheet_name: "Solver", curve: null, electrical_path: electricalPath };
+    }
+    const curves = equipmentPackage?.solver_curves || {};
+    const scenario = String(scenarioName || "").toLowerCase();
+    const preferred = scenario === "normal" ? "Solver_Curve_Normal"
+        : (["failure", "maintenance"].includes(scenario) ? "Solver_Curve_Failure" : null);
+    const selected = [preferred, "Solver_Curve"].find(name => name && Array.isArray(curves[name]) && curves[name].length);
+    if (selected) return { status: "Selected", sheet_name: selected, curve: curves[selected] };
+    if (String(equipmentPackage?.equipment_id || "").startsWith("ACC_") && equipmentPackage?.performance_map?.length) {
+        return { status: "Selected", sheet_name: "Performance_Map", curve: equipmentPackage.performance_map };
+    }
+    return { status: "Missing Curve", sheet_name: null, curve: null };
+}
+
+function buildFrontendSolverInputFromLibrary(data) {
+    const totalCapacityMw = getProjectReportInfo().capacityMw;
+    if (!(Number(totalCapacityMw) > 0)) return null;
+    const scenarioName = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
+    const sizing = calculateFrontendUnitRequirements(totalCapacityMw, data.cooling_unit_capacity_mw);
+    const activeUnits = scenarioName === "Normal" ? sizing.normalActiveUnits : sizing.failureActiveUnits;
+    const designItLoadKw = Number(totalCapacityMw) * 1000;
+    const percentages = data.it_load.hourly_it_load_percent || [];
+    const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
+    const selectedCurves = Object.fromEntries(Object.entries(data.equipment).map(([equipmentId, item]) => [
+        equipmentId, selectLibrarySolverCurve(item, scenarioName)
+    ]));
+    const binding = (equipmentId, role) => {
+        const item = data.equipment[equipmentId];
+        const selected = selectedCurves[equipmentId];
+        return {
+            enabled: item?.status !== "Missing",
+            equipment_id: equipmentId,
+            role,
+            package_path: item?.package_path || null,
+            selected_curve_sheet: selected?.sheet_name || null,
+            selected_curve_status: selected?.status || "Missing Curve",
+            curve_data: selected?.curve || null
+        };
+    };
+    const electricalPath = data.equipment.ELECTRICAL_DISTRIBUTION_2?.electrical_path || null;
+    return {
+        cooling_system_type: data.cooling_system_type,
+        cooling_unit_capacity_mw: data.cooling_unit_capacity_mw,
+        power_source: data.power_source,
+        scenario_name: scenarioName,
+        project: {
+            name: data.configuration_name,
+            calculation_mode: "project_8760",
+            project_mode: true,
+            design_it_load_kW: designItLoadKw,
+            cooling_unit_capacity_kW: data.cooling_unit_capacity_mw * 1000,
+            required_units: sizing.requiredUnits,
+            installed_units: sizing.installedUnits,
+            active_units: activeUnits,
+            redundancy_strategy: "N+1",
+            scenario_name: scenarioName,
+            it_load: {
+                design_it_load_kW: designItLoadKw,
+                hourly_it_load_percent: percentages,
+                hourly_it_load_kW: hourlyItLoadKw
+            }
+        },
+        equipment: {
+            cooling: {
+                ACC: binding("ACC_2", "cooling_equipment"),
+                pumps: { CHW_PUMP_2: binding("CHW_PUMP_2", "pump_power") },
+                engine: binding("ENGINE_2", "engine_output_reference"),
+                engine_radiator: binding("ENGINE_RADIATOR_2", "engine_radiator_power")
+            },
+            auxiliary: Object.fromEntries(["CDU_2", "RTC_2", "MAU_2"].map(id => [id, binding(id, "white_space_auxiliary")])),
+            electrical_path: electricalPath
+        },
+        electrical_path: electricalPath,
+        selected_curves: selectedCurves
+    };
+}
+
+function convertFrontendLibraryInputToSolverInput(libraryInput) {
+    const clone = value => JSON.parse(JSON.stringify(value));
+    const project = clone(libraryInput.project);
+    const hourlyIt = project.it_load.hourly_it_load_kW;
+    const hours = hourlyIt.length;
+    const activeUnits = Number(project.active_units);
+    project.it_load.cooling_unit_capacity_kW = project.cooling_unit_capacity_kW;
+    project.it_load.cooling_unit_count = activeUnits;
+    project.cooling_unit_count = activeUnits;
+
+    const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"]]);
+    const wet = standardDataArray(standardDataFiles.weather || {}, [["data", "wet_bulb_C"], ["hourly_data", "wet_bulb_C"]]);
+    const weather = { hourly_data: {
+        hour_index: makeHours(hours),
+        dry_bulb_C: dry?.length ? dry.slice(0, hours) : Array(hours).fill(25),
+        wet_bulb_C: wet?.length ? wet.slice(0, hours) : []
+    }, metadata: dry?.length
+        ? { source: "loaded_weather" }
+        : { source: "library_solver_adapter_default", assumption: "25 C constant dry bulb" }
+    };
+    const accRows = libraryInput.selected_curves.ACC_2?.curve || [];
+    const pumpRows = libraryInput.selected_curves.CHW_PUMP_2?.curve || [];
+    const engineRows = libraryInput.selected_curves.ENGINE_2?.curve || [];
+    const radiatorRows = libraryInput.selected_curves.ENGINE_RADIATOR_2?.curve || [];
+    const accCurveId = "ACC_2_COP";
+    const pumpCurveId = "CHW_PUMP_2_power_vs_load";
+    const curves = {
+        [accCurveId]: {
+            type: "2d_lookup_table", x_axis: "ambient_C", y_axis: "load_ratio", output: "COP", interpolation: "bilinear",
+            data: accRows.filter(row => row.ambient_C != null && row.load_ratio != null && row.COP != null)
+                .map(row => ({ ambient_C: row.ambient_C, load_ratio: row.load_ratio, COP: row.COP }))
+        },
+        [pumpCurveId]: {
+            type: "1d_lookup_table", x_axis: "load_ratio", output: "power_kW", interpolation: "linear",
+            data: pumpRows.filter(row => row.load_ratio != null && row.power_kW != null)
+                .map(row => ({ load_ratio: row.load_ratio, power_kW: row.power_kW }))
+        }
+    };
+    return {
+        cooling_system_type: libraryInput.cooling_system_type,
+        cooling_unit_capacity_mw: libraryInput.cooling_unit_capacity_mw,
+        power_source: libraryInput.power_source,
+        scenario_name: libraryInput.scenario_name,
+        acc_curve: {
+            equipment_id: "ACC_2",
+            source_sheet: libraryInput.selected_curves.ACC_2?.sheet_name || null,
+            data: clone(accRows)
+        },
+        engine_curve: {
+            equipment_id: "ENGINE_2",
+            source_sheet: libraryInput.selected_curves.ENGINE_2?.sheet_name || null,
+            data: clone(engineRows),
+            default_efficiency: 0.40,
+            default_efficiency_source: "temporary_assumption_pending_vendor_fuel_map"
+        },
+        engine_radiator_curve: {
+            equipment_id: "ENGINE_RADIATOR_2",
+            source_sheet: libraryInput.selected_curves.ENGINE_RADIATOR_2?.sheet_name || null,
+            data: clone(radiatorRows)
+        },
+        project,
+        weather,
+        curve_library: { curves },
+        equipment: {
+            cooling: {
+                cooling_unit_capacity_kW: project.cooling_unit_capacity_kW,
+                cooling_unit_count: activeUnits,
+                chiller: { enabled: true, curve_ref: accCurveId, source_equipment_id: "ACC_2" },
+                ACC: { enabled: true, curve_ref: accCurveId, source_equipment_id: "ACC_2" },
+                dry_cooler: { enabled: false },
+                pumps: { enabled: true, power_curve_refs: [pumpCurveId], source_equipment_id: "CHW_PUMP_2" },
+                fans: { enabled: false }
+            },
+            library_fixed_power: clone(libraryInput.equipment.auxiliary),
+            electrical_path: clone(libraryInput.electrical_path)
+        },
+        electrical_path: clone(libraryInput.electrical_path),
+        library_context: {
+            scenario_name: libraryInput.scenario_name,
+            required_units: project.required_units,
+            installed_units: project.installed_units,
+            active_units: project.active_units,
+            selected_curves: clone(libraryInput.selected_curves),
+            engine_output_reference: clone(libraryInput.equipment.cooling.engine),
+            engine_radiator: clone(libraryInput.equipment.cooling.engine_radiator),
+            auxiliary_equipment: clone(libraryInput.equipment.auxiliary),
+            electrical_path: clone(libraryInput.electrical_path),
+            adapter_assumptions: clone(weather.metadata)
+        }
+    };
+}
+
+async function runUsingConfigurationLibrary() {
+    const status = document.getElementById("configurationLibraryStatus");
+    if (!configurationLibraryData) {
+        if (status) status.textContent = "Load Configuration Library first.";
+        return;
+    }
+    const libraryInput = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+    if (!libraryInput) {
+        if (status) status.textContent = "Enter Total IT Capacity before running the configuration.";
+        return;
+    }
+    configurationLibraryData.standardized_solver_input = libraryInput;
+    const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput);
+    elIn.value = pretty(adaptedInput);
+    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name}...`;
+    await run({ libraryRun: true, libraryInput: adaptedInput });
+}
+
+function renderConfigurationLibrarySummary(data) {
+    const summary = document.getElementById("configurationLibrarySummary");
+    if (!summary) return;
+    const totalCapacity = getProjectReportInfo().capacityMw;
+    const sizing = calculateFrontendUnitRequirements(totalCapacity, data.cooling_unit_capacity_mw);
+    const standardized = data.standardized_solver_input || buildFrontendSolverInputFromLibrary(data);
+    const activeUnits = standardized?.project?.active_units;
+    const itSample = standardized?.project?.it_load?.hourly_it_load_kW?.slice(0, 3) || [];
+    const electricalPath = standardized?.electrical_path;
+    const annualElectrical = data.last_solver_output?.annual_results || {};
+    const values = [
+        ["Loaded configuration name", data.configuration_name],
+        ["Cooling unit capacity", `${data.cooling_unit_capacity_mw} MW`],
+        ["Equipment count", data.equipment_count],
+        ["IT load hours", data.it_load.hours],
+        ["Scenario list", data.scenarios.map(item => item.scenario).join(", ")],
+        ["Required units", sizing === null ? "Enter Total IT Capacity" : `${sizing.requiredUnits} = ceil(${totalCapacity} / ${data.cooling_unit_capacity_mw})`],
+        ["Installed units", sizing === null ? "Enter Total IT Capacity" : `${sizing.installedUnits} = Required units + 1`],
+        ["Active units for selected scenario", activeUnits ?? "Enter Total IT Capacity"],
+        ["Redundancy", "N+1"],
+        ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
+        ["Electrical IT / MEP efficiency", electricalPath
+            ? `${fmtNumber(electricalPath.it_efficiency * 100, 2)}% / ${fmtNumber(electricalPath.mep_efficiency * 100, 2)}%` : "Missing"],
+        ["IT Electrical Loss", annualElectrical.annual_it_electrical_loss_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_it_electrical_loss_kWh)} kWh` : "Waiting for Solver"],
+        ["MEP Electrical Loss", annualElectrical.annual_mep_electrical_loss_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_mep_electrical_loss_kWh)} kWh` : "Waiting for Solver"],
+        ["Total Electrical Loss", annualElectrical.annual_electrical_loss_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_electrical_loss_kWh)} kWh` : "Waiting for Solver"],
+        ["CDU Energy", annualElectrical.annual_cdu_energy_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_cdu_energy_kWh)} kWh` : "Waiting for Solver"],
+        ["RTC Energy", annualElectrical.annual_rtc_energy_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_rtc_energy_kWh)} kWh` : "Waiting for Solver"],
+        ["MAU Energy", annualElectrical.annual_mau_energy_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_mau_energy_kWh)} kWh` : "Waiting for Solver"],
+        ["White Space Equipment Energy", annualElectrical.annual_white_space_equipment_energy_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_white_space_equipment_energy_kWh)} kWh` : "Waiting for Solver"],
+        ["ACC Energy", annualElectrical.annual_acc_energy_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_acc_energy_kWh)} kWh` : "Waiting for Solver"],
+        ["Average ACC COP", annualElectrical.average_acc_cop != null
+            ? fmtNumber(annualElectrical.average_acc_cop, 3) : "Waiting for Solver"],
+        ["Max ACC Power", annualElectrical.max_acc_power_kW != null
+            ? `${fmtNumber(annualElectrical.max_acc_power_kW, 1)} kW` : "Waiting for Solver"],
+        ["ACC Curve Source", annualElectrical.acc_curve_source || "Waiting for Solver"],
+        ["Engine Output", annualElectrical.annual_engine_output_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_engine_output_kWh)} kWh` : "Waiting for Solver"],
+        ["Engine Fuel", annualElectrical.annual_engine_fuel_input_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_engine_fuel_input_kWh)} kWh` : "Waiting for Solver"],
+        ["Waste Heat", annualElectrical.annual_engine_waste_heat_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_engine_waste_heat_kWh)} kWh` : "Waiting for Solver"],
+        ["Average Engine Efficiency", annualElectrical.average_engine_efficiency != null
+            ? `${fmtNumber(annualElectrical.average_engine_efficiency * 100, 2)}%` : "Waiting for Solver"],
+        ["Engine Radiator Energy", annualElectrical.annual_engine_radiator_energy_kWh != null
+            ? `${fmtInteger(annualElectrical.annual_engine_radiator_energy_kWh)} kWh` : "Waiting for Solver"],
+        ["Engine Radiator Max Power", annualElectrical.max_engine_radiator_power_kW != null
+            ? `${fmtNumber(annualElectrical.max_engine_radiator_power_kW, 1)} kW` : "Waiting for Solver"],
+        ["Radiator Curve Source", annualElectrical.engine_radiator_curve_source || "Waiting for Solver"]
+    ];
+    summary.style.display = "grid";
+    const selectedScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
+    const equipmentRows = Object.values(data.equipment || {}).map(item => {
+        const selected = selectLibrarySolverCurve(item, selectedScenario);
+        const curveSheets = selected.electrical_path ? ["Solver (Electrical Path)"] : Object.keys(item.solver_curves || {});
+        const selectedDisplay = selected.electrical_path
+            ? `<b>Electrical Path Found</b><br>IT Path Efficiency: ${fmtNumber(selected.electrical_path.it_efficiency * 100, 2)}%<br>MEP Path Efficiency: ${fmtNumber(selected.electrical_path.mep_efficiency * 100, 2)}%`
+            : esc(selected.sheet_name || "Missing Curve");
+        return `<tr>
+            <td>${esc(item.equipment_id)}</td><td>${esc(item.status)}</td>
+            <td>${esc(curveSheets.length ? curveSheets.join(", ") : "None")}</td>
+            <td>${selectedDisplay}</td>
+        </tr>`;
+    }).join("");
+    summary.innerHTML = values.map(([label, value]) =>
+        `<div class="fileSlot"><div class="panelTitle">${esc(label)}</div><div>${esc(value)}</div></div>`
+    ).join("") + `<div class="fileSlot" style="grid-column:1/-1; overflow-x:auto;">
+        <div class="panelTitle">Equipment Package Auto Binding — ${esc(selectedScenario)}</div>
+        <table style="width:100%; min-width:720px;"><thead><tr>
+            <th>Equipment</th><th>Package</th><th>Solver Curve Sheets</th><th>Selected Curve</th>
+        </tr></thead><tbody>${equipmentRows}</tbody></table>
+    </div>`;
+}
+
+async function loadSelectedConfigurationLibrary() {
+    const select = document.getElementById("configurationLibrarySelect");
+    const status = document.getElementById("configurationLibraryStatus");
+    const button = document.getElementById("btnLoadConfigurationLibrary");
+    const configurationName = select?.value || "ACC_1.5MW_GASENGINE_CDU";
+    if (status) status.textContent = `Loading ${configurationName}...`;
+    if (button) button.disabled = true;
+    try {
+        const base = encodeURIComponent(configurationName);
+        const configurationSheets = await fetchConfigurationWorkbook(`${base}/configuration.xlsx`);
+        const equipmentPerUnit = (configurationSheets.Equipment_List || []).map(row => ({
+            equipment_id: String(row.Equipment || ""),
+            per_cooling_unit: Number(row["Per Cooling Unit"] || 0)
+        }));
+        const equipmentRequests = equipmentPerUnit.map(async ({ equipment_id: equipmentId }) => {
+            const packagePath = `equipment/${equipmentId}/${equipmentId}.xlsx`;
+            try {
+                const sheets = await fetchConfigurationWorkbook(`${base}/${packagePath}`);
+                const curveNames = ["Solver_Curve", "Solver_Curve_Normal", "Solver_Curve_Failure"].filter(name => sheets[name]);
+                const information = librarySheetKeyValues(sheets.Information);
+                const metadata = librarySheetKeyValues(sheets.Metadata);
+                const validation = librarySheetKeyValues(sheets.Validation);
+                const equipmentType = information["Equipment Type"] || metadata.equipment_type || null;
+                const isElectricalPath = equipmentId.startsWith("ELECTRICAL_DISTRIBUTION") || String(equipmentType || "").toLowerCase() === "electrical distribution";
+                let electricalPath = null;
+                if (isElectricalPath) {
+                    const efficiencies = Object.fromEntries((sheets.Solver || []).map(row => [String(row.Path || "").toUpperCase(), Number(row.overall_efficiency)]));
+                    electricalPath = {
+                        it_efficiency: Number.isFinite(efficiencies.IT) ? efficiencies.IT : null,
+                        mep_efficiency: Number.isFinite(efficiencies.MEP) ? efficiencies.MEP : null
+                    };
+                }
+                const electricalPathFound = electricalPath && electricalPath.it_efficiency !== null && electricalPath.mep_efficiency !== null;
+                return [equipmentId, {
+                    equipment_id: equipmentId,
+                    equipment_type: equipmentType,
+                    package_path: packagePath,
+                    status: electricalPathFound ? "Electrical Path Found" : "Found",
+                    available_sheets: Object.keys(sheets),
+                    solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]])),
+                    performance_map: sheets.Performance_Map || [],
+                    electrical_path: electricalPath,
+                    validation_status: validation["Validation Status"] || validation.Status || "Available"
+                }];
+            } catch (_) {
+                return [equipmentId, {
+                    equipment_id: equipmentId, equipment_type: null, package_path: packagePath,
+                    status: "Missing", available_sheets: [], solver_curves: {}, performance_map: [], electrical_path: null,
+                    validation_status: "Missing equipment package"
+                }];
+            }
+        });
+        const [scenarioSheets, itSheets, equipmentEntries] = await Promise.all([
+            fetchConfigurationWorkbook(`${base}/scenario.xlsx`),
+            fetchConfigurationWorkbook(`${base}/input/IT_LOAD_90_PERCENT.xlsx`),
+            Promise.all(equipmentRequests)
+        ]);
+        const parameters = configurationKeyValues(configurationSheets.Configuration);
+        const scenarios = (scenarioSheets.Scenario || []).map(row => ({
+            scenario: row.Scenario,
+            running_unit_formula: row["Running Unit Formula"],
+            description: row.Description
+        }));
+        const percentages = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_percent)).filter(Number.isFinite);
+        const ratios = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_ratio)).filter(Number.isFinite);
+        const itLoad = {
+            schema_version: "pue.timeseries.it_load.v1",
+            type: "annual_it_load",
+            source_file: "input/IT_LOAD_90_PERCENT.xlsx",
+            units: { hourly_it_load_percent: "%", hourly_it_load_ratio: "fraction" },
+            data: { hourly_it_load_percent: percentages, "hourly_it_load_%": percentages, hourly_it_load_ratio: ratios },
+            hours: percentages.length
+        };
+        if (projectDesignCapacityKw() > 0) normalizeItLoadPercentFile(itLoad);
+        standardDataFiles.itLoad = itLoad;
+        standardSolverInput = null;
+        preferStandardFiles = true;
+        configurationLibraryData = {
+            configuration_name: parameters["Configuration Name"] || configurationName,
+            cooling_system_type: parameters["Cooling System Type"],
+            cooling_unit_capacity_mw: Number(parameters["Cooling Unit Capacity"]),
+            power_source: parameters["Power Source"],
+            equipment_per_cooling_unit: equipmentPerUnit,
+            equipment_count: equipmentEntries.length,
+            scenarios,
+            it_load: { hours: percentages.length, hourly_it_load_percent: percentages, hourly_it_load_ratio: ratios },
+            equipment: Object.fromEntries(equipmentEntries)
+        };
+        const librarySizing = calculateFrontendUnitRequirements(
+            getProjectReportInfo().capacityMw, configurationLibraryData.cooling_unit_capacity_mw
+        );
+        configurationLibraryData.library_bound_input = {
+            configuration: {
+                configuration_name: configurationLibraryData.configuration_name,
+                cooling_system_type: configurationLibraryData.cooling_system_type,
+                cooling_unit_capacity_mw: configurationLibraryData.cooling_unit_capacity_mw,
+                power_source: configurationLibraryData.power_source,
+                equipment_per_cooling_unit: equipmentPerUnit
+            },
+            unit_counts: librarySizing || {
+                requiredUnits: null, installedUnits: null, normalActiveUnits: null,
+                failureActiveUnits: null, redundancy: "N+1"
+            },
+            scenarios,
+            equipment_packages: configurationLibraryData.equipment,
+            selected_curves: Object.fromEntries(scenarios.map(scenario => [
+                scenario.scenario,
+                Object.fromEntries(Object.entries(configurationLibraryData.equipment).map(([equipmentId, item]) => [
+                    equipmentId, selectLibrarySolverCurve(item, scenario.scenario)
+                ]))
+            ])),
+            it_load_profile: configurationLibraryData.it_load
+        };
+        configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+        window.configurationLibraryData = configurationLibraryData;
+
+        const typeSelect = document.getElementById("coolingSystemType");
+        if (typeSelect && COOLING_SYSTEM_CONFIG[configurationLibraryData.cooling_system_type]) {
+            typeSelect.value = configurationLibraryData.cooling_system_type;
+            updateCoolingUnitCapacityOptions(configurationLibraryData.cooling_unit_capacity_mw);
+        }
+        const powerSelect = document.getElementById("powerSource");
+        if (powerSelect) powerSelect.value = configurationLibraryData.power_source;
+        renderCoolingSystemSelection();
+        renderConfigurationLibrarySummary(configurationLibraryData);
+        updateFileStatus("statusItLoad", `Configuration Library: IT_LOAD_90_PERCENT.xlsx (${percentages.length} hours)`, "ok");
+        refreshStandardInputStatus();
+        if (status) {
+            status.textContent = projectDesignCapacityKw() > 0
+                ? `Loaded ${configurationLibraryData.configuration_name}. Manual uploads remain available as overrides.`
+                : `Loaded ${configurationLibraryData.configuration_name}. Enter Total IT Capacity to convert IT load percent to kW.`;
+            status.style.color = "#059669";
+        }
+        const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
+        if (runLibraryButton) runLibraryButton.disabled = false;
+    } catch (error) {
+        if (status) {
+            status.textContent = `Configuration Library load failed: ${String(error.message || error)}`;
+            status.style.color = "#dc2626";
+        }
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 function initStandardDataInputs() {
     initCoolingSystemSelection();
+    const libraryButton = document.getElementById("btnLoadConfigurationLibrary");
+    if (libraryButton) libraryButton.addEventListener("click", loadSelectedConfigurationLibrary);
+    const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
+    if (runLibraryButton) runLibraryButton.addEventListener("click", runUsingConfigurationLibrary);
     const bindings = [
         ["fileItLoad", "itLoad", "statusItLoad"],
         ["fileWeather", "weather", "statusWeather"],
@@ -3414,6 +3899,25 @@ function initStandardDataInputs() {
         input.addEventListener("input", () => {
             updateProjectInfoStatus();
             renderProjectInfoReportPanel();
+            if (id === "projectCapacityMwInput" && configurationLibraryData) {
+                try {
+                    normalizeItLoadPercentFile(standardDataFiles.itLoad);
+                    if (configurationLibraryData.library_bound_input) {
+                        configurationLibraryData.library_bound_input.unit_counts =
+                            calculateFrontendUnitRequirements(
+                                getProjectReportInfo().capacityMw,
+                                configurationLibraryData.cooling_unit_capacity_mw
+                            );
+                    }
+                    configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+                    standardSolverInput = null;
+                    refreshStandardInputStatus();
+                    renderConfigurationLibrarySummary(configurationLibraryData);
+                    renderScenarioSummary();
+                } catch (_) {
+                    // Capacity is incomplete while the user is still typing.
+                }
+            }
         });
     });
     [
@@ -3526,10 +4030,11 @@ function showProjectVisualization(outObj) {
 
     const energyBreakdown = [
         ["IT Energy", annual.annual_IT_energy_kWh, "#059669"],
-        ["Chiller Energy", annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh, "#2563eb"],
+        [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh, "#2563eb"],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh, "#14b8a6"],
         ["Pump Energy", annual.annual_pump_energy_kWh || 0, "#8b5cf6"],
         ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh, "#0f766e"],
+        ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh, "#ec4899"],
         ["Electrical Loss", annual.annual_electrical_loss_kWh, "#f59e0b"],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh, "#7c3aed"]
     ].filter(([, value]) => Number(value) > 0);
@@ -4000,12 +4505,14 @@ async function init() {
     }
 }
 
-async function run() {
+async function run(options = {}) {
     if (!pyodide) return;
 
     try {
         const coolingSelection = getCoolingSystemSelection();
-        if (coolingSelection.powerSource !== DEFAULT_POWER_SOURCE) {
+        const libraryRun = options && options.libraryRun === true;
+        const providedLibraryInput = libraryRun ? options.libraryInput : null;
+        if (!libraryRun && coolingSelection.powerSource !== DEFAULT_POWER_SOURCE) {
             lastReportContext = null;
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
             if (btnExportJson) btnExportJson.disabled = true;
@@ -4019,7 +4526,7 @@ async function run() {
             log(POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE);
             return;
         }
-        if (!coolingSelection.config?.implemented) {
+        if (!libraryRun && !coolingSelection.config?.implemented) {
             lastReportContext = null;
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
             if (btnExportJson) btnExportJson.disabled = true;
@@ -4033,14 +4540,14 @@ async function run() {
             log(COOLING_MODEL_UNAVAILABLE_MESSAGE);
             return;
         }
-        if (!standardSolverInput && preferStandardFiles) {
+        if (!providedLibraryInput && !standardSolverInput && preferStandardFiles) {
             standardSolverInput = buildSolverInputFromStandardFiles(standardDataFiles);
             syncStandardChillerSurfaceToCurveLib(standardDataFiles.chiller);
             elIn.value = pretty(standardSolverInput);
             previewInputCurves(standardDataFiles);
             refreshStandardInputStatus();
         }
-        const rawInput = standardSolverInput || JSON.parse(elIn.value);
+        const rawInput = providedLibraryInput || standardSolverInput || JSON.parse(elIn.value);
         const curveLib = window.curveLib || {
             curves_1d: {},
             cop_surfaces: {}
@@ -4111,6 +4618,10 @@ json.dumps(out, indent=2)
         if (isProjectResult) {
             // Show visualization for 8760-hour results
             showProjectVisualization(outObj);
+            if (libraryRun && configurationLibraryData) {
+                configurationLibraryData.last_solver_output = outObj;
+                renderConfigurationLibrarySummary(configurationLibraryData);
+            }
             recordScenarioResult(coolingSelection.scenarioKey, outObj.annual_results);
             lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
             if (btnExportHtmlReport) btnExportHtmlReport.disabled = false;

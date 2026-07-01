@@ -1325,6 +1325,156 @@ def compute_pue_v04(input_obj):
     return result
 
 
+def _library_fixed_power_per_unit(binding, load_ratio):
+    """Evaluate a Phase 10B library fixed-power curve, returning kW/unit."""
+    if not isinstance(binding, dict) or binding.get("enabled", True) is False:
+        return 0.0
+    rows = binding.get("curve_data", [])
+    if not isinstance(rows, list):
+        return 0.0
+    points = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        x = _num(row.get("load_ratio"), None)
+        y = _num(row.get("power_kW"), None)
+        if x is not None and y is not None:
+            points.append([x, y])
+    if not points:
+        return 0.0
+    return max(0.0, float(eval_curve_1d(points, load_ratio, "linear")))
+
+
+def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active_units):
+    """Return (total power kW, COP, source) for an explicit ACC package curve."""
+    if not isinstance(acc_curve, dict) or not isinstance(acc_curve.get("data"), list):
+        return None, None, "not_applied"
+    power_points = []
+    cop_points = []
+    power_field = None
+    for row in acc_curve.get("data", []):
+        if not isinstance(row, dict):
+            continue
+        x = _num(row.get("load_ratio"), None)
+        if x is None:
+            percent = _num(row.get("percent_load"), None)
+            x = percent / 100.0 if percent is not None else None
+        if x is None:
+            continue
+        power = _num(row.get("power_kW"), None)
+        if power is not None:
+            power_field = "power_kW"
+        else:
+            power = _num(row.get("power_input_kW"), None)
+            if power is not None:
+                power_field = "power_input_kW"
+        cop_value = _num(row.get("COP"), None)
+        if cop_value is None:
+            cop_value = _num(row.get("unit_efficiency_COP"), None)
+        if power is not None:
+            power_points.append([x, power])
+        if cop_value is not None:
+            cop_points.append([x, cop_value])
+    source_sheet = acc_curve.get("source_sheet") or "unknown"
+    equipment_id = acc_curve.get("equipment_id") or "ACC"
+    curve_cop = float(eval_curve_1d(cop_points, load_ratio, "linear")) if cop_points else None
+    if power_points:
+        per_unit_power = max(0.0, float(eval_curve_1d(power_points, load_ratio, "linear")))
+        total_power = per_unit_power * max(1, int(active_units))
+        effective_cop = curve_cop if curve_cop is not None and curve_cop > 0 else (
+            cooling_load_kw / total_power if total_power > 0 else None
+        )
+        return total_power, effective_cop, f"{equipment_id}:{source_sheet}:{power_field}"
+    if curve_cop is not None and curve_cop > 0:
+        return cooling_load_kw / curve_cop, curve_cop, f"{equipment_id}:{source_sheet}:COP"
+    return None, None, f"{equipment_id}:{source_sheet}:missing_power_and_cop"
+
+
+def _evaluate_engine_curve(engine_curve, load_ratio, active_units):
+    """Evaluate ENGINE_2 reporting values without changing facility PUE loads."""
+    if not isinstance(engine_curve, dict) or not isinstance(engine_curve.get("data"), list):
+        return 0.0, None, 0.0, 0.0, "not_applied"
+    output_points = []
+    efficiency_points = []
+    fuel_points = []
+    bsfc_points = []
+    for row in engine_curve.get("data", []):
+        if not isinstance(row, dict):
+            continue
+        x = _num(row.get("load_ratio"), None)
+        output = _num(row.get("engine_output_kW"), None)
+        efficiency = _num(row.get("engine_efficiency"), None)
+        if efficiency is None:
+            efficiency = _num(row.get("efficiency"), None)
+        fuel_input = _num(row.get("fuel_input_kW"), None)
+        if fuel_input is None:
+            fuel_input = _num(row.get("fuel_rate_kW"), None)
+        bsfc = _num(row.get("bsfc_g_per_kWh"), None)
+        if bsfc is None:
+            bsfc = _num(row.get("bsfc"), None)
+        if x is None:
+            continue
+        if output is not None:
+            output_points.append([x, output])
+        if efficiency is not None:
+            efficiency_points.append([x, efficiency])
+        if fuel_input is not None:
+            fuel_points.append([x, fuel_input])
+        if bsfc is not None:
+            bsfc_points.append([x, bsfc])
+    if not output_points:
+        return 0.0, None, 0.0, 0.0, "missing_engine_output"
+    units = max(1, int(active_units))
+    per_unit_output = max(0.0, float(eval_curve_1d(output_points, load_ratio, "linear")))
+    total_output = per_unit_output * units
+    source_sheet = engine_curve.get("source_sheet") or "unknown"
+    equipment_id = engine_curve.get("equipment_id") or "ENGINE"
+    if fuel_points:
+        total_fuel = max(0.0, float(eval_curve_1d(fuel_points, load_ratio, "linear"))) * units
+        efficiency = total_output / total_fuel if total_fuel > 0 else None
+        source = "fuel_rate"
+    elif bsfc_points:
+        bsfc = max(0.0, float(eval_curve_1d(bsfc_points, load_ratio, "linear")))
+        lhv_kwh_per_kg = _num(engine_curve.get("fuel_lhv_kWh_per_kg"), 13.1)
+        total_fuel = total_output * (bsfc / 1000.0) * lhv_kwh_per_kg
+        efficiency = total_output / total_fuel if total_fuel > 0 else None
+        source = "bsfc"
+    else:
+        efficiency = float(eval_curve_1d(efficiency_points, load_ratio, "linear")) if efficiency_points else _num(engine_curve.get("default_efficiency"), 0.40)
+        efficiency = _clamp(float(efficiency), 1e-6, 1.0)
+        total_fuel = total_output / efficiency
+        source = "efficiency_curve" if efficiency_points else str(engine_curve.get("default_efficiency_source") or "default_efficiency")
+    waste_heat = max(0.0, total_fuel - total_output)
+    return total_output, efficiency, total_fuel, waste_heat, f"{equipment_id}:{source_sheet}:{source}"
+
+
+def _evaluate_engine_radiator_curve(radiator_curve, load_ratio, active_units, engine_waste_heat_kw):
+    """Evaluate scenario radiator fan power when engine waste heat is present."""
+    if engine_waste_heat_kw <= 0 or not isinstance(radiator_curve, dict):
+        return 0.0, "not_applied"
+    points = []
+    power_field = None
+    for row in radiator_curve.get("data", []) if isinstance(radiator_curve.get("data"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        x = _num(row.get("load_ratio"), None)
+        power = _num(row.get("radiator_fan_power_kW"), None)
+        if power is not None:
+            power_field = "radiator_fan_power_kW"
+        else:
+            power = _num(row.get("power_kW"), None)
+            if power is not None:
+                power_field = "power_kW"
+        if x is not None and power is not None:
+            points.append([x, power])
+    equipment_id = radiator_curve.get("equipment_id") or "ENGINE_RADIATOR"
+    source_sheet = radiator_curve.get("source_sheet") or "unknown"
+    if not points:
+        return 0.0, f"{equipment_id}:{source_sheet}:missing_power"
+    per_unit_power = max(0.0, float(eval_curve_1d(points, load_ratio, "linear")))
+    return per_unit_power * max(1, int(active_units)), f"{equipment_id}:{source_sheet}:{power_field}"
+
+
 def compute_pue_project(input_obj):
     """
     input_obj: dict in the project schema
@@ -1367,6 +1517,20 @@ def compute_pue_project(input_obj):
         aux_coeff = 0.005
     aux_coeff = _clamp(float(aux_coeff), 0.0, 1.0)
 
+    # Optional terminal-to-upstream electrical path efficiencies. When absent,
+    # retain the legacy UPS/transformer curve loss calculation unchanged.
+    electrical_path = input_obj.get("electrical_path", {}) if isinstance(input_obj.get("electrical_path", {}), dict) else {}
+    if not electrical_path:
+        electrical_path = _get(input_obj, ["equipment", "electrical_path"], {})
+    if not isinstance(electrical_path, dict):
+        electrical_path = {}
+    it_path_efficiency = _num(electrical_path.get("it_efficiency"), None)
+    mep_path_efficiency = _num(electrical_path.get("mep_efficiency"), None)
+    electrical_path_enabled = (
+        it_path_efficiency is not None and 0.0 < it_path_efficiency <= 1.0
+        and mep_path_efficiency is not None and 0.0 < mep_path_efficiency <= 1.0
+    )
+
     cooling_cfg = _get(input_obj, ["equipment", "cooling"], {})
     if not isinstance(cooling_cfg, dict):
         cooling_cfg = {}
@@ -1383,6 +1547,20 @@ def compute_pue_project(input_obj):
     if cooling_unit_count is None:
         cooling_unit_count = ceil(float(design_it_load or 0.0) / cooling_unit_capacity_kw) if cooling_unit_capacity_kw > 0 else 1
     cooling_unit_count = max(1, int(ceil(float(cooling_unit_count))))
+    library_active_units = _num(project.get("active_units"), cooling_unit_count)
+    library_active_units = max(1, int(ceil(float(library_active_units))))
+    library_fixed_power = _get(input_obj, ["equipment", "library_fixed_power"], {})
+    if not isinstance(library_fixed_power, dict) or not library_fixed_power:
+        library_fixed_power = _get(input_obj, ["library_context", "auxiliary_equipment"], {})
+    if not isinstance(library_fixed_power, dict):
+        library_fixed_power = {}
+    acc_curve = input_obj.get("acc_curve", {}) if isinstance(input_obj.get("acc_curve", {}), dict) else {}
+    if not acc_curve:
+        acc_curve = _get(input_obj, ["library_context", "acc_curve"], {})
+    if not isinstance(acc_curve, dict):
+        acc_curve = {}
+    engine_curve = input_obj.get("engine_curve", {}) if isinstance(input_obj.get("engine_curve", {}), dict) else {}
+    engine_radiator_curve = input_obj.get("engine_radiator_curve", {}) if isinstance(input_obj.get("engine_radiator_curve", {}), dict) else {}
 
     dry_cooler_cfg = _get(input_obj, ["equipment", "cooling", "dry_cooler"], {})
     if not isinstance(dry_cooler_cfg, dict):
@@ -1840,6 +2018,12 @@ def compute_pue_project(input_obj):
             cop = 3.0  # Default COP = 3.0
             cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
+        acc_power_kw, acc_cop, acc_curve_source = _evaluate_acc_equipment_curve(
+            acc_curve, unit_load_ratio, total_thermal_load, library_active_units
+        )
+        if acc_power_kw is not None:
+            chiller_kw = acc_power_kw
+            cop = acc_cop
         heat_rejection_to_dry_cooler_kw = it_kw
         heat_rejection_per_dry_cooler_unit_kw = heat_rejection_to_dry_cooler_kw / cooling_unit_count if cooling_unit_count > 0 else heat_rejection_to_dry_cooler_kw
         dry_cooler_load_kw = heat_rejection_to_dry_cooler_kw
@@ -1901,8 +2085,36 @@ def compute_pue_project(input_obj):
                     dry_cooler_power_source = f"{dry_cooler_power_source}_fan_power_factor_times_rated"
         cooling_kw = chiller_kw + dry_cooler_kw
 
+        # Optional Configuration Library fixed-power white-space equipment.
+        # These are MEP terminal loads and do not alter legacy auxiliary logic.
+        cdu_power_kw = _library_fixed_power_per_unit(library_fixed_power.get("CDU_2"), project_load_ratio) * library_active_units
+        rtc_power_kw = _library_fixed_power_per_unit(library_fixed_power.get("RTC_2"), project_load_ratio) * library_active_units
+        mau_power_kw = _library_fixed_power_per_unit(library_fixed_power.get("MAU_2"), project_load_ratio) * library_active_units
+        white_space_equipment_power_kw = cdu_power_kw + rtc_power_kw + mau_power_kw
+        engine_output_kw, engine_efficiency, engine_fuel_input_kw, engine_waste_heat_kw, engine_curve_source = _evaluate_engine_curve(
+            engine_curve, project_load_ratio, library_active_units
+        )
+        engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
+            engine_radiator_curve, project_load_ratio, library_active_units, engine_waste_heat_kw
+        )
+
         # Total facility power
-        total_facility_power = it_kw + power_dist_loss + cooling_kw + pumps_kw + airflow_kw + aux_kw + other_kw
+        it_terminal_load_kw = it_kw
+        mep_terminal_load_kw = cooling_kw + pumps_kw + airflow_kw + aux_kw + other_kw + white_space_equipment_power_kw + engine_radiator_power_kw
+        if electrical_path_enabled:
+            it_upstream_power_kw = it_terminal_load_kw / it_path_efficiency
+            mep_upstream_power_kw = mep_terminal_load_kw / mep_path_efficiency
+            it_electrical_loss_kw = it_upstream_power_kw - it_terminal_load_kw
+            mep_electrical_loss_kw = mep_upstream_power_kw - mep_terminal_load_kw
+            power_dist_loss = it_electrical_loss_kw + mep_electrical_loss_kw
+            total_facility_power = it_upstream_power_kw + mep_upstream_power_kw
+        else:
+            it_electrical_loss_kw = power_dist_loss
+            mep_electrical_loss_kw = 0.0
+            it_upstream_power_kw = it_terminal_load_kw + it_electrical_loss_kw
+            mep_upstream_power_kw = mep_terminal_load_kw
+            # Preserve the legacy addition order for bit-for-bit compatibility.
+            total_facility_power = it_kw + power_dist_loss + cooling_kw + pumps_kw + airflow_kw + aux_kw + other_kw + white_space_equipment_power_kw + engine_radiator_power_kw
 
         # Calculate PUE
         pue = total_facility_power / it_kw if it_kw > 0 else None
@@ -1923,6 +2135,10 @@ def compute_pue_project(input_obj):
             "unit_load_ratio_raw": unit_load_ratio_raw,
             "cooling_power_kW": cooling_kw,
             "chiller_power_kW": chiller_kw,
+            "acc_power_kW": acc_power_kw if acc_power_kw is not None else 0.0,
+            "acc_cop": acc_cop,
+            "acc_curve_source": acc_curve_source,
+            "acc_load_ratio": unit_load_ratio,
             "dry_cooler_power_kW": dry_cooler_kw,
             "dry_cooler_fan_power_kW": dry_cooler_kw,
             "dry_cooler_power_per_unit_kW": dry_cooler_power_per_unit_kw,
@@ -1967,6 +2183,24 @@ def compute_pue_project(input_obj):
             "terminal_fan_curve_value": fan_curve_value,
             "terminal_fan_power_source": fan_power_source,
             "electrical_loss_kW": power_dist_loss,
+            "it_terminal_load_kW": it_terminal_load_kw,
+            "it_upstream_power_kW": it_upstream_power_kw,
+            "mep_terminal_load_kW": mep_terminal_load_kw,
+            "mep_upstream_power_kW": mep_upstream_power_kw,
+            "it_electrical_loss_kW": it_electrical_loss_kw,
+            "mep_electrical_loss_kW": mep_electrical_loss_kw,
+            "electrical_path_applied": electrical_path_enabled,
+            "cdu_power_kW": cdu_power_kw,
+            "rtc_power_kW": rtc_power_kw,
+            "mau_power_kW": mau_power_kw,
+            "white_space_equipment_power_kW": white_space_equipment_power_kw,
+            "engine_output_kW": engine_output_kw,
+            "engine_efficiency": engine_efficiency,
+            "engine_fuel_input_kW": engine_fuel_input_kw,
+            "engine_waste_heat_kW": engine_waste_heat_kw,
+            "engine_curve_source": engine_curve_source,
+            "engine_radiator_power_kW": engine_radiator_power_kw,
+            "engine_radiator_curve_source": engine_radiator_curve_source,
             "auxiliary_power_kW": aux_kw + other_kw,
             "total_facility_power_kW": total_facility_power,
             "hourly_PUE": pue
@@ -1997,8 +2231,30 @@ def compute_pue_project(input_obj):
     annual_pump = sum(item.get("pump_power_kW", 0.0) for item in result["hourly_results"])
     annual_terminal_fan = sum(item.get("terminal_fan_power_kW", 0.0) for item in result["hourly_results"])
     annual_loss = sum(item.get("electrical_loss_kW", 0.0) for item in result["hourly_results"])
+    annual_it_terminal = sum(item.get("it_terminal_load_kW", item.get("IT_load_kW", 0.0)) for item in result["hourly_results"])
+    annual_it_upstream = sum(item.get("it_upstream_power_kW", item.get("IT_load_kW", 0.0)) for item in result["hourly_results"])
+    annual_mep_terminal = sum(item.get("mep_terminal_load_kW", 0.0) for item in result["hourly_results"])
+    annual_mep_upstream = sum(item.get("mep_upstream_power_kW", item.get("mep_terminal_load_kW", 0.0)) for item in result["hourly_results"])
+    annual_it_electrical_loss = sum(item.get("it_electrical_loss_kW", item.get("electrical_loss_kW", 0.0)) for item in result["hourly_results"])
+    annual_mep_electrical_loss = sum(item.get("mep_electrical_loss_kW", 0.0) for item in result["hourly_results"])
+    annual_cdu = sum(item.get("cdu_power_kW", 0.0) for item in result["hourly_results"])
+    annual_rtc = sum(item.get("rtc_power_kW", 0.0) for item in result["hourly_results"])
+    annual_mau = sum(item.get("mau_power_kW", 0.0) for item in result["hourly_results"])
+    annual_white_space_equipment = sum(item.get("white_space_equipment_power_kW", 0.0) for item in result["hourly_results"])
+    annual_acc = sum(item.get("acc_power_kW", 0.0) for item in result["hourly_results"])
+    acc_cop_values = [item.get("acc_cop") for item in result["hourly_results"] if item.get("acc_cop") is not None]
+    max_acc_power = max((item.get("acc_power_kW", 0.0) for item in result["hourly_results"]), default=0.0)
+    acc_curve_sources = [item.get("acc_curve_source") for item in result["hourly_results"] if item.get("acc_curve_source") not in (None, "not_applied")]
+    annual_engine_output = sum(item.get("engine_output_kW", 0.0) for item in result["hourly_results"])
+    annual_engine_fuel = sum(item.get("engine_fuel_input_kW", 0.0) for item in result["hourly_results"])
+    annual_engine_waste_heat = sum(item.get("engine_waste_heat_kW", 0.0) for item in result["hourly_results"])
+    engine_efficiency_values = [item.get("engine_efficiency") for item in result["hourly_results"] if item.get("engine_efficiency") is not None]
+    engine_curve_sources = [item.get("engine_curve_source") for item in result["hourly_results"] if item.get("engine_curve_source") not in (None, "not_applied")]
+    annual_engine_radiator = sum(item.get("engine_radiator_power_kW", 0.0) for item in result["hourly_results"])
+    max_engine_radiator = max((item.get("engine_radiator_power_kW", 0.0) for item in result["hourly_results"]), default=0.0)
+    engine_radiator_sources = [item.get("engine_radiator_curve_source") for item in result["hourly_results"] if item.get("engine_radiator_curve_source") not in (None, "not_applied")]
     annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
-    annual_pue = annual_facility / annual_it if annual_it > 0 else None
+    annual_pue = annual_facility / annual_it_terminal if annual_it_terminal > 0 else None
     hourly_pues = [item.get("hourly_PUE") for item in result["hourly_results"] if item.get("hourly_PUE") is not None]
     peak_facility = max(result["hourly_results"], key=lambda x: x.get("total_facility_power_kW", 0.0))
     peak_pue = max(
@@ -2010,6 +2266,10 @@ def compute_pue_project(input_obj):
         "annual_average_PUE": annual_pue,
         "annual_IT_energy_kWh": annual_it,
         "annual_it_energy_kWh": annual_it,
+        "annual_IT_terminal_energy_kWh": annual_it_terminal,
+        "annual_IT_upstream_energy_kWh": annual_it_upstream,
+        "annual_MEP_terminal_energy_kWh": annual_mep_terminal,
+        "annual_MEP_upstream_energy_kWh": annual_mep_upstream,
         "annual_facility_energy_kWh": annual_facility,
         # Current cooling_kw is chiller + dry cooler only; keep legacy key for compatibility.
         "annual_cooling_energy_kWh": annual_cooling,
@@ -2027,6 +2287,24 @@ def compute_pue_project(input_obj):
         "annual_pump_energy_kWh": annual_pump,
         "annual_terminal_fan_energy_kWh": annual_terminal_fan,
         "annual_electrical_loss_kWh": annual_loss,
+        "annual_it_electrical_loss_kWh": annual_it_electrical_loss,
+        "annual_mep_electrical_loss_kWh": annual_mep_electrical_loss,
+        "annual_cdu_energy_kWh": annual_cdu,
+        "annual_rtc_energy_kWh": annual_rtc,
+        "annual_mau_energy_kWh": annual_mau,
+        "annual_white_space_equipment_energy_kWh": annual_white_space_equipment,
+        "annual_acc_energy_kWh": annual_acc,
+        "average_acc_cop": sum(acc_cop_values) / len(acc_cop_values) if acc_cop_values else None,
+        "max_acc_power_kW": max_acc_power,
+        "acc_curve_source": acc_curve_sources[0] if acc_curve_sources else "not_applied",
+        "annual_engine_output_kWh": annual_engine_output,
+        "annual_engine_fuel_input_kWh": annual_engine_fuel,
+        "annual_engine_waste_heat_kWh": annual_engine_waste_heat,
+        "average_engine_efficiency": sum(engine_efficiency_values) / len(engine_efficiency_values) if engine_efficiency_values else None,
+        "engine_curve_source": engine_curve_sources[0] if engine_curve_sources else "not_applied",
+        "annual_engine_radiator_energy_kWh": annual_engine_radiator,
+        "max_engine_radiator_power_kW": max_engine_radiator,
+        "engine_radiator_curve_source": engine_radiator_sources[0] if engine_radiator_sources else "not_applied",
         "annual_auxiliary_energy_kWh": annual_aux,
         "min_hourly_PUE": min(hourly_pues) if hourly_pues else None,
         "max_hourly_PUE": max(hourly_pues) if hourly_pues else None

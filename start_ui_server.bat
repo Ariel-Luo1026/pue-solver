@@ -1,7 +1,7 @@
 @echo off
 setlocal
 title PUE Solver UI Server
-cd /d "%~dp0pue-solver-main"
+cd /d "%~dp0"
 echo.
 echo PUE Solver UI server
 echo --------------------
@@ -9,7 +9,7 @@ echo Serving folder:
 echo %CD%
 echo.
 echo Open this address in your browser:
-echo http://127.0.0.1:8000/index.html
+echo http://127.0.0.1:8000/pue-solver-main/index.html
 echo.
 echo Keep this window open while using the page.
 echo Press Ctrl+C to stop the server.
