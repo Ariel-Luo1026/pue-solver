@@ -120,6 +120,13 @@ const equipmentPdfSpecs = {};
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
 
+function ensureAccExcelReplicatedHourlyLoaded() {
+    pyodide.runPython(`
+if "compute_acc_excel_replicated_hourly" not in globals():
+    raise RuntimeError("compute_acc_excel_replicated_hourly is not loaded")
+`);
+}
+
 function getCoolingSystemSelection() {
     const type = document.getElementById("coolingSystemType")?.value || DEFAULT_COOLING_SYSTEM_TYPE;
     const capacityMw = Number(document.getElementById("coolingUnitCapacity")?.value || DEFAULT_COOLING_UNIT_CAPACITY_MW);
@@ -1279,6 +1286,42 @@ function svgTracer(x, y, width, height, pad, label = "") {
     `;
 }
 
+const REPORT_COLORS = Object.freeze({
+    pueLine: "#4E5D6C",
+    dryBulb: "#5E8B7E",
+    relativeHumidity: "#3F72AF",
+    windSpeed: "#4E5D6C",
+    atmosphericPressure: "#6C757D",
+    globalHorizontalRadiation: "#C47A00",
+    directNormalRadiation: "#D28B26",
+    totalSkyCover: "#6C757D",
+    itEnergy: "#5E8B7E",
+    coolingEnergy: "#4E5D6C",
+    pumpEnergy: "#8A8A8A",
+    electricalLoss: "#C47A00",
+    other: "#D0D0D0",
+    peakMarker: "#A35A2A"
+});
+const REPORT_CHART_COLORS = [
+    REPORT_COLORS.pueLine,
+    REPORT_COLORS.dryBulb,
+    REPORT_COLORS.electricalLoss,
+    REPORT_COLORS.pumpEnergy,
+    REPORT_COLORS.relativeHumidity,
+    REPORT_COLORS.directNormalRadiation,
+    REPORT_COLORS.atmosphericPressure,
+    REPORT_COLORS.other
+];
+
+function reportEnergyColor(label) {
+    const text = String(label || "").toLowerCase();
+    if (text.includes("it")) return REPORT_COLORS.itEnergy;
+    if (text.includes("cooling") || text.includes("acc") || text.includes("chiller") || text.includes("dry cooler")) return REPORT_COLORS.coolingEnergy;
+    if (text.includes("pump")) return REPORT_COLORS.pumpEnergy;
+    if (text.includes("electrical") || text.includes("elec") || text.includes("loss")) return REPORT_COLORS.electricalLoss;
+    return REPORT_COLORS.other;
+}
+
 function svgLineChart(series, opts = {}) {
     const width = opts.width || 920;
     const height = opts.height || 280;
@@ -1300,6 +1343,7 @@ function svgLineChart(series, opts = {}) {
     const maxPoint = values.reduce((best, value, index) => value > best.value ? { value, index } : best, { value: -Infinity, index: 0 });
     const xTicks = linearTicks(0, xMax, 6);
     const yTicks = linearTicks(min, max, 5);
+    const lineColor = opts.color || REPORT_COLORS.pueLine;
     return `
         <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "line chart")}">
             ${svgGrid(width, height, pad, xTicks, yTicks, sx, sy)}
@@ -1307,7 +1351,7 @@ function svgLineChart(series, opts = {}) {
             <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
             <text x="${pad}" y="${pad - 12}" class="tick">${esc(opts.yLabel || "")}</text>
             <text x="${width - pad}" y="${height - 12}" text-anchor="end" class="tick">${esc(opts.xLabel || "")}</text>
-            <polyline points="${points}" class="line" />
+            <polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="1.8" />
             ${svgTracer(sx(maxPoint.index), sy(maxPoint.value), width, height, pad, `max ${reportValue(maxPoint.value, "", 2)}`)}
         </svg>`;
 }
@@ -1315,27 +1359,67 @@ function svgLineChart(series, opts = {}) {
 function svgBarChart(items, opts = {}) {
     const width = opts.width || 920;
     const height = opts.height || 280;
-    const pad = 42;
+    const margin = { left: 84, top: 44, right: 42, bottom: 42 };
     const rows = (items || []).filter(item => Number.isFinite(Number(item.value)));
     if (!rows.length) return `<div class="empty">Not enough data</div>`;
     const max = Math.max(...rows.map(item => Number(item.value)), 1);
+    const scaleMax = max * 1.05;
+    const formatAxisTick = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "N/A";
+        const abs = Math.abs(numeric);
+        const maximumFractionDigits = opts.yTickDigits ?? (abs >= 100 ? 0 : (abs >= 10 ? 1 : 3));
+        return numeric.toLocaleString("en-US", {
+            minimumFractionDigits: opts.yTickDigits ?? 0,
+            maximumFractionDigits
+        });
+    };
+    const formatBarValue = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "N/A";
+        const abs = Math.abs(numeric);
+        const maximumFractionDigits = opts.valueLabelDigits ?? (abs >= 100 ? 0 : (abs >= 10 ? 1 : 3));
+        return numeric.toLocaleString("en-US", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits
+        });
+    };
     const barGap = 8;
-    const barWidth = (width - pad * 2 - barGap * (rows.length - 1)) / rows.length;
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const xAxisY = height - margin.bottom;
+    const baseBarWidth = (plotWidth - barGap * (rows.length - 1)) / rows.length;
+    const barWidthScale = opts.barWidthScale || 1;
+    const barWidth = baseBarWidth * barWidthScale;
+    const barInset = (baseBarWidth - barWidth) / 2;
+    const maxTickY = xAxisY - (plotHeight * max) / scaleMax;
+    const yTicks = opts.yTickCount ? linearTicks(0, max, opts.yTickCount) : [];
+    const tickRows = yTicks.map((tick) => {
+        const y = xAxisY - (plotHeight * tick) / scaleMax;
+        return `
+            <line x1="${margin.left}" y1="${y.toFixed(1)}" x2="${width - margin.right}" y2="${y.toFixed(1)}" class="gridLine" />
+            <text x="${margin.left - 10}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="tick">${formatAxisTick(tick)}</text>`;
+    }).join("");
     const bars = rows.map((item, i) => {
         const value = Number(item.value);
-        const h = ((height - pad * 2) * value) / max;
-        const x = pad + i * (barWidth + barGap);
-        const y = height - pad - h;
+        const h = (plotHeight * value) / scaleMax;
+        const x = margin.left + i * (baseBarWidth + barGap) + barInset;
+        const y = xAxisY - h;
+        const fill = item.color || opts.color || REPORT_COLORS.coolingEnergy;
+        const valueLabel = opts.showValueLabels
+            ? `<text x="${(x + barWidth / 2).toFixed(1)}" y="${Math.max(14, y - 6).toFixed(1)}" text-anchor="middle" class="tick">${formatBarValue(value)}</text>`
+            : "";
         return `
-            <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, barWidth).toFixed(1)}" height="${h.toFixed(1)}" class="bar" />
+            <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, barWidth).toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}" />
+            ${valueLabel}
             <text x="${(x + barWidth / 2).toFixed(1)}" y="${height - 16}" text-anchor="middle" class="tick">${esc(item.label)}</text>`;
     }).join("");
     return `
         <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "bar chart")}">
-            <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis" />
-            <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
-            <text x="${pad}" y="${pad - 12}" class="tick">${esc(opts.yLabel || "")}</text>
-            <text x="${pad + 4}" y="${pad + 12}" class="tick">${reportValue(max, "", 2)}</text>
+            <line x1="${margin.left}" y1="${xAxisY}" x2="${width - margin.right}" y2="${xAxisY}" class="axis" />
+            <line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${xAxisY}" class="axis" />
+            <text x="${margin.left}" y="${margin.top - 20}" class="tick">${esc(opts.yLabel || "")}</text>
+            ${tickRows || `<text x="${margin.left - 10}" y="${(maxTickY + 4).toFixed(1)}" text-anchor="end" class="tick">${formatAxisTick(max)}</text>`}
             ${bars}
         </svg>`;
 }
@@ -1356,6 +1440,7 @@ function svgXYLineChart(points, opts = {}) {
     const maxPoint = pts.reduce((best, point) => point[1] > best[1] ? point : best, pts[0]);
     const xTicks = linearTicks(xMin, xMax, 6);
     const yTicks = linearTicks(yMin, yMax, 5);
+    const lineColor = opts.color || REPORT_COLORS.pueLine;
     return `
         <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.title || "curve chart")}">
             ${svgGrid(width, height, pad, xTicks, yTicks, sx, sy)}
@@ -1363,7 +1448,7 @@ function svgXYLineChart(points, opts = {}) {
             <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis" />
             <text x="${pad}" y="${pad - 12}" class="tick">${esc(opts.yLabel || "")}</text>
             <text x="${width - pad}" y="${height - 12}" text-anchor="end" class="tick">${esc(opts.xLabel || "")}</text>
-            <polyline points="${poly}" class="line" />
+            <polyline points="${poly}" fill="none" stroke="${lineColor}" stroke-width="1.8" />
             ${svgTracer(sx(maxPoint[0]), sy(maxPoint[1]), width, height, pad, `max ${reportValue(maxPoint[1], "", 2)}`)}
         </svg>`;
 }
@@ -1383,10 +1468,10 @@ function svgMultiCurveChart(curves, opts = {}) {
     const yMax = Math.max(...all.map(p => p[1]));
     const sx = value => pad + ((value - xMin) / Math.max(xMax - xMin, 1e-9)) * (width - pad * 2);
     const sy = value => height - pad - ((value - yMin) / Math.max(yMax - yMin, 1e-9)) * (height - pad * 2);
-    const colors = ["#2563EB", "#059669", "#DC2626", "#7C3AED", "#EA580C", "#0891B2", "#DB2777", "#65A30D"];
+    const colors = REPORT_CHART_COLORS;
     const lines = prepared.map((curve, i) => {
         const pts = curve.points.map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
-        return `<polyline points="${pts}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="2.2" />`;
+        return `<polyline points="${pts}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="1.8" />`;
     }).join("");
     const legend = prepared.map((curve, i) =>
         `<span class="legendItem"><span style="color:${colors[i % colors.length]}">■</span> ${esc(curve.curveId)}</span>`
@@ -1676,10 +1761,10 @@ function svgCurveChart(curve) {
         const yMax = Math.max(...all.map(p => p[1]));
         const sx = value => pad + ((value - xMin) / Math.max(xMax - xMin, 1e-9)) * (width - pad * 2);
         const sy = value => height - pad - ((value - yMin) / Math.max(yMax - yMin, 1e-9)) * (height - pad * 2);
-        const colors = ["#2563EB", "#059669", "#DC2626", "#7C3AED", "#EA580C", "#0891B2"];
+        const colors = REPORT_CHART_COLORS;
         const lines = groupKeys.slice(0, 8).map((key, i) => {
             const pts = groups[key].sort((a, b) => a[0] - b[0]).map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
-            return `<polyline points="${pts}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="2" />`;
+        return `<polyline points="${pts}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="1.8" />`;
         }).join("");
         const legend = groupKeys.slice(0, 8).map((key, i) => `<span style="color:${colors[i % colors.length]}">●</span> ${esc(curve.xAxis)}=${esc(key)}`).join(" · ");
         const maxPoint = all.reduce((best, point) => point[1] > best[1] ? point : best, all[0]);
@@ -1729,18 +1814,18 @@ function svgCurveGroupChart(group) {
 
 function epwChartSection(weatherData) {
     const charts = [
-        ["Dry Bulb Temperature", weatherData.dry_bulb_C, "°C"],
-        ["Dew Point Temperature", weatherData.dew_point_C, "°C"],
-        ["Relative Humidity", weatherData.relative_humidity_percent, "%"],
-        ["Global Horizontal Radiation", weatherData.global_horizontal_radiation_Wh_m2, "Wh/m²"],
-        ["Direct Normal Radiation", weatherData.direct_normal_radiation_Wh_m2, "Wh/m²"],
-        ["Wind Speed", weatherData.wind_speed_m_s, "m/s"],
-        ["Atmospheric Pressure", weatherData.atmospheric_pressure_Pa, "Pa"],
-        ["Total Sky Cover", weatherData.total_sky_cover_tenths, "tenths"]
+        ["Dry Bulb Temperature", weatherData.dry_bulb_C, "°C", REPORT_COLORS.dryBulb],
+        ["Dew Point Temperature", weatherData.dew_point_C, "°C", REPORT_COLORS.dryBulb],
+        ["Relative Humidity", weatherData.relative_humidity_percent, "%", REPORT_COLORS.relativeHumidity],
+        ["Global Horizontal Radiation", weatherData.global_horizontal_radiation_Wh_m2, "Wh/m²", REPORT_COLORS.globalHorizontalRadiation],
+        ["Direct Normal Radiation", weatherData.direct_normal_radiation_Wh_m2, "Wh/m²", REPORT_COLORS.directNormalRadiation],
+        ["Wind Speed", weatherData.wind_speed_m_s, "m/s", REPORT_COLORS.windSpeed],
+        ["Atmospheric Pressure", weatherData.atmospheric_pressure_Pa, "Pa", REPORT_COLORS.atmosphericPressure],
+        ["Total Sky Cover", weatherData.total_sky_cover_tenths, "tenths", REPORT_COLORS.totalSkyCover]
     ].filter(([, values]) => Array.isArray(values) && values.length > 1);
     if (!charts.length) return `<div class="empty">No extended EPW weather fields available.</div>`;
-    return `<div class="grid">${charts.map(([title, values, unit]) => `
-        <div class="card"><h3>${esc(title)}</h3>${svgLineChart(values, { yLabel: unit, xLabel: "Hour of Year", maxPoints: 700 })}</div>
+    return `<div class="grid">${charts.map(([title, values, unit, color]) => `
+        <div class="card chartCard"><h3>${esc(title)}</h3>${svgLineChart(values, { yLabel: unit, xLabel: "Hour of Year", maxPoints: 700, color })}</div>
     `).join("")}</div>`;
 }
 
@@ -1764,12 +1849,18 @@ function formulasHtml() {
     `).join("")}</div>`;
 }
 
+const SKYVAULT_REPORT_LOGO = `data:image/png;base64,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`;
+
 function buildHtmlReport(context) {
     const output = context.output || {};
     const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
     const annual = output.annual_results || {};
     const peak = output.peak_results || {};
-    const isBenchmarkMode = output.calculation_mode === "excel_benchmark_compatible" || annual.calculation_mode === "excel_benchmark_compatible";
+    const isAnnualBenchmarkMode = output.calculation_mode === "excel_benchmark_compatible" || annual.calculation_mode === "excel_benchmark_compatible";
+    const isExcelReplicatedHourlyMode = output.calculation_mode === "excel_replicated_hourly" || annual.calculation_mode === "excel_replicated_hourly";
+    const isExperimentalHourlyMode = output.calculation_mode === "experimental_acc_hourly_shape" || annual.calculation_mode === "experimental_acc_hourly_shape";
+    const isBenchmarkMode = isAnnualBenchmarkMode || isExcelReplicatedHourlyMode || isExperimentalHourlyMode;
+    const hasExperimentalPeakWarning = isExperimentalHourlyMode && annual.acc_peak_power_warning === true;
     const isAccMode = isBenchmarkMode || context.input?.cooling_system_type === "ACC" || annual.annual_acc_energy_kWh != null;
     const benchmark = output.benchmark_components || {};
     const benchmarkAverage = benchmark.component_average_kW || {};
@@ -1787,6 +1878,7 @@ function buildHtmlReport(context) {
     const curveGroups = groupReportCurves(reportCurves);
     const drySummary = summarizeNumericArray(dry);
     const tempDistribution = buildTemperatureDistribution(weatherData);
+    const hasTemperatureBins = Boolean(tempDistribution?.rows?.length);
     const weatherPeriod = getWeatherPeriod(weather);
     const itSummary = summarizeNumericArray(it);
     const ghiSummary = summarizeNumericArray(weatherData.global_horizontal_radiation_Wh_m2);
@@ -1798,9 +1890,13 @@ function buildHtmlReport(context) {
     const projectCoordinates = Number.isFinite(Number(projectLat)) && Number.isFinite(Number(projectLon))
         ? `${fmtNumber(Number(projectLat), 4)}, ${fmtNumber(Number(projectLon), 4)}`
         : "N/A";
-    const reportTitle = isBenchmarkMode
-        ? "Annual Data Center PUE Performance Assessment — ACC Benchmark Mode"
-        : (projectInfo.name || "Annual Data Center PUE Performance Assessment");
+    const reportTitle = "Annual Data Center PUE Performance Assessment";
+    const reportScenario = String(benchmark.scenario || output.project?.scenario_name || "Normal").toLowerCase().includes("fail")
+        ? "Failure"
+        : "Normal";
+    const peakHourlyPue = !isAnnualBenchmarkMode && Number.isFinite(Number(annual.max_hourly_PUE))
+        ? Number(annual.max_hourly_PUE)
+        : null;
     const generated = new Date().toISOString();
     const energyRows = (isAccMode ? [
         ["IT Energy", annual.annual_IT_energy_kWh],
@@ -1821,8 +1917,11 @@ function buildHtmlReport(context) {
         ["Electrical Loss", annual.annual_electrical_loss_kWh],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
     ]).filter(([, value]) => Number(value) > 0);
-    const energyChart = svgBarChart(energyRows.map(([label, value]) => ({ label: label.replace(" Energy", "").replace("Electrical ", "Elec "), value: Number(value) / 1000 })), { yLabel: "MWh" });
-    const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value })), { yLabel: "PUE" });
+    const energyChart = svgBarChart(energyRows.map(([label, value]) => {
+        const shortLabel = label.replace(" Energy", "").replace("Electrical ", "Elec ");
+        return { label: shortLabel, value: Number(value) / 1000, color: reportEnergyColor(label) };
+    }), { yLabel: "MWh", showValueLabels: true, valueLabelDigits: 0 });
+    const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value, color: REPORT_COLORS.pueLine })), { yLabel: "PUE", yTickCount: 5, yTickDigits: 2, barWidthScale: 0.86 });
     const contributionSummary = buildPueContributionSummary(annual);
     const coolingUnitInfo = buildCoolingUnitArchitectureInfo(output);
     const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
@@ -1863,6 +1962,25 @@ function buildHtmlReport(context) {
         ["MEP Electrical Loss", benchmarkAverage.MEP_electrical_loss, annual.annual_mep_electrical_loss_kWh],
         ["Facility Power", benchmarkAverage.facility, annual.annual_facility_energy_kWh]
     ] : [];
+    const benchmarkPowerItems = isBenchmarkMode ? [
+        { label: "IT Load", value: benchmarkAverage.IT },
+        { label: "ACC Power", value: benchmarkAverage.ACC },
+        { label: "Pump Power", value: benchmarkAverage.pump },
+        { label: "Indoor Equipment", value: benchmarkAverage.indoor_CDU_RTC_MAU_equivalent },
+        { label: "Engine Radiator", value: benchmarkAverage.engine_radiator },
+        { label: "Electrical Loss", value: (Number(benchmarkAverage.IT_electrical_loss) || 0) + (Number(benchmarkAverage.MEP_electrical_loss) || 0) },
+        { label: "Facility Power", value: benchmarkAverage.facility }
+    ].filter(item => Number.isFinite(Number(item.value))) : [];
+    const benchmarkPowerChart = benchmarkPowerItems.length ? svgBarChart(benchmarkPowerItems.map(item => ({ ...item, color: reportEnergyColor(item.label) })), { yLabel: "Average kW" }) : "";
+    const resultChartCards = isAnnualBenchmarkMode ? [
+        ...(benchmarkPowerItems.length ? [["Cooling System Component Average Power", benchmarkPowerChart]] : []),
+        ...(energyRows.length ? [["Annual Energy Breakdown", energyChart]] : [])
+    ] : [
+        ...(pueSeries.length > 1 ? [["8760 Annual PUE Timeseries", svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year", color: REPORT_COLORS.pueLine })]] : []),
+        ...(facilitySeries.length > 1 ? [["Facility Power Timeseries", svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year", color: REPORT_COLORS.coolingEnergy })]] : []),
+        ...(energyRows.length ? [["Annual Energy Breakdown", energyChart]] : []),
+        ...(monthlyPue.length ? [["Monthly Average PUE", monthlyChart]] : [])
+    ];
     const curveRegisterRows = reportCurves.map(curve => [
         curve.category,
         esc(curve.curveId),
@@ -1880,10 +1998,14 @@ function buildHtmlReport(context) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(reportTitle)}</title>
 <style>
-    :root { --ink:#0F172A; --muted:#475569; --line:#CBD5E1; --soft:#F8FAFC; --accent:#2563EB; --green:#059669; --red:#DC2626; --violet:#7C3AED; }
+    :root { --ink:#222222; --muted:#555555; --line:#D8D8D8; --soft:#F7F7F7; --accent:#7A7A7A; --green:#555555; --red:#555555; --violet:#555555; }
     body { margin:0; font-family: Inter, "Times New Roman", Georgia, serif; color:var(--ink); background:#fff; }
     .page { max-width: 1260px; margin: 0 auto; padding: 28px 24px 46px; }
     header { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 18px; }
+    .reportHeaderTop { display:block; }
+    .reportLogo { display:block; width:160px; height:auto; object-fit:contain; margin-bottom:20px; }
+    .reportHeaderText { flex:1 1 auto; min-width:0; }
+    .pageHeaderLine { color:var(--muted); font-size:13px; letter-spacing:.035em; text-transform:uppercase; margin-bottom:8px; font-family: Arial, sans-serif; }
     h1 { margin:0 0 8px; font-size: 30px; line-height:1.15; letter-spacing: 0; font-weight:760; }
     h2 { margin:24px 0 10px; font-size: 19px; border-bottom: 1px solid var(--line); padding-bottom: 6px; font-weight:760; }
     h3 { margin:12px 0 8px; font-size: 15px; font-weight:740; }
@@ -1893,61 +2015,83 @@ function buildHtmlReport(context) {
     .meta { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
     .metric { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--soft); }
     .metric .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; font-family: Arial, sans-serif; }
-    .metric .value { font-size:21px; font-weight:760; margin-top:4px; color:var(--accent); }
+    .metric .value { font-size:21px; font-weight:760; margin-top:4px; color:var(--ink); }
     table { width:100%; border-collapse:collapse; margin:8px 0 12px; font-size: 12.5px; }
     th, td { border:1px solid var(--line); padding:6px 8px; vertical-align:top; }
-    th { width:32%; text-align:left; background:#EEF2F7; }
+    th { width:32%; text-align:left; background:#F3F3F3; }
     .mini { margin: 4px 0 10px; font-size: 12px; }
     .mini th { width: 28%; }
     .grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; align-items:start; }
     .curveGrid { display:grid; grid-template-columns: 1fr; gap:14px; }
     .card { border:1px solid var(--line); border-radius:8px; padding:10px; break-inside: avoid; background:#fff; }
+    .chartCard { break-inside:avoid; page-break-inside:avoid; break-before:auto; }
     .chart { width:100%; height:auto; background:#fff; border:1px solid var(--line); border-radius:8px; }
-    .axis { stroke:#94A3B8; stroke-width:1; }
-    .gridLine { stroke:#E2E8F0; stroke-width:1; }
-    .traceLine { stroke:#0F172A; stroke-width:1; stroke-dasharray:4 4; opacity:.42; }
-    .tracePoint { fill:#fff; stroke:#0F172A; stroke-width:1.8; }
-    .traceLabel { fill:#0F172A; font: 11px Arial, sans-serif; }
-    .line { fill:none; stroke:var(--accent); stroke-width:2; }
-    .bar { fill:var(--accent); opacity:.9; }
-    .tick { fill:#64748B; font-size:11px; font-family: Arial, sans-serif; }
+    .axis { stroke:#BDBDBD; stroke-width:1; }
+    .gridLine { stroke:#ECECEC; stroke-width:1; }
+    .traceLine { stroke:#A35A2A; stroke-width:1; stroke-dasharray:4 4; }
+    .tracePoint { fill:#FFFFFF; stroke:#A35A2A; stroke-width:1.8; }
+    .traceLabel { fill:#A35A2A; font: 11px Arial, sans-serif; }
+    .line { fill:none; stroke:#4E5D6C; stroke-width:1.8; }
+    .bar { fill:#4E5D6C; }
+    .tick { fill:#666666; font-size:11px; font-family: Arial, sans-serif; }
     .legend { color:var(--muted); font-size:11.5px; margin-top:6px; line-height:1.5; display:flex; flex-wrap:wrap; gap:8px 14px; }
     .legendItem { white-space:nowrap; }
-    .note { background:#EFF6FF; border-left:4px solid var(--accent); padding:8px 10px; color:#1E3A8A; }
+    .note { background:#F5F5F5; border-left:4px solid var(--accent); padding:8px 10px; color:#222222; }
     .empty { border:1px dashed var(--line); border-radius:8px; padding:18px; color:var(--muted); text-align:center; }
     .caption { font-size:12px; color:#333; text-align:center; margin-top:8px; font-style:italic; }
-    .specBlock { margin-top:10px; padding:8px 10px; border-left:3px solid var(--accent); background:#F8FAFC; font-size:12.5px; color:#334155; }
+    .specBlock { margin-top:10px; padding:8px 10px; border-left:3px solid var(--accent); background:#F7F7F7; font-size:12.5px; color:#555555; }
     .formulaGrid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; margin:10px 0 12px; }
     .formulaBox { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fff; min-height:68px; }
     .formulaName { font: 700 12px Arial, sans-serif; color:var(--muted); text-transform:uppercase; letter-spacing:.035em; margin-bottom:8px; }
-    .math { font-family: "Times New Roman", Georgia, serif; font-size:18px; color:#111827; }
+    .math { font-family: "Times New Roman", Georgia, serif; font-size:18px; color:#222222; }
     .math i { font-style: italic; }
     .breakdown { font-size: 13px; }
     .breakdown th { width:auto; }
     .breakdown td:last-child { text-align:right; font-variant-numeric: tabular-nums; font-weight:700; }
-    .breakdown .base td { background:#F8FAFC; font-weight:700; }
+    .breakdown .base td { background:#F7F7F7; font-weight:700; }
     .breakdown .child td:first-child { padding-left:24px; color:var(--muted); }
-    .breakdown .total td { border-top:2px solid var(--ink); font-size:14px; background:#F8FAFC; }
+    .breakdown .total td { border-top:2px solid var(--ink); font-size:14px; background:#F7F7F7; }
     .frac { display:inline-flex; flex-direction:column; vertical-align:middle; text-align:center; line-height:1.12; margin:0 4px; }
-    .frac span:first-child { border-bottom:1px solid #111; padding:0 5px 2px; }
+    .frac span:first-child { border-bottom:1px solid #222222; padding:0 5px 2px; }
     .frac span:last-child { padding-top:2px; }
-    @media (max-width: 900px) { .grid, .meta, .formulaGrid { grid-template-columns: 1fr; } }
-    @media print { .page { max-width:none; padding:12mm; } .card, table, .chart { break-inside: avoid; } }
+    @media (max-width: 900px) { .grid, .meta, .formulaGrid { grid-template-columns: 1fr; } .reportLogo { width:150px; margin-bottom:14px; } }
+    @media print {
+        .page { max-width:none; padding:12mm; }
+        .card, .chart { break-inside: avoid; }
+        .page:not(.benchmark-report) table { break-inside:avoid; }
+        .benchmark-report { height:auto; min-height:0; }
+        .benchmark-report section, .benchmark-report .grid, .benchmark-report .card, .benchmark-report table { height:auto; min-height:0; }
+        .benchmark-report .grid { display:block; }
+        .benchmark-report .card { margin:0 0 12px; break-inside:auto; }
+        .benchmark-report table { break-inside:auto; }
+        .chartCard, .benchmark-report .chartCard { break-inside:avoid; page-break-inside:avoid; break-before:auto; }
+    }
 </style>
 </head>
 <body>
-<main class="page">
+<main class="page${isBenchmarkMode ? " benchmark-report" : ""}">
 <header>
-    <h1>${esc(reportTitle)}</h1>
-    <div class="subtitle">Integrated Cooling Plant and Electrical Infrastructure Energy Analysis</div>
-    <div class="subtitle">Generated by Codex HTML Report Generator · ${esc(generated)}</div>
+    <div class="reportHeaderTop">
+        <div class="reportHeaderText">
+            <div class="pageHeaderLine">JUNO | ACC Cooling System | Annual PUE Assessment</div>
+            <h1>${esc(reportTitle)}</h1>
+            <div class="subtitle">Project: JUNO</div>
+            <div class="subtitle">Cooling Architecture: ACC + Gas Engine + CDU</div>
+            <div class="subtitle">Scenario: ${esc(reportScenario)}</div>
+            <div class="subtitle">Generated · ${esc(generated)}</div>
+        </div>
+    </div>
 </header>
 
 <section>
     <h2>1. Executive Summary</h2>
-    ${output.calculation_mode === "excel_benchmark_compatible" ? `<p><b>This result uses Excel Benchmark Compatible Mode based on scenario peak power and annual temperature factor.</b></p>` : ""}
+    ${isBenchmarkMode ? `<p>This assessment evaluates the annual energy performance of the JUNO data center using an hourly weather-driven simulation with the project-specific ACC cooling architecture.</p>` : ""}
+    ${isExperimentalHourlyMode ? `<div class="note"><b>Planning sensitivity:</b> This scenario uses a synthetic hourly ACC profile driven by outdoor dry-bulb temperature and calibrated to annual energy performance. It is intended for engineering sensitivity review.</div>` : ""}
+    ${hasExperimentalPeakWarning ? `<div class="note" style="background:#F5F5F5;border-left-color:#7A7A7A;color:#222222;"><b>Warning:</b> Calibrated hourly ACC power exceeds scenario peak ACC power by more than 10%. Peak Hourly PUE is experimental and is not a validated design peak.</div>` : ""}
+    ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
     <div class="meta">
         <div class="metric"><div class="label">Annual Average PUE</div><div class="value">${reportValue(annual.annual_average_PUE, "", 3)}</div></div>
+        <div class="metric"><div class="label">${isExperimentalHourlyMode ? "Peak Hourly PUE (Sensitivity)" : "Peak Hourly PUE"}</div><div class="value">${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}</div>${isAnnualBenchmarkMode ? `<div class="subtitle">Annual-equivalent assessment uses average equipment values.</div>` : ""}${hasExperimentalPeakWarning ? `<div class="subtitle">Not a validated peak PUE.</div>` : ""}</div>
         <div class="metric"><div class="label">Peak Facility Power</div><div class="value">${reportValue(peak.peak_total_facility_power_kW, " kW", 0)}</div></div>
         <div class="metric"><div class="label">IT Energy</div><div class="value">${reportValue((annual.annual_IT_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
         <div class="metric"><div class="label">Facility Energy</div><div class="value">${reportValue((annual.annual_facility_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
@@ -1955,12 +2099,17 @@ function buildHtmlReport(context) {
     <table><tbody>${tableRows([
         ["Site Location", esc(place)],
         ...(isBenchmarkMode ? [
-            ["Cooling System", "ACC / Gas Engine"],
-            ["Calculation Method", "Scenario peak power × annual factor"],
+            ["Cooling Architecture", "ACC + Gas Engine + CDU"],
+            ["Calculation Method", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isExperimentalHourlyMode ? "Hourly weather-driven ACC sensitivity model" : "Annual-equivalent energy performance model")],
+            ...(isExperimentalHourlyMode ? [
+                ["Maximum ACC Power", reportValue(annual.max_acc_power_kW, " kW", 1)],
+                ["Scenario Peak ACC Power", reportValue(annual.scenario_peak_acc_power_kW, " kW", 1)],
+                ["ACC Peak / Scenario Peak", reportValue(annual.acc_peak_to_scenario_peak_ratio, "×", 3)]
+            ] : []),
             ["Scenario", esc(benchmark.scenario || output.project?.scenario_name || "N/A")],
             ["Active Energy Modules / Engines", esc(output.project?.active_units ?? "N/A")],
             ["Annual IT Load Factor", reportValue(benchmark.it_annual_load_factor, "", 3)],
-            ["ACC Annual Temperature Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)],
+            ["ACC Annual Weather Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)],
             ["IT Efficiency", percentText(benchmark.it_efficiency, 4)],
             ["MEP Efficiency", percentText(benchmark.mep_efficiency, 4)]
         ] : []),
@@ -1974,7 +2123,9 @@ function buildHtmlReport(context) {
 
 <section>
     <h2>2. Climate Data</h2>
-    ${isBenchmarkMode ? `<div class="note">In Benchmark Mode, the EPW weather profile is represented through the annual temperature factor rather than direct hourly ACC interpolation.</div>` : ""}
+    ${isAnnualBenchmarkMode ? `<div class="note">For this annual-equivalent assessment, the weather profile is represented through an annual weather factor rather than direct hourly dispatch.</div>` : ""}
+    ${isExcelReplicatedHourlyMode ? `<div class="note">Hourly dry-bulb temperature is evaluated using the project-specific ACC hourly performance model.</div>` : ""}
+    ${isExperimentalHourlyMode ? `<div class="note">Hourly outdoor dry-bulb temperature defines a weather-driven ACC sensitivity profile; annual scaling preserves the target annual ACC energy basis.</div>` : ""}
     <div class="grid">
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
             ["Project Location", esc(weatherSource.project_location || projectInfo.location || "N/A")],
@@ -2002,7 +2153,7 @@ function buildHtmlReport(context) {
                 ["Peak Dry Bulb Hour of Year", esc(tempDistribution.hourOfYear)],
                 ["Distribution Total Hours", esc(tempDistribution.totalHours)]
             ])}</tbody></table></div>
-            <div class="card"><h3>Temperature Bin Hours</h3>${temperatureDistributionTableHtml(tempDistribution)}</div>
+            ${hasTemperatureBins ? `<div class="card"><h3>Temperature Bin Hours</h3>${temperatureDistributionTableHtml(tempDistribution)}</div>` : ""}
         </div>
     ` : `<div class="empty">Temperature distribution unavailable: weather data not loaded.</div>`}
 </section>
@@ -2010,21 +2161,21 @@ function buildHtmlReport(context) {
 <section>
     <h2>4. Methodology</h2>
     ${isBenchmarkMode ? `
-        <p>The annual calculation uses the <b>Excel Benchmark Compatible Mode</b>. Scenario peak equipment powers are multiplied by annual factors, and electrical losses are calculated from the benchmark IT and MEP path efficiencies.</p>
+        <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isExperimentalHourlyMode ? "The assessment uses a weather-driven ACC sensitivity profile. Outdoor dry-bulb temperature produces an hourly ACC power shape which is calibrated to preserve the target annual ACC energy basis." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
         <div class="card">
             <h3>ACC Unit Architecture</h3>
-            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(benchmark.scenario || output.project?.scenario_name || "N/A")} scenario. Benchmark Mode uses scenario peak equipment powers and annual factors rather than detailed hourly dispatch.</p>
+            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isExperimentalHourlyMode ? "The sensitivity case uses a weather-driven ACC profile calibrated to annual energy performance." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
             <table><tbody>${tableRows([
                 ["ACC Unit Capacity", `${reportValue(context.input?.cooling_unit_capacity_mw, " MW", 1)}`],
                 ["Active ACC Units", esc(output.project?.active_units ?? "N/A")],
-                ["Calculation Method", "Scenario peak power × annual factor"],
-                ["Hourly Dispatch", "Not used in Excel Benchmark Compatible Mode"]
+            ["Calculation Method", isExperimentalHourlyMode ? "Hourly weather-driven ACC sensitivity model" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : "Annual-equivalent energy performance model")],
+                ["Hourly Dispatch", isAnnualBenchmarkMode ? "Not applied in annual-equivalent assessment" : "Hourly weather-driven simulation"]
             ])}</tbody></table>
         </div>
-        <h3>Benchmark Mathematical Framework</h3>
+        <h3>Calculation Methodology</h3>
         <table><tbody>${tableRows([
-            ["ACC Average Power", "<code>Scenario peak ACC power × ACC annual temperature factor</code>"],
-            ["Other Equipment", "<code>Scenario peak equipment power × annual IT load factor</code>"],
+            ["ACC Average Power", isExcelReplicatedHourlyMode ? "<code>Hourly ACC performance profile integrated over the annual weather year</code>" : (isExperimentalHourlyMode ? "<code>Weather-driven hourly ACC profile × annual energy calibration</code>" : "<code>Scenario peak ACC power × annual weather factor</code>")],
+            ["Other Equipment", "<code>Scenario equipment power × annual IT load factor</code>"],
             ["Electrical Loss", "<code>Load / path efficiency − load</code>"],
             ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
         ])}</tbody></table>
@@ -2091,12 +2242,12 @@ function buildHtmlReport(context) {
 <section>
     <h2>6. Equipment Curve Register</h2>
     ${isAccMode ? `
-        <p>${isBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in Excel Benchmark Compatible Mode. ACC power is represented through scenario peak ACC power and the annual temperature factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."}</p>
+        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isExperimentalHourlyMode ? "ACC ambient-temperature curve points define a weather-driven hourly sensitivity profile; annual calibration preserves the target ACC energy basis." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
         <table><tbody>${tableRows([
             ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
-            ["ACC Power Basis", isBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"],
-            ["Annual Adjustment", isBenchmarkMode ? "ACC annual temperature factor" : "Hourly weather and ACC model"],
-            ["Weather Representation", isBenchmarkMode ? "EPW-derived annual factor" : "Hourly EPW weather"]
+            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isExperimentalHourlyMode ? "Weather-driven hourly ACC sensitivity profile" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
+            ["Annual Adjustment", isExperimentalHourlyMode ? "Calibrated to target annual ACC energy" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
+            ["Weather Representation", isAnnualBenchmarkMode ? "Annualized weather factor" : "Hourly weather data"]
         ])}</tbody></table>
     ` : `
     <p>All imported equipment parameter curves are represented below in a common technical format. These are the curve inputs available to the frontend and solver workflow at report generation time.</p>
@@ -2120,7 +2271,7 @@ function buildHtmlReport(context) {
 <section>
     <h2>7. Annual Simulation Results</h2>
     ${isAccMode ? `
-    ${isBenchmarkMode ? `<h3>ACC Benchmark Components</h3>
+    ${isBenchmarkMode ? `<h3>ACC Cooling System Components</h3>
     <table>
         <thead><tr><th>Component</th><th>Average Power (kW)</th><th>Annual Energy (kWh)</th></tr></thead>
         <tbody>${benchmarkComponentRows.map(([label, averageKw, annualKwh]) => `<tr><td>${esc(label)}</td><td>${reportValue(averageKw, "", 3)}</td><td>${reportValue(annualKwh, "", 0)}</td></tr>`).join("")}</tbody>
@@ -2182,8 +2333,8 @@ function buildHtmlReport(context) {
         <div class="card">
             <h3>Key Findings</h3>
             ${isBenchmarkMode ? `
-                <p>ACC, pump, indoor equipment, and engine radiator energy are calculated from scenario peak values and annual factors.</p>
-                <p>Electrical losses use separate benchmark IT and MEP path efficiencies.</p>
+                <p>${isExcelReplicatedHourlyMode ? "ACC power is calculated hour by hour using the project-specific ACC performance model; supporting equipment follows the selected scenario power basis." : "ACC, pump, indoor equipment, and engine radiator energy are calculated from scenario peak values and annual factors."}</p>
+                <p>Electrical losses use the project IT and MEP path efficiencies.</p>
             ` : `
                 <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
                 <p>Electrical losses contribute <b>${esc(percentText(contributionSummary.electricalShare))}</b> of the non-IT PUE overhead.</p>
@@ -2215,22 +2366,23 @@ function buildHtmlReport(context) {
             <div class="note">This section is a report-only decomposition of the existing annual results. It does not recalculate or overwrite <code>annual_average_PUE</code>.</div>
         </div>
     </div>
-    <div class="grid">
-        <div class="card"><h3>${isBenchmarkMode ? "Benchmark annual-average series — PUE" : "8760 Annual PUE Timeseries"}</h3>${svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year" })}</div>
-        <div class="card"><h3>${isBenchmarkMode ? "Benchmark annual-average series — Facility Power" : "Facility Power Timeseries"}</h3>${svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year" })}</div>
-        <div class="card"><h3>Annual Energy Breakdown</h3>${energyChart}</div>
-        <div class="card"><h3>${isBenchmarkMode ? "Monthly PUE — benchmark annual-average repeated series" : "Monthly Average PUE"}</h3>${monthlyChart}</div>
-    </div>
+    ${resultChartCards.length ? `<div class="grid">${resultChartCards.map(([title, chart]) => `
+        <div class="card"><h3>${esc(title)}</h3>${chart}</div>
+    `).join("")}</div>` : ""}
 </section>
 
 <section>
     <h2>8. Engineering Discussion</h2>
     <p>${isBenchmarkMode
-        ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the Excel Benchmark Compatible Method. ACC power is calculated from scenario peak ACC power multiplied by the annual temperature factor. Pump, indoor equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical losses are calculated from the benchmark IT and MEP efficiency assumptions.`
+        ? (isExcelReplicatedHourlyMode
+            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> using the project-specific hourly ACC performance model. Hourly component powers and PUE are derived from the selected scenario equipment powers and electrical-loss methodology.`
+            : (isExperimentalHourlyMode
+            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on a weather-driven ACC sensitivity method. Outdoor dry-bulb temperature defines a synthetic hourly ACC power shape calibrated to annual energy performance. It is not a validated design-peak calculation.`
+            : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent energy performance method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. Pump, indoor equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical losses are calculated from the project IT and MEP efficiency assumptions.`))
         : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`}</p>
     <table><tbody>${tableRows(isBenchmarkMode ? [
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
-        ["Hourly Dispatch Classification", "Not applicable in Excel Benchmark Compatible Mode"]
+        ["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Weather-driven ACC sensitivity profile" : "Not applicable in annual-equivalent assessment")]
     ] : [
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
         ["Free Cooling Hours", "Not modeled in current solver"],
@@ -2252,7 +2404,22 @@ function exportHtmlReport() {
         setSolverDataStatus("请先运行一次计算，再导出 HTML 报告。", "error");
         return;
     }
-    const html = buildHtmlReport(lastReportContext);
+    let html = buildHtmlReport(lastReportContext);
+    const finalLogoMarkup = `<div class="reportLogoBlock" style="display:block;width:180px;height:auto;margin:0 0 24px 0;">
+  <img
+    class="reportLogo"
+    src="${SKYVAULT_REPORT_LOGO}"
+    alt="SkyVault"
+    style="display:block !important;width:180px !important;height:auto !important;max-width:180px !important;visibility:visible !important;opacity:1 !important;"
+  />
+</div>`;
+    html = html.replace(/<div\s+class="reportLogoBlock"[\s\S]*?<\/div>\s*/g, "");
+    html = html.replace(/<img\s+class="reportLogo"[^>]*>\s*/g, "");
+    const headerTopOpen = '<div class="reportHeaderTop">';
+    if (html.includes(headerTopOpen)) {
+        html = html.replace(headerTopOpen, `${headerTopOpen}
+        ${finalLogoMarkup}`);
+    }
     const projectName = getProjectReportInfo().name || "pue-report";
     const safeName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pue-report";
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
@@ -3768,8 +3935,17 @@ async function runUsingConfigurationLibrary() {
     configurationLibraryData.standardized_solver_input = libraryInput;
     const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput);
     elIn.value = pretty(adaptedInput);
-    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name} / ${calculationMode === "excel_benchmark_compatible" ? "Excel Benchmark Compatible Mode" : "Dynamic Hourly Simulation"}...`;
-    if (calculationMode === "excel_benchmark_compatible") {
+    const calculationModeLabel = calculationMode === "excel_benchmark_compatible"
+        ? "Excel Benchmark Annual Equivalent Mode"
+        : (calculationMode === "excel_replicated_hourly" ? "Excel Replicated Hourly Mode" : (calculationMode === "experimental_acc_hourly_shape" ? "Experimental ACC Hourly Shape Mode" : "Dynamic Hourly Simulation"));
+    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name} / ${calculationModeLabel}...`;
+    if (["excel_benchmark_compatible", "excel_replicated_hourly", "experimental_acc_hourly_shape"].includes(calculationMode)) {
+        const benchmarkSolverFn = calculationMode === "excel_replicated_hourly"
+            ? "compute_acc_excel_replicated_hourly"
+            : (calculationMode === "experimental_acc_hourly_shape" ? "compute_acc_experimental_hourly_shape" : "compute_acc_excel_benchmark");
+        if (benchmarkSolverFn === "compute_acc_excel_replicated_hourly") {
+            ensureAccExcelReplicatedHourlyLoaded();
+        }
         const alternatives = [
             ["Normal", "normal_75"],
             ["Failure", "one_failure_three_active"]
@@ -3780,14 +3956,18 @@ async function runUsingConfigurationLibrary() {
                 buildFrontendSolverInputFromLibrary(configurationLibraryData, scenarioName)
             );
             pyodide.globals.set("benchmark_json_str", JSON.stringify(alternative));
+            pyodide.globals.set("benchmark_solver_fn", benchmarkSolverFn);
             const output = JSON.parse(pyodide.runPython(`
 import json
 benchmark_input = json.loads(benchmark_json_str)
-json.dumps(compute_acc_excel_benchmark(benchmark_input))
+if benchmark_solver_fn == "compute_acc_excel_replicated_hourly" and "compute_acc_excel_replicated_hourly" not in globals():
+    raise RuntimeError("compute_acc_excel_replicated_hourly is not loaded")
+benchmark_output = compute_acc_excel_replicated_hourly(benchmark_input) if benchmark_solver_fn == "compute_acc_excel_replicated_hourly" else (compute_acc_experimental_hourly_shape(benchmark_input) if benchmark_solver_fn == "compute_acc_experimental_hourly_shape" else compute_acc_excel_benchmark(benchmark_input))
+json.dumps(benchmark_output)
             `));
             recordScenarioResult(scenarioKey, output.annual_results);
         });
-        await run({ libraryRun: true, libraryInput: adaptedInput, solverFn: "compute_acc_excel_benchmark" });
+        await run({ libraryRun: true, libraryInput: adaptedInput, solverFn: benchmarkSolverFn });
     } else {
         await run({ libraryRun: true, libraryInput: adaptedInput });
     }
@@ -4651,6 +4831,7 @@ async function init() {
         await pyodide.runPythonAsync(pyText);
         const benchmarkText = await fetch("./acc_excel_benchmark.py").then(r => r.text());
         await pyodide.runPythonAsync(benchmarkText);
+        ensureAccExcelReplicatedHourlyLoaded();
 
         window.pyodide = pyodide;
         window.pyodideReady = true;
@@ -4779,13 +4960,18 @@ async function run(options = {}) {
         }
 
         const executedSolverFn = requestedSolverFn || job.solverFn;
+        if (executedSolverFn === "compute_acc_excel_replicated_hourly") {
+            ensureAccExcelReplicatedHourlyLoaded();
+        }
         pyodide.globals.set("dc_json_str", JSON.stringify(job.input));
         pyodide.globals.set("solver_fn", executedSolverFn);
 
         const outStr = pyodide.runPython(`
 import json
 dc = json.loads(dc_json_str)
-out = compute_acc_excel_benchmark(dc) if solver_fn == "compute_acc_excel_benchmark" else (compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc))
+if solver_fn == "compute_acc_excel_replicated_hourly" and "compute_acc_excel_replicated_hourly" not in globals():
+    raise RuntimeError("compute_acc_excel_replicated_hourly is not loaded")
+out = compute_acc_excel_replicated_hourly(dc) if solver_fn == "compute_acc_excel_replicated_hourly" else (compute_acc_experimental_hourly_shape(dc) if solver_fn == "compute_acc_experimental_hourly_shape" else (compute_acc_excel_benchmark(dc) if solver_fn == "compute_acc_excel_benchmark" else (compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc))))
 json.dumps(out, indent=2)
         `);
 
@@ -4799,6 +4985,7 @@ json.dumps(out, indent=2)
         if (isProjectResult) {
             // Show visualization for 8760-hour results
             showProjectVisualization(outObj);
+            const outputWarnings = Array.isArray(outObj.warnings) ? outObj.warnings : [];
             if (libraryRun && configurationLibraryData) {
                 configurationLibraryData.last_solver_output = outObj;
                 renderConfigurationLibrarySummary(configurationLibraryData);
@@ -4806,6 +4993,10 @@ json.dumps(out, indent=2)
                 if (libraryStatus) {
                     libraryStatus.textContent = `Completed ${configurationLibraryData.configuration_name} / ${providedLibraryInput.scenario_name}: Annual PUE ${fmtNumber(outObj.annual_results.annual_average_PUE, 3)}.`;
                     libraryStatus.style.color = "#059669";
+                    if (outputWarnings.length) {
+                        libraryStatus.textContent += ` Warning: ${outputWarnings.join(" ")}`;
+                        libraryStatus.style.color = "#b45309";
+                    }
                 }
             }
             recordScenarioResult(coolingSelection.scenarioKey, outObj.annual_results);
@@ -4817,8 +5008,8 @@ json.dumps(out, indent=2)
             const hourlyCount = Array.isArray(outObj.hourly_results) ? outObj.hourly_results.length : 0;
             const d = job.diagnostics || {};
             setSolverDataStatus(
-                `Solver: ${executedSolverFn} | IT hours=${d.itHours || 0} | weather hours=${d.weatherHours || 0} | output rows=${hourlyCount}`,
-                hourlyCount > 1 ? "ok" : "error"
+                `Solver: ${executedSolverFn} | IT hours=${d.itHours || 0} | weather hours=${d.weatherHours || 0} | output rows=${hourlyCount}${outputWarnings.length ? ` | Warning: ${outputWarnings.join(" ")}` : ""}`,
+                hourlyCount > 1 ? (outputWarnings.length ? "info" : "ok") : "error"
             );
             log(
                 "Project calculation completed\n" +

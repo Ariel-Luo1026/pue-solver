@@ -465,7 +465,9 @@
             </select>
             <select id="configurationCalculationMode" style="max-width:280px;">
                 <option value="dynamic_hourly">Dynamic Hourly Simulation</option>
-                <option value="excel_benchmark_compatible">Excel Benchmark Compatible</option>
+                <option value="excel_benchmark_compatible">Excel Benchmark Annual Equivalent Mode</option>
+                <option value="excel_replicated_hourly">Excel Replicated Hourly Mode</option>
+                <option value="experimental_acc_hourly_shape">Experimental ACC Hourly Shape Mode</option>
             </select>
             <button type="button" class="secondaryButton" id="btnLoadConfigurationLibrary">Load Configuration Library</button>
             <button type="button" class="primaryButton" id="btnRunConfigurationLibrary" disabled>Run Using Configuration Library</button>
@@ -733,7 +735,7 @@
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <!-- App -->
     <script src="./import_adapter.js"></script>
-    <script src="./ui.js"></script>
+    <script src="./ui.js?v=20260702-logo"></script>
     <script src="./editor.js"></script>
 
 </body>
