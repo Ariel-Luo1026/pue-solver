@@ -17,18 +17,20 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
         ):
             self.assertIn(text, self.ui)
 
-    def test_report_header_uses_embedded_skyvault_png_logo(self):
+    def test_report_header_uses_skyvault_png_logo_asset(self):
         self.assertIn("const SKYVAULT_REPORT_LOGO = `data:image/png;base64,", self.ui)
         self.assertIn("function exportHtmlReport()", self.ui)
         self.assertIn("let html = buildHtmlReport(lastReportContext);", self.ui)
         self.assertIn('class="reportLogoBlock"', self.ui)
         self.assertIn('class="reportLogo"', self.ui)
         self.assertIn('src="${SKYVAULT_REPORT_LOGO}"', self.ui)
-        self.assertIn("display:block !important;width:180px !important;height:auto !important;max-width:180px !important;visibility:visible !important;opacity:1 !important;", self.ui)
+        self.assertNotIn('src="./assets/skyvault-logo.png"', self.ui)
+        self.assertNotIn('src="../../../ArielLuoProjectspue-solver/assets/skyvault-logo.png"', self.ui)
+        self.assertIn("display:block !important;width:210px !important;height:auto !important;max-width:210px !important;visibility:visible !important;opacity:1 !important;", self.ui)
         self.assertIn('const headerTopOpen = \'<div class="reportHeaderTop">\';', self.ui)
         self.assertIn('html = html.replace(headerTopOpen, `${headerTopOpen}', self.ui)
         self.assertIn('new Blob([html], { type: "text/html;charset=utf-8" })', self.ui)
-        self.assertIn(".reportLogo { display:block; width:160px; height:auto; object-fit:contain; margin-bottom:20px; }", self.ui)
+        self.assertIn(".reportLogo { display:block; width:210px; height:auto; object-fit:contain; margin-bottom:0; }", self.ui)
         self.assertNotIn('svg class="reportLogo"', self.ui)
         self.assertNotIn("<!-- REPORT_LOGO_INSERTED -->", self.ui)
         self.assertNotIn("TEST_LOGO_POSITION", self.ui)
