@@ -8,6 +8,7 @@ invoke solver.py and performs no numerical calculations.
 from configuration_library_scanner import scan_single_configuration
 from configuration_validator import validate_configuration_manifest
 from calculators import get_calculator_for_context
+from calculators.models import CalculationContext
 from performance_requirement_registry import get_topology_performance_requirements
 from topology_registry import get_topology_by_cooling_type, get_topology_equipment
 
@@ -73,6 +74,33 @@ def get_calculation_context(project_input):
     }
 
 
+def build_standard_context(project_input):
+    """Return the standardized CalculationContext dataclass.
+
+    This optional helper preserves existing adapter behavior by wrapping
+    get_calculation_context() instead of replacing it.
+    """
+    context = get_calculation_context(project_input)
+    solver_mode = resolve_solver_mode(context)
+    topology = context.get("topology") or {}
+    return CalculationContext(
+        configuration_name=context.get("configuration_name"),
+        topology_id=topology.get("topology_id"),
+        topology_display_name=topology.get("display_name"),
+        cooling_system_type=context.get("cooling_system_type"),
+        power_source=context.get("power_source"),
+        unit_capacity=context.get("unit_capacity"),
+        solver_mode=solver_mode,
+        equipment=context.get("equipment") or [],
+        performance_requirements=context.get("performance_requirements") or [],
+        configuration_summary=context.get("configuration_summary"),
+        metadata={
+            "source": "calculation_adapter.build_standard_context",
+            "legacy_context_available": True,
+        },
+    )
+
+
 def resolve_solver_mode(context):
     """Return future solver routing mode without performing calculations."""
     topology = (context or {}).get("topology") or {}
@@ -90,6 +118,25 @@ def run_calculation_adapter(project_input):
         "context": context,
         "solver_mode": mode,
     }
+
+
+def run_project_via_adapter(project_input):
+    """Run a project through the optional modular adapter path.
+
+    This is not connected to the existing UI. It routes to an implemented
+    calculator when one exists and otherwise raises a clear unsupported error.
+    """
+    context = get_calculation_context(project_input)
+    mode = resolve_solver_mode(context)
+    context["calculation_mode"] = mode
+    context["solver_mode"] = mode
+    calculator = get_calculator_for_context(context)
+    if calculator is None:
+        topology_id = (context.get("topology") or {}).get("topology_id")
+        raise NotImplementedError(
+            f"No calculator implemented for topology {topology_id} / solver mode {mode}"
+        )
+    return calculator.run(project_input)
 
 
 def get_calculator_for_project(project_input):

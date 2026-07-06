@@ -3,9 +3,15 @@
 Calculators should keep topology-specific orchestration small and reuse common
 engineering helpers from calculators.common.weather,
 calculators.common.performance_curve, calculators.common.energy_balance, and
-calculators.common.pue_metrics where practical. Legacy solver.py paths remain
-unchanged unless a later migration phase explicitly wires a calculator into a
-calculation path.
+calculators.common.pue_metrics where practical.
+
+Public calculator API target:
+- build_context(project_input) -> CalculationContext
+- validate(context) -> list[str]
+- run(project_input) -> CalculationResult
+
+Legacy solver.py paths remain unchanged unless a later migration phase
+explicitly wires a calculator into a calculation path.
 """
 
 
@@ -38,7 +44,8 @@ class BaseCalculator:
     def run(self, project_input):
         """Run the calculator.
 
-        Subclasses may use calculators.common helpers, but Phase 11 does not
-        require or wire those helpers into existing legacy calculations.
+        Future calculators should return calculators.models.CalculationResult.
+        Phase 11.5 defines that public API without changing existing legacy
+        calculations.
         """
         raise NotImplementedError("Calculator execution is not implemented in this phase.")
