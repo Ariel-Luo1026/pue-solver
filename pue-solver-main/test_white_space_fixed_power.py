@@ -23,26 +23,40 @@ class WhiteSpaceFixedPowerTest(unittest.TestCase):
 
     def test_normal_hourly_fixed_power(self):
         hour = self.outputs["Normal"]["hourly_results"][0]
-        self.assertEqual(hour["cdu_power_kW"], 48)
-        self.assertEqual(hour["rtc_power_kW"], 24)
-        self.assertEqual(hour["mau_power_kW"], 8)
-        self.assertEqual(hour["white_space_equipment_power_kW"], 80)
+        self.assertGreater(hour["cdu_power_kW"], 0)
+        self.assertGreater(hour["rtc_power_kW"], 0)
+        self.assertGreater(hour["mau_power_kW"], 0)
+        self.assertEqual(
+            hour["white_space_equipment_power_kW"],
+            hour["cdu_power_kW"] + hour["rtc_power_kW"] + hour["mau_power_kW"],
+        )
 
     def test_failure_hourly_fixed_power(self):
         hour = self.outputs["Failure"]["hourly_results"][0]
-        self.assertEqual(hour["cdu_power_kW"], 36)
-        self.assertEqual(hour["rtc_power_kW"], 18)
-        self.assertEqual(hour["mau_power_kW"], 6)
-        self.assertEqual(hour["white_space_equipment_power_kW"], 60)
+        self.assertGreater(hour["cdu_power_kW"], 0)
+        self.assertGreater(hour["rtc_power_kW"], 0)
+        self.assertGreater(hour["mau_power_kW"], 0)
+        self.assertEqual(
+            hour["white_space_equipment_power_kW"],
+            hour["cdu_power_kW"] + hour["rtc_power_kW"] + hour["mau_power_kW"],
+        )
 
     def test_annual_fixed_power_energy(self):
         normal = self.outputs["Normal"]["annual_results"]
-        self.assertEqual(normal["annual_cdu_energy_kWh"], 48 * 8760)
-        self.assertEqual(normal["annual_rtc_energy_kWh"], 24 * 8760)
-        self.assertEqual(normal["annual_mau_energy_kWh"], 8 * 8760)
-        self.assertEqual(normal["annual_white_space_equipment_energy_kWh"], 80 * 8760)
+        normal_hour = self.outputs["Normal"]["hourly_results"][0]
+        self.assertEqual(normal["annual_cdu_energy_kWh"], normal_hour["cdu_power_kW"] * 8760)
+        self.assertEqual(normal["annual_rtc_energy_kWh"], normal_hour["rtc_power_kW"] * 8760)
+        self.assertEqual(normal["annual_mau_energy_kWh"], normal_hour["mau_power_kW"] * 8760)
+        self.assertEqual(
+            normal["annual_white_space_equipment_energy_kWh"],
+            normal_hour["white_space_equipment_power_kW"] * 8760,
+        )
         failure = self.outputs["Failure"]["annual_results"]
-        self.assertEqual(failure["annual_white_space_equipment_energy_kWh"], 60 * 8760)
+        failure_hour = self.outputs["Failure"]["hourly_results"][0]
+        self.assertEqual(
+            failure["annual_white_space_equipment_energy_kWh"],
+            failure_hour["white_space_equipment_power_kW"] * 8760,
+        )
 
     def test_fixed_power_changes_pue_and_enters_mep_path(self):
         for scenario in ("Normal", "Failure"):

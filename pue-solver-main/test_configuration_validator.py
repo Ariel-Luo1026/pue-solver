@@ -132,6 +132,24 @@ class ConfigurationValidatorTest(unittest.TestCase):
             summary["recommended_next_actions"],
         )
 
+    def test_grouped_tentative_folder_mapping_appears_in_summary(self):
+        with TemporaryDirectory() as temp_dir:
+            configuration_path = self._make_configuration(
+                temp_dir,
+                "ACC_1MW_GRID_CDU",
+                ["ACC_1", "RTC_1&2", "MAU_1&2"],
+            )
+            summary = self._validate_path(configuration_path)
+
+        self.assertIn(
+            {"equipment_folder": "RTC_1&2", "equipment_id": "auxiliary_load", "message": "RTC_1&2 → auxiliary_load is tentative."},
+            summary["tentative_equipment_mappings"],
+        )
+        self.assertIn(
+            {"equipment_folder": "MAU_1&2", "equipment_id": "terminal_fan", "message": "MAU_1&2 → terminal_fan is tentative."},
+            summary["tentative_equipment_mappings"],
+        )
+
     def test_validate_configuration_library_returns_multiple_summaries(self):
         with TemporaryDirectory() as temp_dir:
             self._make_configuration(temp_dir, "ACC_1MW_GRID_CDU", ["ACC_1"])

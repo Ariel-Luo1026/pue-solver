@@ -38,6 +38,9 @@ EQUIPMENT_FOLDER_PREFIX_MAP = {
     "ABS": ("absorption_chiller", None),
     "SMOKE_WATER_HX": ("heat_exchanger", None),
     "HEAT_EXCHANGER": ("heat_exchanger", None),
+    # Semantic aliases used by current Configuration Library folder names.
+    # They intentionally satisfy existing framework equipment IDs instead of
+    # changing topology expectations or calculation behavior in this phase.
     "ENGINE_RADIATOR": (
         "heat_exchanger",
         "ENGINE_RADIATOR detected; mapped tentatively to heat_exchanger.",
@@ -75,9 +78,12 @@ def scan_single_configuration(configuration_path):
 
     equipment_path = path / "equipment"
     equipment_folders = _list_child_folder_names(equipment_path)
-    detected_equipment_ids, unexpected_equipment_folders, mapping_messages = _map_equipment_folders(
-        equipment_folders
-    )
+    (
+        detected_equipment_ids,
+        unexpected_equipment_folders,
+        mapping_messages,
+        detected_equipment_instances,
+    ) = _map_equipment_folders(equipment_folders)
 
     missing_expected_equipment_ids = [
         equipment_id
@@ -113,6 +119,7 @@ def scan_single_configuration(configuration_path):
         "equipment_folder_exists": equipment_path.is_dir(),
         "equipment_folders": equipment_folders,
         "detected_equipment_ids": detected_equipment_ids,
+        "detected_equipment_instances": detected_equipment_instances,
         "missing_expected_equipment_ids": missing_expected_equipment_ids,
         "unexpected_equipment_folders": unexpected_equipment_folders,
         "topology_id": topology_id,
@@ -157,26 +164,73 @@ def _map_equipment_folders(equipment_folders):
     detected_equipment_ids = []
     unexpected_equipment_folders = []
     validation_messages = []
+    detected_equipment_instances = []
 
     for folder_name in equipment_folders:
-        equipment_id, message = _map_equipment_folder(folder_name)
+        parsed = parse_equipment_folder_name(folder_name)
+        equipment_id = parsed["canonical_equipment_id"]
+        message = parsed["mapping_message"]
+        if parsed["is_known"]:
+            detected_equipment_instances.append({
+                "folder_name": parsed["original_name"],
+                "equipment_type_token": parsed["equipment_type_token"],
+                "canonical_equipment_id": equipment_id,
+                "instance_token": parsed["instance_token"],
+                "is_grouped_instance": parsed["is_grouped_instance"],
+            })
         if equipment_id is None:
             unexpected_equipment_folders.append(folder_name)
             continue
         if equipment_id not in detected_equipment_ids:
             detected_equipment_ids.append(equipment_id)
         if message:
-            validation_messages.append(message)
+            validation_messages.append(f"{folder_name}: {message}")
 
-    return detected_equipment_ids, unexpected_equipment_folders, validation_messages
+    return (
+        detected_equipment_ids,
+        unexpected_equipment_folders,
+        validation_messages,
+        detected_equipment_instances,
+    )
+
+
+def parse_equipment_folder_name(folder_name):
+    """Parse an equipment folder into semantic type and instance metadata.
+
+    The parser matches the longest registered equipment prefix first and treats
+    whatever follows the prefix as an instance token. This allows folders such
+    as ``MAU_1&2`` or ``ENGINE_RADIATOR_North`` to be recognized without tying
+    the scanner to fixed instance numbers.
+    """
+    original_name = str(folder_name)
+    normalized = _normalize_token(original_name)
+    for prefix in sorted(EQUIPMENT_FOLDER_PREFIX_MAP, key=len, reverse=True):
+        if normalized == prefix or normalized.startswith(f"{prefix}_"):
+            equipment_id, message = EQUIPMENT_FOLDER_PREFIX_MAP[prefix]
+            instance_token = _extract_instance_token(original_name, prefix)
+            return {
+                "original_name": original_name,
+                "equipment_type_token": prefix,
+                "instance_token": instance_token,
+                "canonical_equipment_id": equipment_id,
+                "is_known": True,
+                "is_grouped_instance": _is_grouped_instance(instance_token),
+                "mapping_message": message,
+            }
+    return {
+        "original_name": original_name,
+        "equipment_type_token": normalized,
+        "instance_token": None,
+        "canonical_equipment_id": None,
+        "is_known": False,
+        "is_grouped_instance": False,
+        "mapping_message": None,
+    }
 
 
 def _map_equipment_folder(folder_name):
-    normalized = _strip_trailing_instance_number(_normalize_token(folder_name))
-    for prefix in sorted(EQUIPMENT_FOLDER_PREFIX_MAP, key=len, reverse=True):
-        if normalized == prefix or normalized.startswith(f"{prefix}_"):
-            return EQUIPMENT_FOLDER_PREFIX_MAP[prefix]
-    return None, None
+    parsed = parse_equipment_folder_name(folder_name)
+    return parsed["canonical_equipment_id"], parsed["mapping_message"]
 
 
 def _structure_validation_messages(path):
@@ -195,3 +249,25 @@ def _normalize_token(value):
 
 def _strip_trailing_instance_number(value):
     return re.sub(r"_\d+(?:\.\d+)?$", "", value)
+
+
+def _extract_instance_token(original_name, equipment_type_token):
+    prefix_pattern = r"[\s_-]+".join(re.escape(part) for part in equipment_type_token.split("_"))
+    match = re.match(
+        rf"^\s*{prefix_pattern}(?:[\s_-]+(?P<instance>.+))?\s*$",
+        str(original_name),
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    instance_token = match.group("instance")
+    return instance_token.strip() if instance_token else None
+
+
+def _is_grouped_instance(instance_token):
+    if not instance_token:
+        return False
+    normalized = str(instance_token).strip()
+    if "&" in normalized:
+        return True
+    return bool(re.fullmatch(r"\d+[A-Z]*_\d+[A-Z]*(?:_\d+[A-Z]*)*", normalized, re.IGNORECASE))

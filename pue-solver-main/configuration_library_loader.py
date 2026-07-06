@@ -10,6 +10,8 @@ from re import match
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
+from configuration_library_scanner import parse_equipment_folder_name
+
 SUPPORTED_CONFIGURATIONS = {"ACC_1.5MW_GASENGINE_CDU"}
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
 
@@ -184,13 +186,16 @@ def select_solver_curve(equipment_package, scenario_name):
 
 def load_equipment_packages(configuration_dir, equipment_list):
     packages = {}
+    equipment_root = Path(configuration_dir) / "equipment"
     for equipment_entry in equipment_list:
         equipment_id = equipment_entry["equipment_id"]
-        workbook = Path(configuration_dir) / "equipment" / equipment_id / f"{equipment_id}.xlsx"
+        actual_equipment_id = _resolve_actual_equipment_folder(equipment_root, equipment_id)
+        workbook = equipment_root / actual_equipment_id / f"{actual_equipment_id}.xlsx"
         package_path = workbook.relative_to(configuration_dir).as_posix()
         if not workbook.is_file():
             packages[equipment_id] = {
                 "equipment_id": equipment_id,
+                "actual_equipment_id": actual_equipment_id,
                 "equipment_type": None,
                 "package_path": package_path,
                 "status": "Missing",
@@ -222,6 +227,7 @@ def load_equipment_packages(configuration_dir, equipment_list):
         package_status = "Electrical Path Found" if electrical_path and all(value is not None for value in electrical_path.values()) else "Found"
         packages[equipment_id] = {
             "equipment_id": equipment_id,
+            "actual_equipment_id": actual_equipment_id,
             "equipment_type": equipment_type,
             "package_path": package_path,
             "status": package_status,
@@ -235,6 +241,33 @@ def load_equipment_packages(configuration_dir, equipment_list):
             "validation": validation,
         }
     return packages
+
+
+def _resolve_actual_equipment_folder(equipment_root, requested_equipment_id):
+    """Resolve a requested equipment ID to the actual folder by semantic type.
+
+    The configuration workbook may keep stable logical IDs such as ENGINE_2
+    while the actual library folder is named ENGINE_3. This helper preserves
+    the logical package key and only redirects the workbook read to an existing
+    same-type folder. No calculation data is changed.
+    """
+    exact_workbook = equipment_root / requested_equipment_id / f"{requested_equipment_id}.xlsx"
+    if exact_workbook.is_file():
+        return requested_equipment_id
+
+    requested = parse_equipment_folder_name(requested_equipment_id)
+    requested_canonical = requested["canonical_equipment_id"]
+    if not requested_canonical or not equipment_root.is_dir():
+        return requested_equipment_id
+
+    for folder in sorted([child for child in equipment_root.iterdir() if child.is_dir()], key=lambda item: item.name.upper()):
+        parsed = parse_equipment_folder_name(folder.name)
+        if parsed["canonical_equipment_id"] != requested_canonical:
+            continue
+        workbook = folder / f"{folder.name}.xlsx"
+        if workbook.is_file():
+            return folder.name
+    return requested_equipment_id
 
 
 def build_library_bound_input(configuration, scenarios, equipment, it_profile, total_it_capacity_mw=None):
@@ -361,6 +394,22 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         for equipment_id, package in loaded["equipment"].items()
     }
 
+    acc_id = _resolve_loaded_equipment_id(loaded["equipment"], "ACC_2", "acc_unit")
+    pump_id = _resolve_loaded_equipment_id(loaded["equipment"], "CHW_PUMP_2", "pump")
+    engine_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_2", "gas_engine")
+    radiator_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_RADIATOR_2", "heat_exchanger")
+    electrical_id = _resolve_loaded_equipment_id(
+        loaded["equipment"], "ELECTRICAL_DISTRIBUTION_2", "electrical_distribution"
+    )
+    auxiliary_ids = [
+        _resolve_loaded_equipment_id(loaded["equipment"], preferred, canonical)
+        for preferred, canonical in (
+            ("CDU_2", "cdu"),
+            ("RTC_2", "auxiliary_load"),
+            ("MAU_2", "terminal_fan"),
+        )
+    ]
+
     def equipment_binding(equipment_id, role):
         package = loaded["equipment"][equipment_id]
         selected = selected_curves[equipment_id]
@@ -374,17 +423,17 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "curve_data": selected["curve"],
         }
 
-    electrical_path = loaded["equipment"]["ELECTRICAL_DISTRIBUTION_2"]["electrical_path"]
+    electrical_path = loaded["equipment"][electrical_id]["electrical_path"]
     equipment = {
         "cooling": {
-            "ACC": equipment_binding("ACC_2", "cooling_equipment"),
-            "pumps": {"CHW_PUMP_2": equipment_binding("CHW_PUMP_2", "pump_power")},
-            "engine": equipment_binding("ENGINE_2", "engine_output_reference"),
-            "engine_radiator": equipment_binding("ENGINE_RADIATOR_2", "engine_radiator_power"),
+            "ACC": equipment_binding(acc_id, "cooling_equipment"),
+            "pumps": {pump_id: equipment_binding(pump_id, "pump_power")},
+            "engine": equipment_binding(engine_id, "engine_output_reference"),
+            "engine_radiator": equipment_binding(radiator_id, "engine_radiator_power"),
         },
         "auxiliary": {
             equipment_id: equipment_binding(equipment_id, "white_space_auxiliary")
-            for equipment_id in ("CDU_2", "RTC_2", "MAU_2")
+            for equipment_id in auxiliary_ids
         },
         "electrical_path": electrical_path,
     }
@@ -418,3 +467,13 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "library_bound_input": loaded["library_bound_input"],
         },
     }
+
+
+def _resolve_loaded_equipment_id(equipment_packages, preferred_equipment_id, canonical_equipment_id):
+    if preferred_equipment_id in equipment_packages:
+        return preferred_equipment_id
+    for equipment_id in sorted(equipment_packages):
+        parsed = parse_equipment_folder_name(equipment_id)
+        if parsed["canonical_equipment_id"] == canonical_equipment_id:
+            return equipment_id
+    raise KeyError(f"No equipment package found for {preferred_equipment_id} / {canonical_equipment_id}")

@@ -4,7 +4,7 @@ Phase 6 validation skeleton. It consumes scanner manifests and produces
 human-readable completeness summaries without invoking solver.py.
 """
 
-from configuration_library_scanner import scan_configuration_library
+from configuration_library_scanner import parse_equipment_folder_name, scan_configuration_library
 
 
 TENTATIVE_FOLDER_PREFIX_MAPPINGS = {
@@ -25,7 +25,8 @@ def validate_configuration_manifest(manifest):
     missing_equipment_ids = list(manifest.get("missing_expected_equipment_ids") or [])
     unexpected_equipment_folders = list(manifest.get("unexpected_equipment_folders") or [])
     tentative_equipment_mappings = _detect_tentative_equipment_mappings(
-        manifest.get("equipment_folders", [])
+        manifest.get("equipment_folders", []),
+        manifest.get("detected_equipment_instances", []),
     )
     validation_messages = list(manifest.get("validation_messages") or [])
 
@@ -97,18 +98,23 @@ def _completeness_score(present_equipment_ids, topology_equipment_ids):
     return len(set(present_equipment_ids)) / len(set(topology_equipment_ids))
 
 
-def _detect_tentative_equipment_mappings(equipment_folders):
+def _detect_tentative_equipment_mappings(equipment_folders, detected_equipment_instances=None):
     mappings = []
-    for folder_name in equipment_folders:
-        normalized = _strip_trailing_instance_number(_normalize_folder_name(folder_name))
-        for prefix, equipment_id in TENTATIVE_FOLDER_PREFIX_MAPPINGS.items():
-            if normalized == prefix or normalized.startswith(f"{prefix}_"):
-                mappings.append({
-                    "equipment_folder": folder_name,
-                    "equipment_id": equipment_id,
-                    "message": f"{folder_name} → {equipment_id} is tentative.",
-                })
-                break
+    parsed_instances = detected_equipment_instances or [
+        parse_equipment_folder_name(folder_name)
+        for folder_name in equipment_folders
+    ]
+    for parsed in parsed_instances:
+        folder_name = parsed.get("folder_name") or parsed.get("original_name")
+        prefix = parsed.get("equipment_type_token")
+        equipment_id = TENTATIVE_FOLDER_PREFIX_MAPPINGS.get(prefix)
+        if not equipment_id:
+            continue
+        mappings.append({
+            "equipment_folder": folder_name,
+            "equipment_id": equipment_id,
+            "message": f"{folder_name} → {equipment_id} is tentative.",
+        })
     return mappings
 
 
@@ -139,13 +145,3 @@ def _recommended_next_actions(
         actions.append(f"Confirm equipment folder meaning: {folder_name}")
     return actions
 
-
-def _normalize_folder_name(value):
-    return str(value).upper().replace("-", "_").replace(" ", "_")
-
-
-def _strip_trailing_instance_number(value):
-    parts = value.rsplit("_", 1)
-    if len(parts) == 2 and parts[1].replace(".", "", 1).isdigit():
-        return parts[0]
-    return value
