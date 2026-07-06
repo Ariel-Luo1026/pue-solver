@@ -155,6 +155,48 @@
             margin-top: 6px;
         }
 
+        .diagnosticsBadge {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            border: 1px solid #d1d5db;
+            padding: 3px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .02em;
+            color: #374151;
+            background: #f9fafb;
+        }
+
+        .diagnosticsBadge.valid {
+            color: #2f5d50;
+            border-color: #b8c8c0;
+            background: #f4f7f5;
+        }
+
+        .diagnosticsBadge.warning {
+            color: #7a5a24;
+            border-color: #d6c7a8;
+            background: #faf8f1;
+        }
+
+        .diagnosticsBadge.invalid {
+            color: #7a3d3d;
+            border-color: #d4b8b8;
+            background: #faf4f4;
+        }
+
+        .diagnosticsBadge.placeholder {
+            color: #555555;
+            border-color: #d8d8d8;
+            background: #f7f7f7;
+        }
+
+        .diagnosticsValue {
+            color: #374151;
+            line-height: 1.45;
+        }
+
         /* canvas 统一外观 */
         canvas {
             width: 100%;
@@ -474,6 +516,13 @@
         </div>
         <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Manual Excel upload remains available below.</div>
         <div id="configurationLibrarySummary" class="fileGrid" style="margin-top:12px; display:none;"></div>
+    </div>
+
+    <!-- ================= Framework Diagnostics ================= -->
+    <div class="card" id="frameworkDiagnosticsPanel">
+        <h3 style="margin:0 0 10px 0;">Framework Diagnostics</h3>
+        <div class="hint" id="frameworkDiagnosticsNotice">Frontend diagnostics preview — not connected to calculation.</div>
+        <div id="frameworkDiagnosticsGrid" class="fileGrid" style="margin-top:12px;"></div>
     </div>
 
     <!-- ================= Standardized Data Inputs ================= -->

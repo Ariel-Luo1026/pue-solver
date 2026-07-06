@@ -7,6 +7,7 @@ invoke solver.py and performs no numerical calculations.
 
 from configuration_library_scanner import scan_single_configuration
 from configuration_validator import validate_configuration_manifest
+from calculators import get_calculator_for_context
 from performance_requirement_registry import get_topology_performance_requirements
 from topology_registry import get_topology_by_cooling_type, get_topology_equipment
 
@@ -89,6 +90,20 @@ def run_calculation_adapter(project_input):
         "context": context,
         "solver_mode": mode,
     }
+
+
+def get_calculator_for_project(project_input):
+    """Return matching calculator metadata for a project input, if any.
+
+    This prepares future routing only. It does not call calculator.run() and
+    does not perform any numerical calculation.
+    """
+    context = get_calculation_context(project_input)
+    mode = resolve_solver_mode(context)
+    context["calculation_mode"] = mode
+    context["solver_mode"] = mode
+    calculator = get_calculator_for_context(context)
+    return calculator.metadata() if calculator else None
 
 
 def _configuration_summary(project_input):

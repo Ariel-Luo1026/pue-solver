@@ -61,6 +61,40 @@ const COOLING_SYSTEM_CONFIG = Object.freeze({
 });
 window.COOLING_SYSTEM_CONFIG = COOLING_SYSTEM_CONFIG;
 
+const FRAMEWORK_DIAGNOSTIC_TOPOLOGIES = Object.freeze({
+    "ACC": {
+        topology_id: "acc",
+        display_name: "ACC",
+        equipment_ids: ["acc_unit", "cdu", "pump", "terminal_fan", "electrical_distribution", "auxiliary_load", "gas_engine"],
+        performance_requirements: ["it_load_profile", "weather_profile", "acc_performance_curve", "pump_power_curve", "terminal_fan_curve", "electrical_efficiency_curve", "auxiliary_fixed_load", "gas_engine_curve"]
+    },
+    "Chiller + Dry Cooler": {
+        topology_id: "chiller_dry_cooler",
+        display_name: "Chiller + Dry Cooler",
+        equipment_ids: ["chiller", "dry_cooler", "cdu", "pump", "terminal_fan", "electrical_distribution", "auxiliary_load"],
+        performance_requirements: ["it_load_profile", "weather_profile", "chiller_cop_surface", "dry_cooler_fan_curve", "pump_power_curve", "terminal_fan_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+    },
+    "Chiller + Cooling Tower": {
+        topology_id: "chiller_cooling_tower",
+        display_name: "Chiller + Cooling Tower",
+        equipment_ids: ["chiller", "cooling_tower", "cdu", "pump", "terminal_fan", "electrical_distribution", "auxiliary_load"],
+        performance_requirements: ["it_load_profile", "weather_profile", "chiller_cop_surface", "cooling_tower_performance_curve", "pump_power_curve", "terminal_fan_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+    },
+    "ABS + Dry Cooler": {
+        topology_id: "abs_dry_cooler",
+        display_name: "ABS + Dry Cooler",
+        equipment_ids: ["absorption_chiller", "dry_cooler", "heat_exchanger", "cdu", "pump", "terminal_fan", "gas_engine", "electrical_distribution", "auxiliary_load"],
+        performance_requirements: ["it_load_profile", "weather_profile", "absorption_chiller_performance_curve", "dry_cooler_fan_curve", "heat_exchanger_curve", "pump_power_curve", "terminal_fan_curve", "gas_engine_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+    },
+    "ABS + Cooling Tower": {
+        topology_id: "abs_cooling_tower",
+        display_name: "ABS + Cooling Tower",
+        equipment_ids: ["absorption_chiller", "cooling_tower", "heat_exchanger", "cdu", "pump", "terminal_fan", "gas_engine", "electrical_distribution", "auxiliary_load"],
+        performance_requirements: ["it_load_profile", "weather_profile", "absorption_chiller_performance_curve", "cooling_tower_performance_curve", "heat_exchanger_curve", "pump_power_curve", "terminal_fan_curve", "gas_engine_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+    }
+});
+window.FRAMEWORK_DIAGNOSTIC_TOPOLOGIES = FRAMEWORK_DIAGNOSTIC_TOPOLOGIES;
+
 const DEFAULT_COOLING_SYSTEM_TYPE = "Chiller + Dry Cooler";
 const DEFAULT_COOLING_UNIT_CAPACITY_MW = 2;
 const DEFAULT_POWER_SOURCE = "Grid";
@@ -287,6 +321,7 @@ function renderCoolingSystemSelection() {
         status.style.color = runnable ? "#059669" : "#b45309";
     }
     renderScenarioSummary();
+    renderFrameworkDiagnosticsPanel();
 }
 
 function renderScenarioSummary() {
@@ -321,6 +356,119 @@ function calculateFrontendUnitRequirements(totalItCapacityMw, coolingUnitCapacit
         failureActiveUnits: requiredUnits,
         redundancy: "N+1"
     };
+}
+
+function frameworkEquipmentIdFromFolder(equipmentFolder) {
+    const normalized = String(equipmentFolder || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/_+\d+$/, "").replace(/^_+|_+$/g, "");
+    const rules = [
+        [/^ELECTRICAL_DISTRIBUTION/, "electrical_distribution"],
+        [/^ENGINE_RADIATOR/, "heat_exchanger"],
+        [/^SMOKE_WATER_HX/, "heat_exchanger"],
+        [/^HEAT_EXCHANGER/, "heat_exchanger"],
+        [/^COOLING_TOWER/, "cooling_tower"],
+        [/^DRY_COOLER/, "dry_cooler"],
+        [/^CHW_PUMP|^CW_PUMP|^PUMP/, "pump"],
+        [/^ACC/, "acc_unit"],
+        [/^CDU/, "cdu"],
+        [/^ENGINE/, "gas_engine"],
+        [/^CHILLER/, "chiller"],
+        [/^ABS/, "absorption_chiller"],
+        [/^MAU/, "terminal_fan"],
+        [/^RTC/, "auxiliary_load"]
+    ];
+    return rules.find(([pattern]) => pattern.test(normalized))?.[1] || null;
+}
+
+function tentativeFrameworkMapping(equipmentFolder, equipmentId) {
+    if (/^(RTC|MAU|ENGINE_RADIATOR)/i.test(String(equipmentFolder || ""))) {
+        return `${equipmentFolder} → ${equipmentId}`;
+    }
+    return null;
+}
+
+function buildFrameworkDiagnosticsPreview() {
+    const { type, capacityMw, powerSource } = getCoolingSystemSelection();
+    const topology = FRAMEWORK_DIAGNOSTIC_TOPOLOGIES[type] || null;
+    const solverMode = topology?.topology_id === "acc" ? "acc_hourly" : "placeholder";
+    const libraryEquipmentFolders = Object.keys(configurationLibraryData?.equipment || {});
+    const detectedEquipmentIds = [];
+    const tentativeMappings = [];
+    const unexpectedFolders = [];
+    libraryEquipmentFolders.forEach(folder => {
+        const equipmentId = frameworkEquipmentIdFromFolder(folder);
+        if (!equipmentId) {
+            unexpectedFolders.push(folder);
+            return;
+        }
+        if (!detectedEquipmentIds.includes(equipmentId)) detectedEquipmentIds.push(equipmentId);
+        const tentative = tentativeFrameworkMapping(folder, equipmentId);
+        if (tentative) tentativeMappings.push(tentative);
+    });
+    const expectedEquipmentIds = topology?.equipment_ids || [];
+    const missingEquipmentIds = configurationLibraryData
+        ? expectedEquipmentIds.filter(equipmentId => !detectedEquipmentIds.includes(equipmentId))
+        : [];
+    const recommendedActions = [
+        ...missingEquipmentIds.map(equipmentId => `Add missing equipment folder: ${equipmentId}`),
+        ...tentativeMappings.map(mapping => `Review tentative mapping: ${mapping}`),
+        ...unexpectedFolders.map(folder => `Confirm equipment folder meaning: ${folder}`)
+    ];
+    const validationStatus = !topology ? "invalid"
+        : !configurationLibraryData ? "placeholder"
+        : (missingEquipmentIds.length || tentativeMappings.length || unexpectedFolders.length ? "warning" : "valid");
+    return {
+        notice: "Frontend diagnostics preview — not connected to calculation.",
+        topology: topology?.display_name || "Unknown",
+        topology_id: topology?.topology_id || "unknown",
+        cooling_system_type: type,
+        power_source: powerSource,
+        unit_capacity: `${capacityMw} MW`,
+        solver_mode: solverMode,
+        equipment_detected: configurationLibraryData ? detectedEquipmentIds : expectedEquipmentIds,
+        missing_equipment: configurationLibraryData ? missingEquipmentIds : ["Not evaluated until Configuration Library is loaded"],
+        performance_requirements: topology?.performance_requirements || [],
+        validation_status: validationStatus,
+        recommended_next_actions: recommendedActions.length ? recommendedActions : ["No action required for diagnostics preview"],
+        tentative_mappings: tentativeMappings,
+        configuration_name: configurationLibraryData?.configuration_name || "Current frontend selection"
+    };
+}
+
+function diagnosticsStatusClass(status) {
+    return ["valid", "warning", "invalid", "placeholder"].includes(status) ? status : "placeholder";
+}
+
+function renderDiagnosticsValue(value) {
+    if (Array.isArray(value)) {
+        if (!value.length) return "—";
+        return `<ul style="margin:0; padding-left:18px;">${value.map(item => `<li>${esc(item)}</li>`).join("")}</ul>`;
+    }
+    return esc(value ?? "—");
+}
+
+function renderFrameworkDiagnosticsPanel() {
+    const grid = document.getElementById("frameworkDiagnosticsGrid");
+    if (!grid) return;
+    const diagnostics = buildFrameworkDiagnosticsPreview();
+    const statusClass = diagnosticsStatusClass(diagnostics.validation_status);
+    const rows = [
+        ["Detected Topology", `${diagnostics.topology} (${diagnostics.topology_id})`],
+        ["Cooling System Type", diagnostics.cooling_system_type],
+        ["Power Source", diagnostics.power_source],
+        ["Unit Capacity", diagnostics.unit_capacity],
+        ["Solver Mode", diagnostics.solver_mode],
+        ["Equipment Detected", diagnostics.equipment_detected],
+        ["Missing Equipment", diagnostics.missing_equipment],
+        ["Performance Requirements", diagnostics.performance_requirements],
+        ["Validation Status", `<span class="diagnosticsBadge ${statusClass}">${diagnostics.validation_status}</span>`],
+        ["Recommended Next Actions", diagnostics.recommended_next_actions]
+    ];
+    grid.innerHTML = rows.map(([label, value]) => `<div class="fileSlot">
+        <div class="panelTitle">${esc(label)}</div>
+        <div class="diagnosticsValue">${label === "Validation Status" ? value : renderDiagnosticsValue(value)}</div>
+    </div>`).join("");
+    const notice = document.getElementById("frameworkDiagnosticsNotice");
+    if (notice) notice.textContent = `${diagnostics.notice} Source: ${diagnostics.configuration_name}.`;
 }
 
 function recordScenarioResult(scenarioKey, annualResults) {
@@ -4180,6 +4328,7 @@ async function loadSelectedConfigurationLibrary() {
         if (powerSelect) powerSelect.value = configurationLibraryData.power_source;
         renderCoolingSystemSelection();
         renderConfigurationLibrarySummary(configurationLibraryData);
+        renderFrameworkDiagnosticsPanel();
         updateFileStatus("statusItLoad", `Configuration Library: IT_LOAD_90_PERCENT.xlsx (${percentages.length} hours)`, "ok");
         refreshStandardInputStatus();
         if (status) {
@@ -4204,6 +4353,8 @@ function initStandardDataInputs() {
     initCoolingSystemSelection();
     const libraryButton = document.getElementById("btnLoadConfigurationLibrary");
     if (libraryButton) libraryButton.addEventListener("click", loadSelectedConfigurationLibrary);
+    const librarySelect = document.getElementById("configurationLibrarySelect");
+    if (librarySelect) librarySelect.addEventListener("change", renderFrameworkDiagnosticsPanel);
     const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
     if (runLibraryButton) runLibraryButton.addEventListener("click", runUsingConfigurationLibrary);
     const bindings = [
