@@ -1,7 +1,11 @@
 """Base interface for future modular calculation engines.
 
-Phase 9 skeleton only. Calculators introduced here do not replace or call
-legacy solver.py calculations.
+Calculators should keep topology-specific orchestration small and reuse common
+engineering helpers from calculators.common.weather,
+calculators.common.performance_curve, calculators.common.energy_balance, and
+calculators.common.pue_metrics where practical. Legacy solver.py paths remain
+unchanged unless a later migration phase explicitly wires a calculator into a
+calculation path.
 """
 
 
@@ -34,6 +38,7 @@ class BaseCalculator:
     def run(self, project_input):
         """Run the calculator.
 
-        Not implemented in Phase 9; formulas remain in the legacy path.
+        Subclasses may use calculators.common helpers, but Phase 11 does not
+        require or wire those helpers into existing legacy calculations.
         """
         raise NotImplementedError("Calculator execution is not implemented in this phase.")
