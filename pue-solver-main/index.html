@@ -519,6 +519,41 @@
             <button type="button" class="primaryButton" id="btnRunConfigurationLibrary" disabled>Run Using Configuration Library</button>
         </div>
         <div class="hint" style="margin-top:8px;">Engineering Mode — ACC Calculation Engine: ACC V2 requires valid Configuration Library Solver_Curve data.</div>
+        <div class="panel" style="margin-top:14px;">
+            <div class="panelTitle">Unit Quantity / Redundancy</div>
+            <div class="fileGrid" style="margin-top:10px;">
+                <div class="fileSlot">
+                    <div class="panelTitle">Quantity Mode</div>
+                    <select id="unitQuantityMode">
+                        <option value="auto" selected>Auto</option>
+                        <option value="manual">Manual</option>
+                    </select>
+                </div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Redundancy</div>
+                    <select id="unitRedundancyMode">
+                        <option value="auto" selected>Auto</option>
+                        <option value="N">N</option>
+                        <option value="N+1">N+1</option>
+                        <option value="N+2">N+2</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Installed Units</div>
+                    <input id="manualInstalledUnits" type="number" min="0" step="1" placeholder="Auto" />
+                </div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Running Units</div>
+                    <input id="manualRunningUnits" type="number" min="0" step="1" placeholder="Auto" />
+                </div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Standby Units</div>
+                    <input id="manualStandbyUnits" type="number" min="0" step="1" placeholder="Auto" />
+                </div>
+            </div>
+            <div id="unitQuantityStatus" class="hint" style="margin-top:10px;">Auto mode derives required, installed, running, and standby units from project load and selected unit capacity.</div>
+        </div>
         <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Manual Excel upload remains available below.</div>
         <div id="configurationLibrarySummary" class="fileGrid" style="margin-top:12px; display:none;"></div>
     </div>
@@ -638,7 +673,7 @@
                 <div class="resultChartBox"><canvas id="inputAuxChart"></canvas></div>
             </div>
             <div class="panel">
-                <div class="panelTitle">Terminal Fan Power vs IT Load</div>
+                <div class="panelTitle">MAU Power vs IT Load</div>
                 <div class="resultChartBox"><canvas id="inputFanChart"></canvas></div>
             </div>
         </div>

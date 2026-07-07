@@ -71,7 +71,7 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
             '{ label: "Pump Power", value: benchmarkAverage.pump }',
             '{ label: "Indoor Equipment", value: benchmarkAverage.indoor_CDU_RTC_MAU_equivalent }',
             '{ label: "Engine Radiator", value: benchmarkAverage.engine_radiator }',
-            '{ label: "Electrical Loss", value:',
+            '{ label: "Electrical Distribution Loss", value:',
             '{ label: "Facility Power", value: benchmarkAverage.facility }',
         ):
             self.assertIn(text, self.ui)

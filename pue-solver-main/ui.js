@@ -65,32 +65,32 @@ const FRAMEWORK_DIAGNOSTIC_TOPOLOGIES = Object.freeze({
     "ACC": {
         topology_id: "acc",
         display_name: "ACC",
-        equipment_ids: ["acc_unit", "cdu", "pump", "terminal_fan", "electrical_distribution", "auxiliary_load", "gas_engine"],
-        performance_requirements: ["it_load_profile", "weather_profile", "acc_performance_curve", "pump_power_curve", "terminal_fan_curve", "electrical_efficiency_curve", "auxiliary_fixed_load", "gas_engine_curve"]
+        equipment_ids: ["ACC_2", "CHW_PUMP_2", "CDU_2", "RTC_1&2", "MAU_1&2", "ELECTRICAL_DISTRIBUTION_2", "ENGINE_3", "ENGINE_RADIATOR_1"],
+        performance_requirements: ["IT load profile", "EPW weather profile", "ACC_2 Solver_Curve", "CHW_PUMP_2 Solver_Curve", "MAU_1&2 Solver_Curve", "RTC_1&2 Solver_Curve", "CDU_2 Solver_Curve", "ELECTRICAL_DISTRIBUTION_2 Solver_Curve", "ENGINE_3 Solver_Curve", "ENGINE_RADIATOR_1 Solver_Curve"]
     },
     "Chiller + Dry Cooler": {
         topology_id: "chiller_dry_cooler",
         display_name: "Chiller + Dry Cooler",
-        equipment_ids: ["chiller", "dry_cooler", "cdu", "pump", "terminal_fan", "electrical_distribution", "auxiliary_load"],
-        performance_requirements: ["it_load_profile", "weather_profile", "chiller_cop_surface", "dry_cooler_fan_curve", "pump_power_curve", "terminal_fan_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+        equipment_ids: ["CHILLER", "DRY_COOLER", "CDU", "CHW_PUMP", "MAU", "ELECTRICAL_DISTRIBUTION", "RTC"],
+        performance_requirements: ["IT load profile", "EPW weather profile", "Chiller Solver_Curve", "Dry Cooler Solver_Curve", "CHW Pump Solver_Curve", "MAU Solver_Curve", "Electrical Distribution Solver_Curve", "RTC Solver_Curve"]
     },
     "Chiller + Cooling Tower": {
         topology_id: "chiller_cooling_tower",
         display_name: "Chiller + Cooling Tower",
-        equipment_ids: ["chiller", "cooling_tower", "cdu", "pump", "terminal_fan", "electrical_distribution", "auxiliary_load"],
-        performance_requirements: ["it_load_profile", "weather_profile", "chiller_cop_surface", "cooling_tower_performance_curve", "pump_power_curve", "terminal_fan_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+        equipment_ids: ["CHILLER", "COOLING_TOWER", "CDU", "CHW_PUMP", "MAU", "ELECTRICAL_DISTRIBUTION", "RTC"],
+        performance_requirements: ["IT load profile", "EPW weather profile", "Chiller Solver_Curve", "Cooling Tower Solver_Curve", "CHW Pump Solver_Curve", "MAU Solver_Curve", "Electrical Distribution Solver_Curve", "RTC Solver_Curve"]
     },
     "ABS + Dry Cooler": {
         topology_id: "abs_dry_cooler",
         display_name: "ABS + Dry Cooler",
-        equipment_ids: ["absorption_chiller", "dry_cooler", "heat_exchanger", "cdu", "pump", "terminal_fan", "gas_engine", "electrical_distribution", "auxiliary_load"],
-        performance_requirements: ["it_load_profile", "weather_profile", "absorption_chiller_performance_curve", "dry_cooler_fan_curve", "heat_exchanger_curve", "pump_power_curve", "terminal_fan_curve", "gas_engine_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+        equipment_ids: ["ABS", "DRY_COOLER", "ENGINE_RADIATOR", "CDU", "CHW_PUMP", "MAU", "ENGINE", "ELECTRICAL_DISTRIBUTION", "RTC"],
+        performance_requirements: ["IT load profile", "EPW weather profile", "ABS Solver_Curve", "Dry Cooler Solver_Curve", "Engine Radiator Solver_Curve", "CHW Pump Solver_Curve", "MAU Solver_Curve", "Engine Solver_Curve", "Electrical Distribution Solver_Curve", "RTC Solver_Curve"]
     },
     "ABS + Cooling Tower": {
         topology_id: "abs_cooling_tower",
         display_name: "ABS + Cooling Tower",
-        equipment_ids: ["absorption_chiller", "cooling_tower", "heat_exchanger", "cdu", "pump", "terminal_fan", "gas_engine", "electrical_distribution", "auxiliary_load"],
-        performance_requirements: ["it_load_profile", "weather_profile", "absorption_chiller_performance_curve", "cooling_tower_performance_curve", "heat_exchanger_curve", "pump_power_curve", "terminal_fan_curve", "gas_engine_curve", "electrical_efficiency_curve", "auxiliary_fixed_load"]
+        equipment_ids: ["ABS", "COOLING_TOWER", "ENGINE_RADIATOR", "CDU", "CHW_PUMP", "MAU", "ENGINE", "ELECTRICAL_DISTRIBUTION", "RTC"],
+        performance_requirements: ["IT load profile", "EPW weather profile", "ABS Solver_Curve", "Cooling Tower Solver_Curve", "Engine Radiator Solver_Curve", "CHW Pump Solver_Curve", "MAU Solver_Curve", "Engine Solver_Curve", "Electrical Distribution Solver_Curve", "RTC Solver_Curve"]
     }
 });
 window.FRAMEWORK_DIAGNOSTIC_TOPOLOGIES = FRAMEWORK_DIAGNOSTIC_TOPOLOGIES;
@@ -340,8 +340,8 @@ function renderCoolingSystemSelection() {
         ...(powerConfig?.required_curves || []).map(name => `Required: ${name}`),
         ...Object.entries(curveSources).map(([equipmentId, source]) => {
             const status = source.source_type === "uploaded" ? "Using uploaded curve" :
-                source.source_type === "library" ? `Using Configuration Library curve (${source.source_equipment_id} / ${source.source_sheet})` :
-                source.source_type === "default" ? `Using default curve (${source.default_curve_filename})` : "Missing curve";
+                source.source_type === "library" ? `Using Configuration Library Solver_Curve (${source.source_equipment_id} / ${source.source_sheet})` :
+                source.source_type === "default" ? `Using default curve (${source.default_curve_filename})` : "Missing Solver_Curve";
             return `${equipmentIdDisplayName(equipmentId)} — ${status}`;
         })
     ];
@@ -396,32 +396,96 @@ function calculateFrontendUnitRequirements(totalItCapacityMw, coolingUnitCapacit
     };
 }
 
+function getManualUnitNumber(inputId) {
+    const value = Number(document.getElementById(inputId)?.value);
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+function getUnitQuantitySelection(sizing) {
+    const mode = (document.getElementById("unitQuantityMode")?.value || "auto").toLowerCase() === "manual" ? "manual" : "auto";
+    const redundancy = document.getElementById("unitRedundancyMode")?.value || "auto";
+    const requiredUnits = sizing?.requiredUnits ?? null;
+    const autoInstalled = sizing?.installedUnits ?? null;
+    const autoRunning = sizing?.normalActiveUnits ?? null;
+    const autoStandby = autoInstalled !== null && autoRunning !== null ? Math.max(autoInstalled - autoRunning, 0) : null;
+    if (mode === "auto") {
+        return {
+            mode: "auto",
+            redundancy: "auto",
+            required_units: requiredUnits,
+            installed_units: autoInstalled,
+            running_units: autoRunning,
+            standby_units: autoStandby
+        };
+    }
+    let installed = getManualUnitNumber("manualInstalledUnits");
+    let running = getManualUnitNumber("manualRunningUnits");
+    let standby = getManualUnitNumber("manualStandbyUnits");
+    const required = requiredUnits ?? running ?? installed ?? 0;
+    if (redundancy === "N") {
+        installed = required;
+        running = required;
+        standby = 0;
+    } else if (redundancy === "N+1") {
+        installed = required + 1;
+        running = required;
+        standby = 1;
+    } else if (redundancy === "N+2") {
+        installed = required + 2;
+        running = required;
+        standby = 2;
+    } else {
+        installed = installed ?? autoInstalled ?? required;
+        running = running ?? Math.max(installed - (standby ?? 0), 0);
+        standby = standby ?? Math.max(installed - running, 0);
+    }
+    return {
+        mode: "manual",
+        redundancy: redundancy === "auto" ? "custom" : redundancy,
+        required_units: requiredUnits,
+        installed_units: installed,
+        running_units: running,
+        standby_units: standby
+    };
+}
+
+function renderUnitQuantityStatus(unitQuantity) {
+    const status = document.getElementById("unitQuantityStatus");
+    if (!status) return;
+    if (!unitQuantity || unitQuantity.required_units === null) {
+        status.textContent = "Enter Total IT Capacity to derive unit quantity.";
+        return;
+    }
+    status.textContent = `${unitQuantity.mode === "manual" ? "Manual" : "Auto"}: required ${unitQuantity.required_units}, installed ${unitQuantity.installed_units}, running ${unitQuantity.running_units}, standby ${unitQuantity.standby_units}, redundancy ${unitQuantity.redundancy}.`;
+}
+
 function frameworkEquipmentIdFromFolder(equipmentFolder) {
-    const normalized = String(equipmentFolder || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/_+\d+$/, "").replace(/^_+|_+$/g, "");
+    const raw = String(equipmentFolder || "");
+    const upper = raw.toUpperCase();
+    if (upper === "RTC_1&2") return "RTC_1&2";
+    if (upper === "MAU_1&2") return "MAU_1&2";
+    const normalized = upper.replace(/[^A-Z0-9]+/g, "_").replace(/_+\d+$/, "").replace(/^_+|_+$/g, "");
     const rules = [
-        [/^ELECTRICAL_DISTRIBUTION/, "electrical_distribution"],
-        [/^ENGINE_RADIATOR/, "heat_exchanger"],
-        [/^SMOKE_WATER_HX/, "heat_exchanger"],
-        [/^HEAT_EXCHANGER/, "heat_exchanger"],
-        [/^COOLING_TOWER/, "cooling_tower"],
-        [/^DRY_COOLER/, "dry_cooler"],
-        [/^CHW_PUMP|^CW_PUMP|^PUMP/, "pump"],
-        [/^ACC/, "acc_unit"],
-        [/^CDU/, "cdu"],
-        [/^ENGINE/, "gas_engine"],
-        [/^CHILLER/, "chiller"],
-        [/^ABS/, "absorption_chiller"],
-        [/^MAU/, "terminal_fan"],
-        [/^RTC/, "auxiliary_load"]
+        [/^ELECTRICAL_DISTRIBUTION/, "ELECTRICAL_DISTRIBUTION_2"],
+        [/^ENGINE_RADIATOR/, "ENGINE_RADIATOR_1"],
+        [/^SMOKE_WATER_HX/, "ENGINE_RADIATOR_1"],
+        [/^HEAT_EXCHANGER/, "ENGINE_RADIATOR_1"],
+        [/^COOLING_TOWER/, "COOLING_TOWER"],
+        [/^DRY_COOLER/, "DRY_COOLER"],
+        [/^CHW_PUMP|^CW_PUMP|^PUMP/, "CHW_PUMP_2"],
+        [/^ACC/, "ACC_2"],
+        [/^CDU/, "CDU_2"],
+        [/^ENGINE/, "ENGINE_3"],
+        [/^CHILLER/, "CHILLER"],
+        [/^ABS/, "ABS"],
+        [/^MAU/, "MAU_1&2"],
+        [/^RTC/, "RTC_1&2"]
     ];
     return rules.find(([pattern]) => pattern.test(normalized))?.[1] || null;
 }
 
 function tentativeFrameworkMapping(equipmentFolder, equipmentId) {
-    if (/^(RTC|MAU|ENGINE_RADIATOR)/i.test(String(equipmentFolder || ""))) {
-        return `${equipmentFolder} → ${equipmentId}`;
-    }
-    return null;
+    return String(equipmentFolder || "") === String(equipmentId || "") ? null : `${equipmentFolder} -> ${equipmentId}`;
 }
 
 function buildFrameworkDiagnosticsPreview() {
@@ -967,7 +1031,7 @@ function classifyEquipmentCategory(text, filename = "") {
     if (/chiller|冷水机|cop|centrifugal/.test(hay)) return "Chiller COP Surface";
     if (/dry\s*cooler|干冷|adiabatic|fluid cooler/.test(hay)) return "Dry Cooler";
     if (/pump|水泵|chw|cw pump/.test(hay)) return "Pumps";
-    if (/fan|terminal|末端|airflow|ahu|crac|cra h/.test(hay)) return "Terminal Fans";
+    if (/fan|terminal|末端|airflow|ahu|crac|cra h/.test(hay)) return "MAU";
     if (/ups|transformer|electrical|switchgear|配电|变压器/.test(hay)) return "Electrical";
     return "General Equipment";
 }
@@ -1327,7 +1391,7 @@ function buildPueContributionSummary(annual = {}) {
     const share = (value) => nonItPue > 0 && Number.isFinite(Number(value)) ? Number(value) / nonItPue : null;
     const drivers = [
         { key: "cooling", label: "Cooling System", ppue: ppue(annual.annual_total_cooling_system_energy_kWh) },
-        { key: "electrical", label: "Electrical Loss", ppue: ppue(annual.annual_electrical_loss_kWh) },
+        { key: "electrical", label: "Electrical Distribution Loss", ppue: ppue(annual.annual_electrical_loss_kWh) },
         { key: "auxiliary", label: "Auxiliary", ppue: ppue(annual.annual_auxiliary_energy_kWh) }
     ];
     const rankedDrivers = drivers
@@ -1370,7 +1434,7 @@ function renderPueContributionSummaryPanel(annual) {
     panel.style.display = "block";
     const rows = [
         ["Cooling System pPUE", signedPpueText(summary.coolingPPUE)],
-        ["Electrical Loss pPUE", signedPpueText(summary.electricalPPUE)],
+        ["Electrical Distribution Loss pPUE", signedPpueText(summary.electricalPPUE)],
         ["Auxiliary pPUE", signedPpueText(summary.auxiliaryPPUE)],
         ["Largest PUE Driver", summary.largestDriver ? summary.largestDriver.label : "N/A"],
         ["Cooling Share of Non-IT Overhead", percentText(summary.coolingShare)]
@@ -1873,7 +1937,7 @@ function collectReportCurves() {
     addCurveList("Dry Cooler", standardDataFiles.dryCooler);
     addCurveList("Electrical", standardDataFiles.electrical);
     addCurveList("Pumps", standardDataFiles.pumps);
-    addCurveList("Terminal Fans", standardDataFiles.fans);
+    addCurveList("MAU", standardDataFiles.fans);
 
     const chiller = standardDataFiles.chiller;
     const chillerPoints = curvePoints3d(chiller?.points || chiller?.data);
@@ -2091,17 +2155,17 @@ function buildHtmlReport(context) {
         ["Pump Energy", annual.annual_pump_energy_kWh || 0],
         ["Indoor Equipment Energy", annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh],
         ["Engine Radiator Energy", annual.annual_engine_radiator_energy_kWh],
-        ["Electrical Loss", annual.annual_electrical_loss_kWh],
-        ...(Number(annual.annual_terminal_fan_energy_kWh) > 0 ? [["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh]] : []),
+        ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh],
+        ...(Number(annual.annual_terminal_fan_energy_kWh) > 0 ? [["MAU Energy", annual.annual_terminal_fan_energy_kWh]] : []),
         ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]] : [])
     ] : [
         ["IT Energy", annual.annual_IT_energy_kWh],
         [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh],
         ["Pump Energy", annual.annual_pump_energy_kWh || 0],
-        ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh],
+        ["MAU Energy", annual.annual_terminal_fan_energy_kWh],
         ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh],
-        ["Electrical Loss", annual.annual_electrical_loss_kWh],
+        ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
     ]).filter(([, value]) => Number(value) > 0);
     const energyChart = svgBarChart(energyRows.map(([label, value]) => {
@@ -2125,7 +2189,7 @@ function buildHtmlReport(context) {
         { label: "Pump pPUE", value: pueContribution(annual.annual_pump_energy_kWh), css: "", signed: true },
         { label: "Indoor Equipment pPUE", value: pueContribution(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh), css: "", signed: true },
         { label: "Engine Radiator pPUE", value: pueContribution(annual.annual_engine_radiator_energy_kWh), css: "", signed: true },
-        { label: "Electrical Loss pPUE", value: pueContribution(annual.annual_electrical_loss_kWh), css: "", signed: true },
+        { label: "Electrical Distribution Loss pPUE", value: pueContribution(annual.annual_electrical_loss_kWh), css: "", signed: true },
         ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [{ label: "Auxiliary pPUE", value: pueContribution(annual.annual_auxiliary_energy_kWh), css: "", signed: true }] : []),
         { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
     ] : [
@@ -2134,8 +2198,8 @@ function buildHtmlReport(context) {
         { label: "├─ Chiller", value: pueContribution(annual.annual_chiller_energy_kWh), css: "child", signed: true },
         { label: "├─ Dry Cooler", value: pueContribution(annual.annual_dry_cooler_energy_kWh), css: "child", signed: true },
         { label: "├─ Pump", value: pueContribution(annual.annual_pump_energy_kWh), css: "child", signed: true },
-        { label: "└─ Terminal Fan", value: pueContribution(annual.annual_terminal_fan_energy_kWh), css: "child", signed: true },
-        { label: "Electrical Loss pPUE", value: contributionSummary.electricalPPUE, css: "", signed: true },
+        { label: "MAU", value: pueContribution(annual.annual_terminal_fan_energy_kWh), css: "child", signed: true },
+        { label: "Electrical Distribution Loss pPUE", value: contributionSummary.electricalPPUE, css: "", signed: true },
         { label: "Auxiliary pPUE", value: contributionSummary.auxiliaryPPUE, css: "", signed: true },
         { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
     ];
@@ -2145,8 +2209,8 @@ function buildHtmlReport(context) {
         ["CHW Pump Power", benchmarkAverage.pump, annual.annual_pump_energy_kWh],
         ["Indoor CDU / RTC / MAU Equivalent", benchmarkAverage.indoor_CDU_RTC_MAU_equivalent, annual.annual_indoor_equipment_energy_kWh],
         ["Engine Radiator Power", benchmarkAverage.engine_radiator, annual.annual_engine_radiator_energy_kWh],
-        ["IT Electrical Loss", benchmarkAverage.IT_electrical_loss, annual.annual_it_electrical_loss_kWh],
-        ["MEP Electrical Loss", benchmarkAverage.MEP_electrical_loss, annual.annual_mep_electrical_loss_kWh],
+        ["IT Electrical Distribution Loss", benchmarkAverage.IT_electrical_loss, annual.annual_it_electrical_loss_kWh],
+        ["MEP Electrical Distribution Loss", benchmarkAverage.MEP_electrical_loss, annual.annual_mep_electrical_loss_kWh],
         ["Facility Power", benchmarkAverage.facility, annual.annual_facility_energy_kWh]
     ] : [];
     const benchmarkPowerItems = isBenchmarkMode ? [
@@ -2155,7 +2219,7 @@ function buildHtmlReport(context) {
         { label: "Pump Power", value: benchmarkAverage.pump },
         { label: "Indoor Equipment", value: benchmarkAverage.indoor_CDU_RTC_MAU_equivalent },
         { label: "Engine Radiator", value: benchmarkAverage.engine_radiator },
-        { label: "Electrical Loss", value: (Number(benchmarkAverage.IT_electrical_loss) || 0) + (Number(benchmarkAverage.MEP_electrical_loss) || 0) },
+        { label: "Electrical Distribution Loss", value: (Number(benchmarkAverage.IT_electrical_loss) || 0) + (Number(benchmarkAverage.MEP_electrical_loss) || 0) },
         { label: "Facility Power", value: benchmarkAverage.facility }
     ].filter(item => Number.isFinite(Number(item.value))) : [];
     const benchmarkPowerChart = benchmarkPowerItems.length ? svgBarChart(benchmarkPowerItems.map(item => ({ ...item, color: reportEnergyColor(item.label) })), { yLabel: "Average kW" }) : "";
@@ -2366,11 +2430,11 @@ function buildHtmlReport(context) {
         <table><tbody>${tableRows([
             ["ACC Average Power", isExcelReplicatedHourlyMode ? "<code>Hourly ACC performance profile integrated over the annual weather year</code>" : (isExperimentalHourlyMode ? "<code>sum(hourly ACC Solver_Curve power) / annual hours</code>" : "<code>Scenario peak ACC power × annual weather factor</code>")],
             ["Other Equipment", "<code>Scenario equipment power × annual IT load factor</code>"],
-            ["Electrical Loss", "<code>Load / path efficiency − load</code>"],
+            ["Electrical Distribution Loss", "<code>Load / path efficiency - load</code>"],
             ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
         ])}</tbody></table>
     ` : `
-    <p>${isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, pumps, indoor equipment, engine radiator power, and electrical losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical losses, cooling power, pump/fan power, and auxiliary load coefficient where configured."}</p>
+    <p>${isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured."}</p>
     <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
     ${coolingUnitInfo ? `
         <div class="card">
@@ -2391,7 +2455,7 @@ function buildHtmlReport(context) {
     ${isAccMode ? `<table><tbody>${tableRows([
         ["Annual PUE", "<code>Annual facility energy / Annual IT energy</code>"],
         ["ACC Power", "Dynamic hourly ACC model"],
-        ["Electrical Loss", "<code>Load / path efficiency − load</code>"]
+        ["Electrical Distribution Loss", "<code>Load / path efficiency - load</code>"]
     ])}</tbody></table>` : `${formulasHtml()}
     <table><tbody>${tableRows([
         ["PUE Definition", "<code>PUE = P_facility / P_IT</code>"],
@@ -2475,8 +2539,8 @@ function buildHtmlReport(context) {
         ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
         ["Annual Indoor Equipment Energy", reportValue(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
         ["Annual Engine Radiator Energy", reportValue(annual.annual_engine_radiator_energy_kWh, " kWh", 0)],
-        ["Annual IT Electrical Loss", reportValue(annual.annual_it_electrical_loss_kWh, " kWh", 0)],
-        ["Annual MEP Electrical Loss", reportValue(annual.annual_mep_electrical_loss_kWh, " kWh", 0)]
+        ["Annual IT Electrical Distribution Loss", reportValue(annual.annual_it_electrical_loss_kWh, " kWh", 0)],
+        ["Annual MEP Electrical Distribution Loss", reportValue(annual.annual_mep_electrical_loss_kWh, " kWh", 0)]
     ])}</tbody></table>
     ` : `
     <table><tbody>${tableRows([
@@ -2498,12 +2562,12 @@ function buildHtmlReport(context) {
         ["Radiator Curve Source", esc(annual.engine_radiator_curve_source || "N/A")],
         ["Annual Dry Cooler Energy", reportValue(annual.annual_dry_cooler_energy_kWh, " kWh", 0)],
         ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
-        ["Annual Terminal Fan Energy", reportValue(annual.annual_terminal_fan_energy_kWh, " kWh", 0)],
+        ["Annual MAU Energy", reportValue(annual.annual_terminal_fan_energy_kWh, " kWh", 0)],
         ["Annual CDU Energy", reportValue(annual.annual_cdu_energy_kWh, " kWh", 0)],
         ["Annual RTC Energy", reportValue(annual.annual_rtc_energy_kWh, " kWh", 0)],
         ["Annual MAU Energy", reportValue(annual.annual_mau_energy_kWh, " kWh", 0)],
         ["Annual White Space Equipment Energy", reportValue(annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
-        ["Annual Electrical Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
+        ["Annual Electrical Distribution Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
         ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
     ])}</tbody></table>
     `}
@@ -2523,7 +2587,7 @@ function buildHtmlReport(context) {
         <div class="card">
             <h3>Key Findings</h3>
             ${isBenchmarkMode ? `
-                <p>${isExcelReplicatedHourlyMode ? "ACC power is calculated hour by hour using the project-specific ACC performance model; supporting equipment follows the selected scenario power basis." : "ACC, pump, indoor equipment, and engine radiator energy are calculated from scenario peak values and annual factors."}</p>
+                <p>${isExcelReplicatedHourlyMode ? "ACC power is calculated hour by hour using the project-specific ACC performance model; supporting equipment follows the selected scenario power basis." : "ACC, CHW pump, CDU / RTC / MAU equipment, and engine radiator energy are calculated from scenario peak values and annual factors."}</p>
                 <p>Electrical losses use the project IT and MEP path efficiencies.</p>
             ` : `
                 <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
@@ -2543,13 +2607,13 @@ function buildHtmlReport(context) {
                 ["Pump pPUE", "<code>annual_pump_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Indoor Equipment pPUE", "<code>annual_indoor_equipment_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Engine Radiator pPUE", "<code>annual_engine_radiator_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Electrical Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
+                ["Electrical Distribution Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
                 ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
             ] : [
                 ["Base IT PUE", "1.000"],
                 ["Cooling System pPUE", "<code>annual_total_cooling_system_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Cooling System Includes", "Chiller + Dry Cooler + Pump + Terminal Fan"],
-                ["Electrical Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
+                ["Cooling System Includes", "Chiller + Dry Cooler + CHW Pump + MAU"],
+                ["Electrical Distribution Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
                 ["Auxiliary pPUE", "<code>annual_auxiliary_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
             ])}</tbody></table>
@@ -2568,7 +2632,7 @@ function buildHtmlReport(context) {
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> using the project-specific hourly ACC performance model. Hourly component powers and PUE are derived from the selected scenario equipment powers and electrical-loss methodology.`
             : (isExperimentalHourlyMode
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on direct hourly ACC Solver_Curve lookup using EPW dry-bulb temperature and hourly load ratio. ACC annual energy is calculated as the sum of hourly ACC power with no external annual adjustment.`
-            : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. Pump, indoor equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical losses are calculated from the project IT and MEP efficiency assumptions.`))
+            : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. CHW pump, CDU / RTC / MAU equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical distribution losses are calculated from the project IT and MEP efficiency assumptions.`))
         : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`}</p>
     <table><tbody>${tableRows(isBenchmarkMode ? [
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
@@ -3951,7 +4015,7 @@ function selectLibrarySolverCurve(equipmentPackage, scenarioName) {
     if (String(equipmentPackage?.equipment_id || "").startsWith("ACC_") && equipmentPackage?.performance_map?.length) {
         return { status: "Selected", sheet_name: "Performance_Map", curve: equipmentPackage.performance_map };
     }
-    return { status: "Missing Curve", sheet_name: null, curve: null };
+    return { status: "Missing Solver_Curve", sheet_name: null, curve: null };
 }
 
 function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) {
@@ -3959,7 +4023,16 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     if (!(Number(totalCapacityMw) > 0)) return null;
     const scenarioName = scenarioNameOverride || (document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal");
     const sizing = calculateFrontendUnitRequirements(totalCapacityMw, data.cooling_unit_capacity_mw);
-    const activeUnits = scenarioName === "Normal" ? sizing.normalActiveUnits : sizing.failureActiveUnits;
+    const unitQuantity = getUnitQuantitySelection(sizing);
+    const activeUnits = unitQuantity.mode === "manual"
+        ? Number(unitQuantity.running_units || 0)
+        : (scenarioName === "Normal" ? sizing.normalActiveUnits : sizing.failureActiveUnits);
+    const installedUnits = unitQuantity.mode === "manual"
+        ? Number(unitQuantity.installed_units || activeUnits || 0)
+        : sizing.installedUnits;
+    const standbyUnits = unitQuantity.mode === "manual"
+        ? Number(unitQuantity.standby_units || Math.max(installedUnits - activeUnits, 0))
+        : Math.max(installedUnits - activeUnits, 0);
     const designItLoadKw = Number(totalCapacityMw) * 1000;
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
@@ -3992,9 +4065,12 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             design_it_load_kW: designItLoadKw,
             cooling_unit_capacity_kW: data.cooling_unit_capacity_mw * 1000,
             required_units: sizing.requiredUnits,
-            installed_units: sizing.installedUnits,
+            installed_units: installedUnits,
             active_units: activeUnits,
-            redundancy_strategy: "N+1",
+            running_units: activeUnits,
+            standby_units: standbyUnits,
+            redundancy_strategy: unitQuantity.redundancy === "auto" ? sizing.redundancy : unitQuantity.redundancy,
+            unit_quantity: unitQuantity,
             scenario_name: scenarioName,
             it_load: {
                 design_it_load_kW: designItLoadKw,
@@ -4002,14 +4078,15 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
                 hourly_it_load_kW: hourlyItLoadKw
             }
         },
+        unit_quantity: unitQuantity,
         equipment: {
             cooling: {
                 ACC: binding("ACC_2", "cooling_equipment"),
                 pumps: { CHW_PUMP_2: binding("CHW_PUMP_2", "pump_power") },
-                engine: binding("ENGINE_2", "engine_output_reference"),
-                engine_radiator: binding("ENGINE_RADIATOR_2", "engine_radiator_power")
+                engine: binding("ENGINE_3", "engine_output_reference"),
+                engine_radiator: binding("ENGINE_RADIATOR_1", "engine_radiator_power")
             },
-            auxiliary: Object.fromEntries(["CDU_2", "RTC_2", "MAU_2"].map(id => [id, binding(id, "white_space_auxiliary")])),
+            auxiliary: Object.fromEntries(["CDU_2", "RTC_1&2", "MAU_1&2"].map(id => [id, binding(id, "white_space_auxiliary")])),
             electrical_path: electricalPath
         },
         electrical_path: electricalPath,
@@ -4040,8 +4117,8 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
     };
     const accRows = libraryInput.selected_curves.ACC_2?.curve || [];
     const pumpRows = libraryInput.selected_curves.CHW_PUMP_2?.curve || [];
-    const engineRows = libraryInput.selected_curves.ENGINE_2?.curve || [];
-    const radiatorRows = libraryInput.selected_curves.ENGINE_RADIATOR_2?.curve || [];
+    const engineRows = libraryInput.selected_curves.ENGINE_3?.curve || [];
+    const radiatorRows = libraryInput.selected_curves.ENGINE_RADIATOR_1?.curve || [];
     const accCurveId = "ACC_2_COP";
     const pumpCurveId = "CHW_PUMP_2_power_vs_load";
     const curves = {
@@ -4067,18 +4144,19 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             data: clone(accRows)
         },
         engine_curve: {
-            equipment_id: "ENGINE_2",
-            source_sheet: libraryInput.selected_curves.ENGINE_2?.sheet_name || null,
+            equipment_id: "ENGINE_3",
+            source_sheet: libraryInput.selected_curves.ENGINE_3?.sheet_name || null,
             data: clone(engineRows),
             default_efficiency: 0.40,
             default_efficiency_source: "temporary_assumption_pending_vendor_fuel_map"
         },
         engine_radiator_curve: {
-            equipment_id: "ENGINE_RADIATOR_2",
-            source_sheet: libraryInput.selected_curves.ENGINE_RADIATOR_2?.sheet_name || null,
+            equipment_id: "ENGINE_RADIATOR_1",
+            source_sheet: libraryInput.selected_curves.ENGINE_RADIATOR_1?.sheet_name || null,
             data: clone(radiatorRows)
         },
         project,
+        unit_quantity: clone(libraryInput.unit_quantity),
         weather,
         curve_library: { curves },
         equipment: {
@@ -4105,6 +4183,7 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             engine_radiator: clone(libraryInput.equipment.cooling.engine_radiator),
             auxiliary_equipment: clone(libraryInput.equipment.auxiliary),
             electrical_path: clone(libraryInput.electrical_path),
+            unit_quantity: clone(libraryInput.unit_quantity),
             adapter_assumptions: clone(weather.metadata)
         }
     };
@@ -4172,9 +4251,12 @@ function renderConfigurationLibrarySummary(data) {
     const sizing = calculateFrontendUnitRequirements(totalCapacity, data.cooling_unit_capacity_mw);
     const standardized = data.standardized_solver_input || buildFrontendSolverInputFromLibrary(data);
     const activeUnits = standardized?.project?.active_units;
+    const unitQuantity = standardized?.unit_quantity || getUnitQuantitySelection(sizing);
+    renderUnitQuantityStatus(unitQuantity);
     const itSample = standardized?.project?.it_load?.hourly_it_load_kW?.slice(0, 3) || [];
     const electricalPath = standardized?.electrical_path;
     const annualElectrical = data.last_solver_output?.annual_results || {};
+    const resultValue = (value, formatter) => value != null ? formatter(value) : "Not available";
     const values = [
         ["Loaded configuration name", data.configuration_name],
         ["Cooling unit capacity", `${data.cooling_unit_capacity_mw} MW`],
@@ -4182,59 +4264,50 @@ function renderConfigurationLibrarySummary(data) {
         ["IT load hours", data.it_load.hours],
         ["Scenario list", data.scenarios.map(item => item.scenario).join(", ")],
         ["Required units", sizing === null ? "Enter Total IT Capacity" : `${sizing.requiredUnits} = ceil(${totalCapacity} / ${data.cooling_unit_capacity_mw})`],
-        ["Installed units", sizing === null ? "Enter Total IT Capacity" : `${sizing.installedUnits} = Required units + 1`],
+        ["Installed units", unitQuantity?.installed_units ?? "Enter Total IT Capacity"],
+        ["Running Units", unitQuantity?.running_units ?? "Enter Total IT Capacity"],
+        ["Standby Units", unitQuantity?.standby_units ?? "Enter Total IT Capacity"],
         ["Active units for selected scenario", activeUnits ?? "Enter Total IT Capacity"],
-        ["Redundancy", "N+1"],
+        ["Redundancy", unitQuantity?.redundancy || "Auto"],
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
         ["Electrical IT / MEP efficiency", electricalPath
             ? `${fmtNumber(electricalPath.it_efficiency * 100, 2)}% / ${fmtNumber(electricalPath.mep_efficiency * 100, 2)}%` : "Missing"],
-        ["IT Electrical Loss", annualElectrical.annual_it_electrical_loss_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_it_electrical_loss_kWh)} kWh` : "Waiting for Solver"],
-        ["MEP Electrical Loss", annualElectrical.annual_mep_electrical_loss_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_mep_electrical_loss_kWh)} kWh` : "Waiting for Solver"],
-        ["Total Electrical Loss", annualElectrical.annual_electrical_loss_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_electrical_loss_kWh)} kWh` : "Waiting for Solver"],
-        ["CDU Energy", annualElectrical.annual_cdu_energy_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_cdu_energy_kWh)} kWh` : "Waiting for Solver"],
-        ["RTC Energy", annualElectrical.annual_rtc_energy_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_rtc_energy_kWh)} kWh` : "Waiting for Solver"],
-        ["MAU Energy", annualElectrical.annual_mau_energy_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_mau_energy_kWh)} kWh` : "Waiting for Solver"],
-        ["White Space Equipment Energy", annualElectrical.annual_white_space_equipment_energy_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_white_space_equipment_energy_kWh)} kWh` : "Waiting for Solver"],
-        ["ACC Energy", annualElectrical.annual_acc_energy_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_acc_energy_kWh)} kWh` : "Waiting for Solver"],
-        ["Average ACC COP", annualElectrical.average_acc_cop != null
-            ? fmtNumber(annualElectrical.average_acc_cop, 3) : "Waiting for Solver"],
-        ["Max ACC Power", annualElectrical.max_acc_power_kW != null
-            ? `${fmtNumber(annualElectrical.max_acc_power_kW, 1)} kW` : "Waiting for Solver"],
-        ["ACC Curve Source", annualElectrical.acc_curve_source || "Waiting for Solver"],
-        ["Engine Output", annualElectrical.annual_engine_output_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_engine_output_kWh)} kWh` : "Waiting for Solver"],
-        ["Engine Fuel", annualElectrical.annual_engine_fuel_input_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_engine_fuel_input_kWh)} kWh` : "Waiting for Solver"],
-        ["Waste Heat", annualElectrical.annual_engine_waste_heat_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_engine_waste_heat_kWh)} kWh` : "Waiting for Solver"],
-        ["Average Engine Efficiency", annualElectrical.average_engine_efficiency != null
-            ? `${fmtNumber(annualElectrical.average_engine_efficiency * 100, 2)}%` : "Waiting for Solver"],
-        ["Engine Radiator Energy", annualElectrical.annual_engine_radiator_energy_kWh != null
-            ? `${fmtInteger(annualElectrical.annual_engine_radiator_energy_kWh)} kWh` : "Waiting for Solver"],
-        ["Engine Radiator Max Power", annualElectrical.max_engine_radiator_power_kW != null
-            ? `${fmtNumber(annualElectrical.max_engine_radiator_power_kW, 1)} kW` : "Waiting for Solver"],
-        ["Radiator Curve Source", annualElectrical.engine_radiator_curve_source || "Waiting for Solver"]
+        ["IT Electrical Distribution Loss", resultValue(annualElectrical.annual_it_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["MEP Electrical Distribution Loss", resultValue(annualElectrical.annual_mep_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Total Electrical Distribution Loss", resultValue(annualElectrical.annual_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["CDU Energy", resultValue(annualElectrical.annual_cdu_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["RTC Energy", resultValue(annualElectrical.annual_rtc_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["MAU Energy", resultValue(annualElectrical.annual_mau_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["White Space Equipment Energy", resultValue(annualElectrical.annual_white_space_equipment_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["ACC Energy", resultValue(annualElectrical.annual_acc_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Average ACC COP", resultValue(annualElectrical.average_acc_cop, value => fmtNumber(value, 3))],
+        ["Max ACC Power", resultValue(annualElectrical.max_acc_power_kW, value => `${fmtNumber(value, 1)} kW`)],
+        ["ACC Curve Source", annualElectrical.acc_curve_source || "Not available"],
+        ["Engine Output", resultValue(annualElectrical.annual_engine_output_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Engine Fuel", resultValue(annualElectrical.annual_engine_fuel_input_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Waste Heat", resultValue(annualElectrical.annual_engine_waste_heat_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Average Engine Efficiency", resultValue(annualElectrical.average_engine_efficiency, value => `${fmtNumber(value * 100, 2)}%`)],
+        ["Engine Radiator Energy", resultValue(annualElectrical.annual_engine_radiator_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Engine Radiator Max Power", resultValue(annualElectrical.max_engine_radiator_power_kW, value => `${fmtNumber(value, 1)} kW`)],
+        ["Radiator Curve Source", annualElectrical.engine_radiator_curve_source || "Not available"]
     ];
     summary.style.display = "grid";
     const selectedScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
-    const equipmentRows = Object.values(data.equipment || {}).map(item => {
+    const directEquipmentOrder = ["ACC_2", "CHW_PUMP_2", "CDU_2", "RTC_1&2", "MAU_1&2", "ELECTRICAL_DISTRIBUTION_2", "ENGINE_3", "ENGINE_RADIATOR_1"];
+    const equipmentRows = directEquipmentOrder.map(equipmentId => {
+        const item = data.equipment?.[equipmentId] || { equipment_id: equipmentId, status: "Missing", solver_curves: {} };
         const selected = selectLibrarySolverCurve(item, selectedScenario);
         const curveSheets = selected.electrical_path ? ["Solver (Electrical Path)"] : Object.keys(item.solver_curves || {});
         const selectedDisplay = selected.electrical_path
             ? `<b>Electrical Path Found</b><br>IT Path Efficiency: ${fmtNumber(selected.electrical_path.it_efficiency * 100, 2)}%<br>MEP Path Efficiency: ${fmtNumber(selected.electrical_path.mep_efficiency * 100, 2)}%`
-            : esc(selected.sheet_name || "Missing Curve");
+            : esc(selected.sheet_name || "Missing Solver_Curve");
+        const sourceStatus = selected.sheet_name || selected.electrical_path
+            ? "Using Configuration Library Solver_Curve"
+            : "Missing Solver_Curve";
         return `<tr>
             <td>${esc(item.equipment_id)}</td><td>${esc(item.status)}</td>
             <td>${esc(curveSheets.length ? curveSheets.join(", ") : "None")}</td>
-            <td>${selectedDisplay}</td>
+            <td>${selectedDisplay}</td><td>${esc(sourceStatus)}</td>
         </tr>`;
     }).join("");
     summary.innerHTML = values.map(([label, value]) =>
@@ -4242,7 +4315,7 @@ function renderConfigurationLibrarySummary(data) {
     ).join("") + `<div class="fileSlot" style="grid-column:1/-1; overflow-x:auto;">
         <div class="panelTitle">Equipment Package Auto Binding — ${esc(selectedScenario)}</div>
         <table style="width:100%; min-width:720px;"><thead><tr>
-            <th>Equipment</th><th>Package</th><th>Solver Curve Sheets</th><th>Selected Curve</th>
+            <th>Equipment ID</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th>
         </tr></thead><tbody>${equipmentRows}</tbody></table>
     </div>`;
 }
@@ -4350,6 +4423,7 @@ async function loadSelectedConfigurationLibrary() {
                 requiredUnits: null, installedUnits: null, normalActiveUnits: null,
                 failureActiveUnits: null, redundancy: "N+1"
             },
+            unit_quantity: getUnitQuantitySelection(librarySizing),
             scenarios,
             equipment_packages: configurationLibraryData.equipment,
             selected_curves: Object.fromEntries(scenarios.map(scenario => [
@@ -4401,6 +4475,24 @@ function initStandardDataInputs() {
     if (librarySelect) librarySelect.addEventListener("change", renderFrameworkDiagnosticsPanel);
     const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
     if (runLibraryButton) runLibraryButton.addEventListener("click", runUsingConfigurationLibrary);
+    ["unitQuantityMode", "unitRedundancyMode", "manualInstalledUnits", "manualRunningUnits", "manualStandbyUnits"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener("input", () => {
+            if (configurationLibraryData) {
+                configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+                renderConfigurationLibrarySummary(configurationLibraryData);
+            } else {
+                renderUnitQuantityStatus(getUnitQuantitySelection(null));
+            }
+        });
+        input.addEventListener("change", () => {
+            if (configurationLibraryData) {
+                configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+                renderConfigurationLibrarySummary(configurationLibraryData);
+            }
+        });
+    });
     const bindings = [
         ["fileItLoad", "itLoad", "statusItLoad"],
         ["fileWeather", "weather", "statusWeather"],
@@ -4455,11 +4547,12 @@ function initStandardDataInputs() {
                 try {
                     normalizeItLoadPercentFile(standardDataFiles.itLoad);
                     if (configurationLibraryData.library_bound_input) {
-                        configurationLibraryData.library_bound_input.unit_counts =
-                            calculateFrontendUnitRequirements(
-                                getProjectReportInfo().capacityMw,
-                                configurationLibraryData.cooling_unit_capacity_mw
-                            );
+                        const updatedSizing = calculateFrontendUnitRequirements(
+                            getProjectReportInfo().capacityMw,
+                            configurationLibraryData.cooling_unit_capacity_mw
+                        );
+                        configurationLibraryData.library_bound_input.unit_counts = updatedSizing;
+                        configurationLibraryData.library_bound_input.unit_quantity = getUnitQuantitySelection(updatedSizing);
                     }
                     configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
                     standardSolverInput = null;
@@ -4587,9 +4680,9 @@ function showProjectVisualization(outObj) {
         [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh, "#2563eb"],
         ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh, "#14b8a6"],
         ["Pump Energy", annual.annual_pump_energy_kWh || 0, "#8b5cf6"],
-        ["Terminal Fan Energy", annual.annual_terminal_fan_energy_kWh, "#0f766e"],
+        ["MAU Energy", annual.annual_terminal_fan_energy_kWh, "#0f766e"],
         ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh, "#ec4899"],
-        ["Electrical Loss", annual.annual_electrical_loss_kWh, "#f59e0b"],
+        ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh, "#f59e0b"],
         ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh, "#7c3aed"]
     ].filter(([, value]) => Number(value) > 0);
 
@@ -4807,7 +4900,7 @@ function showSinglePointVisualization(outObj) {
     const energyBreakdown = [
         ["IT Power", itKw, "#059669"],
         ["Cooling", coolingKw, "#2563eb"],
-        ["Electrical Loss", powerLossKw, "#f59e0b"],
+        ["Electrical Distribution Loss", powerLossKw, "#f59e0b"],
         ["Airflow", airflowKw, "#dc2626"],
         ["Auxiliary", auxKw, "#7c3aed"],
         ["Other", otherKw, "#6b7280"]
