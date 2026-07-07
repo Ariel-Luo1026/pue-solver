@@ -17,6 +17,27 @@ class AccExcelBenchmarkTest(unittest.TestCase):
         )
 
     @staticmethod
+    def _direct_acc_curve():
+        rows = []
+        for ambient, low_power, high_power in (
+            (-10.0, 50.0, 100.0),
+            (0.0, 70.0, 140.0),
+            (10.0, 90.0, 180.0),
+            (20.0, 120.0, 240.0),
+            (40.0, 200.0, 400.0),
+        ):
+            rows.append({"ambient_C": ambient, "load_ratio": 0.5, "power_input_kW": low_power})
+            rows.append({"ambient_C": ambient, "load_ratio": 1.0, "power_input_kW": high_power})
+        return {"data": rows}
+
+    def _direct_input(self, scenario="Normal"):
+        adapted = self._input(scenario)
+        adapted["feature_flags"] = {"acc_v2_enabled": True}
+        adapted["acc_v2"] = {"enabled": True}
+        adapted["acc_curve"] = self._direct_acc_curve()
+        return adapted
+
+    @staticmethod
     def _workbook_numeric_cells(sheet_number):
         workbook = Path.home() / "Downloads" / "Annual_PUE_detailed_calculation_JUNO Field.xlsx"
         namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -57,26 +78,128 @@ class AccExcelBenchmarkTest(unittest.TestCase):
         self.assertNotEqual(dynamic["annual_results"].get("calculation_mode"), "excel_benchmark_compatible")
         self.assertGreater(dynamic["annual_results"]["annual_acc_energy_kWh"], 0)
 
-    def test_hourly_benchmark_uses_weather_and_preserves_annual_acc_energy(self):
-        adapted = self._input("Normal")
+    def test_acc_v2_direct_hourly_mode_uses_weather_and_preserves_hourly_sum(self):
+        adapted = self._direct_input("Normal")
         adapted["weather"]["hourly_data"]["dry_bulb_C"] = [float(-10 + (hour % 56)) for hour in range(8760)]
         hourly = compute_acc_experimental_hourly_shape(adapted)
-        annual_equivalent = compute_acc_excel_benchmark(adapted)
         self.assertNotIn("error", hourly)
         self.assertEqual(len(hourly["hourly_results"]), 8760)
         acc_values = [row["acc_power_kW"] for row in hourly["hourly_results"]]
         self.assertGreater(max(acc_values), min(acc_values))
-        target = annual_equivalent["annual_results"]["annual_acc_energy_kWh"]
+        target = sum(acc_values)
         actual = hourly["annual_results"]["annual_acc_energy_kWh"]
-        self.assertLess(abs(actual - target) / target, 0.005)
+        self.assertAlmostEqual(actual, target, places=6)
+        self.assertFalse(hourly["annual_results"]["acc_annual_calibration_applied"])
         self.assertNotAlmostEqual(
             hourly["annual_results"]["max_hourly_PUE"],
             hourly["annual_results"]["annual_average_PUE"],
             places=6,
         )
 
+    def test_experimental_hourly_shape_varies_across_low_ambient_weather(self):
+        adapted = self._direct_input("Normal")
+        pattern = [-8.0, -5.0, 0.0, 5.0, 10.0, 20.0, 30.0, 40.0]
+        adapted["weather"]["hourly_data"]["dry_bulb_C"] = [pattern[hour % len(pattern)] for hour in range(8760)]
+
+        output = compute_acc_experimental_hourly_shape(adapted)
+        hourly = output["hourly_results"]
+        acc_values = {round(row["acc_power_kW"], 6) for row in hourly}
+        raw_factors = {round(row["acc_raw_temperature_power_factor"], 6) for row in hourly}
+        scaled_factors = {round(row["acc_temperature_power_factor"], 6) for row in hourly}
+
+        self.assertNotIn("error", output)
+        self.assertGreater(len(acc_values), 3)
+        self.assertGreater(len(raw_factors), 3)
+        self.assertGreater(len(scaled_factors), 3)
+
+    def test_experimental_hourly_shape_requires_acc_v2_feature_flag(self):
+        adapted = self._input("Normal")
+        adapted["weather"]["hourly_data"]["dry_bulb_C"] = [float((hour % 50) - 10) for hour in range(8760)]
+
+        output = compute_acc_experimental_hourly_shape(adapted)
+
+        self.assertIn("error", output)
+        self.assertIn("requires feature_flags.acc_v2_enabled=true", output["error"])
+
+    def test_experimental_hourly_shape_upper_temperature_clamps(self):
+        adapted = self._direct_input("Normal")
+        pattern = [60.0, 62.0, 65.0, 70.0]
+        adapted["weather"]["hourly_data"]["dry_bulb_C"] = [pattern[hour % len(pattern)] for hour in range(8760)]
+
+        output = compute_acc_experimental_hourly_shape(adapted)
+        acc_values = {round(row["acc_power_kW"], 6) for row in output["hourly_results"]}
+        raw_factors = {round(row["acc_raw_temperature_power_factor"], 6) for row in output["hourly_results"]}
+
+        self.assertNotIn("error", output)
+        self.assertEqual(len(acc_values), 1)
+        self.assertEqual(len(raw_factors), 1)
+
+    def test_experimental_acc_v2_direct_curve_removes_annual_calibration(self):
+        adapted = self._input("Normal")
+        adapted["feature_flags"] = {"acc_v2_enabled": True}
+        adapted["acc_v2"] = {"enabled": True}
+        adapted["project"]["it_load"]["hourly_it_load_kW"] = [2200.0 if hour % 2 == 0 else 4400.0 for hour in range(8760)]
+        adapted["weather"]["hourly_data"]["dry_bulb_C"] = [-10.0 if hour % 2 == 0 else 40.0 for hour in range(8760)]
+        adapted["acc_curve"] = {"data": [
+            {"ambient_C": -10, "load_ratio": 0.5, "power_input_kW": 50},
+            {"ambient_C": -10, "load_ratio": 1.0, "power_input_kW": 100},
+            {"ambient_C": 40, "load_ratio": 0.5, "power_input_kW": 200},
+            {"ambient_C": 40, "load_ratio": 1.0, "power_input_kW": 400},
+        ]}
+
+        output = compute_acc_experimental_hourly_shape(adapted)
+        hourly = output["hourly_results"]
+        direct_sum = sum(row["acc_power_kW"] for row in hourly)
+        old_excel_target = 1080.0 * 0.53019973837616008 * 8760
+
+        self.assertNotIn("error", output)
+        self.assertAlmostEqual(output["annual_results"]["annual_acc_energy_kWh"], direct_sum, places=9)
+        self.assertNotAlmostEqual(output["annual_results"]["annual_acc_energy_kWh"], old_excel_target, places=3)
+        self.assertTrue(output["annual_results"]["acc_v2_solver_curve_direct"])
+        self.assertTrue(output["annual_results"]["acc_direct_solver_curve"])
+        self.assertFalse(output["annual_results"]["acc_annual_calibration_applied"])
+        self.assertEqual({row["acc_curve_source"] for row in hourly}, {"acc_v2_solver_curve_direct"})
+        self.assertEqual({row["acc_annual_calibration_applied"] for row in hourly}, {False})
+        self.assertEqual({row["acc_power_kW"] for row in hourly}, {200.0, 1600.0})
+
+    def test_experimental_acc_v2_direct_uses_extended_low_ambient_points(self):
+        adapted = self._input("Normal")
+        adapted["feature_flags"] = {"acc_v2_enabled": True}
+        adapted["project"]["it_load"]["hourly_it_load_kW"] = [4400.0] * 8760
+        pattern = [-10.0, 0.0, 10.0, 20.0]
+        adapted["weather"]["hourly_data"]["dry_bulb_C"] = [pattern[hour % len(pattern)] for hour in range(8760)]
+        adapted["acc_curve"] = {"data": [
+            {"ambient_C": -10, "load_ratio": 1.0, "power_input_kW": 100},
+            {"ambient_C": 0, "load_ratio": 1.0, "power_input_kW": 120},
+            {"ambient_C": 10, "load_ratio": 1.0, "power_input_kW": 160},
+            {"ambient_C": 20, "load_ratio": 1.0, "power_input_kW": 220},
+        ]}
+
+        output = compute_acc_experimental_hourly_shape(adapted)
+        acc_values = {round(row["acc_power_kW"], 6) for row in output["hourly_results"]}
+
+        self.assertNotIn("error", output)
+        self.assertEqual(len(acc_values), 4)
+        self.assertEqual(output["hourly_results"][0]["acc_curve_source"], "acc_v2_solver_curve_direct")
+
+    def test_experimental_acc_v2_direct_lookup_failure_returns_clear_error(self):
+        adapted = self._input("Normal")
+        adapted["feature_flags"] = {"acc_v2_enabled": True}
+        adapted["weather"]["hourly_data"]["dry_bulb_C"] = [float((hour % 50) - 10) for hour in range(8760)]
+        adapted["acc_curve"] = {"data": [
+            {"ambient_C": 40, "load_ratio": 1.0, "power_input_kW": 300},
+            {"ambient_C": 40, "load_ratio": 1.0, "power_input_kW": 310},
+            {"ambient_C": 42, "load_ratio": 1.0, "power_input_kW": 320},
+        ]}
+
+        output = compute_acc_experimental_hourly_shape(adapted)
+
+        self.assertIn("error", output)
+        self.assertIn("ACC V2 direct Solver_Curve lookup failed", output["error"])
+        self.assertIn("fallback result is not direct Solver_Curve output", output["error"])
+
     def test_hourly_benchmark_peak_fields_come_from_hourly_results(self):
-        adapted = self._input("Failure")
+        adapted = self._direct_input("Failure")
         adapted["weather"]["hourly_data"]["dry_bulb_C"] = [float(-10 + (hour % 56)) for hour in range(8760)]
         output = compute_acc_experimental_hourly_shape(adapted)
         hourly = output["hourly_results"]
@@ -88,7 +211,7 @@ class AccExcelBenchmarkTest(unittest.TestCase):
         self.assertEqual(output["peak_results"]["peak_PUE"], peak_pue["hourly_PUE"])
 
     def test_experimental_peak_safety_warning(self):
-        adapted = self._input("Normal")
+        adapted = self._direct_input("Normal")
         adapted["weather"]["hourly_data"]["dry_bulb_C"] = [float(-10 + (hour % 56)) for hour in range(8760)]
         output = compute_acc_experimental_hourly_shape(adapted)
         annual = output["annual_results"]
@@ -96,7 +219,6 @@ class AccExcelBenchmarkTest(unittest.TestCase):
             annual["acc_peak_power_warning"],
             annual["acc_peak_to_scenario_peak_ratio"] > 1.10,
         )
-        self.assertGreater(annual["max_acc_power_kW"], annual["scenario_peak_acc_power_kW"])
         self.assertEqual(bool(output["warnings"]), annual["acc_peak_power_warning"])
         self.assertEqual(output["calculation_mode"], "experimental_acc_hourly_shape")
 
@@ -104,12 +226,10 @@ class AccExcelBenchmarkTest(unittest.TestCase):
         epw = Path(__file__).parent.parent / "input tampelate" / "FRA_LP_Albi-Le.Sequestre.AP.076320_TMYx.2004-2018.epw"
         with epw.open(encoding="utf-8-sig", newline="") as handle:
             dry_bulb = [float(row[6]) for row in list(csv.reader(handle))[8:8768]]
-        adapted = self._input("Normal")
+        adapted = self._direct_input("Normal")
         adapted["weather"]["hourly_data"]["dry_bulb_C"] = dry_bulb
-        old = compute_acc_excel_benchmark(adapted)
         output = compute_acc_experimental_hourly_shape(adapted)
         annual = output["annual_results"]
-        target = old["annual_results"]["annual_acc_energy_kWh"]
         self.assertEqual(
             annual["acc_peak_power_warning"],
             annual["acc_peak_to_scenario_peak_ratio"] > 1.10,
@@ -122,7 +242,12 @@ class AccExcelBenchmarkTest(unittest.TestCase):
             annual["acc_peak_to_scenario_peak_ratio"],
             annual["max_acc_power_kW"] / annual["scenario_peak_acc_power_kW"],
         )
-        self.assertLess(abs(annual["annual_acc_energy_kWh"] - target) / target, 0.005)
+        self.assertAlmostEqual(
+            annual["annual_acc_energy_kWh"],
+            sum(row["acc_power_kW"] for row in output["hourly_results"]),
+            places=6,
+        )
+        self.assertFalse(annual["acc_annual_calibration_applied"])
 
     def test_excel_replicated_hourly_matches_workbook_acc_factor_and_annual_results(self):
         appendix = self._workbook_numeric_cells(5)

@@ -509,11 +509,16 @@
                 <option value="dynamic_hourly">Dynamic Hourly Simulation</option>
                 <option value="excel_benchmark_compatible">Excel Benchmark Annual Equivalent Mode</option>
                 <option value="excel_replicated_hourly">Excel Replicated Hourly Mode</option>
-                <option value="experimental_acc_hourly_shape">Experimental ACC Hourly Shape Mode</option>
+                <option value="experimental_acc_hourly_shape">ACC V2 Direct Solver_Curve Hourly Mode</option>
+            </select>
+            <select id="accCalculationEngine" style="max-width:300px;" title="Engineering Mode: ACC Calculation Engine">
+                <option value="legacy" selected>Legacy ACC Engine</option>
+                <option value="acc_v2">ACC V2 Configuration Library Engine</option>
             </select>
             <button type="button" class="secondaryButton" id="btnLoadConfigurationLibrary">Load Configuration Library</button>
             <button type="button" class="primaryButton" id="btnRunConfigurationLibrary" disabled>Run Using Configuration Library</button>
         </div>
+        <div class="hint" style="margin-top:8px;">Engineering Mode — ACC Calculation Engine: ACC V2 requires valid Configuration Library Solver_Curve data.</div>
         <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Manual Excel upload remains available below.</div>
         <div id="configurationLibrarySummary" class="fileGrid" style="margin-top:12px; display:none;"></div>
     </div>

@@ -82,7 +82,7 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
             self.ui,
         )
         self.assertIn(
-            '["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Weather-driven ACC sensitivity profile" : "Not applicable in annual-equivalent assessment")]',
+            '["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Not applicable in annual-equivalent assessment")]',
             self.ui,
         )
 
@@ -109,7 +109,7 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
 
     def test_peak_hourly_pue_kpi_is_na_in_benchmark_mode(self):
         self.assertIn('const peakHourlyPue = !isAnnualBenchmarkMode && Number.isFinite(Number(annual.max_hourly_PUE))', self.ui)
-        self.assertIn('isExperimentalHourlyMode ? "Peak Hourly PUE (Sensitivity)" : "Peak Hourly PUE"', self.ui)
+        self.assertIn('<div class="metric"><div class="label">Peak Hourly PUE</div>', self.ui)
         self.assertIn('${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}', self.ui)
         self.assertIn('Annual-equivalent assessment uses average equipment values.', self.ui)
         self.assertNotIn('(isBenchmarkMode ? Number(annual.annual_average_PUE) : null)', self.ui)
@@ -127,18 +127,19 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
     def test_experimental_hourly_shape_mode_is_wired_to_ui_and_report(self):
         index = Path(__file__).with_name("index.html").read_text(encoding="utf-8")
         self.assertIn('value="experimental_acc_hourly_shape"', index)
-        self.assertIn("Experimental ACC Hourly Shape Mode", index)
+        self.assertIn("ACC V2 Direct Solver_Curve Hourly Mode", index)
         self.assertIn("compute_acc_experimental_hourly_shape", self.ui)
         self.assertIn('const isExperimentalHourlyMode =', self.ui)
         self.assertNotIn("Excel Benchmark Hourly Equivalent Mode", index)
         self.assertNotIn("ACC Benchmark Hourly Equivalent Mode", self.ui)
 
-    def test_experimental_report_discloses_synthetic_method_and_peak_warning(self):
+    def test_experimental_report_discloses_direct_solver_curve_method_and_peak_warning(self):
         self.assertIn(
-            "This scenario uses a synthetic hourly ACC profile driven by outdoor dry-bulb temperature and calibrated to annual energy performance. It is intended for engineering sensitivity review.",
+            "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.",
             self.ui,
         )
-        self.assertIn("Peak Hourly PUE (Sensitivity)", self.ui)
+        self.assertIn("ACC annual energy is calculated as the sum of hourly ACC power with no external annual adjustment.", self.ui)
+        self.assertIn("Direct hourly ACC power exceeds scenario peak ACC power by more than 10%.", self.ui)
         for field in ("max_acc_power_kW", "scenario_peak_acc_power_kW", "acc_peak_to_scenario_peak_ratio"):
             self.assertIn(field, self.ui)
 

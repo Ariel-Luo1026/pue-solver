@@ -17,6 +17,7 @@ class ElectricalPathEfficiencyTest(unittest.TestCase):
         without_path_input = deepcopy(cls.adapted)
         without_path_input.pop("electrical_path", None)
         without_path_input.get("equipment", {}).pop("electrical_path", None)
+        without_path_input.pop("library_context", None)
         cls.without_path = compute_pue_project(without_path_input)
 
     def test_hourly_it_and_mep_path_formulas(self):
@@ -29,6 +30,12 @@ class ElectricalPathEfficiencyTest(unittest.TestCase):
             hour["electrical_loss_kW"],
             hour["it_electrical_loss_kW"] + hour["mep_electrical_loss_kW"],
         )
+        self.assertEqual(hour["electrical_distribution_curve_source"], "configuration_library_solver_curve")
+        self.assertEqual(hour["electrical_distribution_curve_type"], "efficiency")
+        self.assertAlmostEqual(
+            hour["electrical_distribution_base_power_kW"],
+            hour["it_terminal_load_kW"] + hour["mep_terminal_load_kW"],
+        )
         self.assertAlmostEqual(hour["it_upstream_power_kW"], hour["it_terminal_load_kW"] / 0.9723)
         self.assertAlmostEqual(hour["mep_upstream_power_kW"], hour["mep_terminal_load_kW"] / 0.9959)
 
@@ -37,6 +44,8 @@ class ElectricalPathEfficiencyTest(unittest.TestCase):
         self.assertGreater(annual["annual_electrical_loss_kWh"], 0)
         self.assertGreater(annual["annual_it_electrical_loss_kWh"], 0)
         self.assertGreater(annual["annual_mep_electrical_loss_kWh"], 0)
+        self.assertEqual(annual["electrical_distribution_curve_source"], "configuration_library_solver_curve")
+        self.assertEqual(annual["electrical_distribution_curve_type"], "efficiency")
         self.assertAlmostEqual(
             annual["annual_electrical_loss_kWh"],
             annual["annual_it_electrical_loss_kWh"] + annual["annual_mep_electrical_loss_kWh"],
@@ -60,6 +69,27 @@ class ElectricalPathEfficiencyTest(unittest.TestCase):
             annual["annual_average_PUE"],
             self.without_path["annual_results"]["annual_average_PUE"],
         )
+
+    def test_missing_electrical_distribution_fails_in_configuration_library_mode(self):
+        adapted = deepcopy(self.adapted)
+        adapted.pop("electrical_path", None)
+        adapted.get("equipment", {}).pop("electrical_path", None)
+
+        output = compute_pue_project(adapted)
+
+        self.assertIn("error", output)
+        self.assertIn("ELECTRICAL_DISTRIBUTION_2 Solver_Curve missing or invalid", output["error"])
+        self.assertEqual(output["hourly_results"], [])
+
+    def test_invalid_electrical_distribution_fails_in_configuration_library_mode(self):
+        adapted = deepcopy(self.adapted)
+        adapted["electrical_path"]["it_efficiency"] = 0.0
+
+        output = compute_pue_project(adapted)
+
+        self.assertIn("error", output)
+        self.assertIn("ELECTRICAL_DISTRIBUTION_2 Solver_Curve missing or invalid", output["error"])
+        self.assertEqual(output["hourly_results"], [])
 
 
 if __name__ == "__main__":

@@ -45,6 +45,126 @@ def _clamp(x, lo, hi):
     if x > hi: return hi
     return x
 
+def run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path=None):
+    """Run ACC V2 in isolated shadow mode; never modifies legacy calculations."""
+    from acc_v2_engine import ACCV2ShadowResult, ENGINE_VERSION, is_acc_v2_enabled
+
+    if not is_acc_v2_enabled(project_input):
+        return None
+    if configuration_path is None:
+        configuration_path = _get(project_input, ["acc_v2", "configuration_path"])
+    if configuration_path is None or ambient_C is None or load_ratio is None:
+        return ACCV2ShadowResult(
+            ambient_C=ambient_C,
+            load_ratio=load_ratio,
+            capacity_kW=None,
+            power_input_kW=None,
+            cop=None,
+            lookup_success=False,
+            validation_warnings=(),
+            validation_errors=("ACC V2 shadow missing configuration_path, ambient_C, or load_ratio.",),
+            engine_version=ENGINE_VERSION,
+        )
+    try:
+        from acc_v2_engine import create_acc_v2_engine
+
+        engine = create_acc_v2_engine(configuration_path)
+        point = engine.evaluate_operating_point(ambient_C=ambient_C, load_ratio=load_ratio)
+        validation = engine.validation_summary
+        return ACCV2ShadowResult(
+            ambient_C=point.ambient_C,
+            load_ratio=point.load_ratio,
+            capacity_kW=point.capacity_kW,
+            power_input_kW=point.power_input_kW,
+            cop=point.cop,
+            lookup_success=True,
+            validation_warnings=tuple(validation.warnings),
+            validation_errors=tuple(validation.errors),
+            engine_version=ENGINE_VERSION,
+        )
+    except Exception as exc:
+        return ACCV2ShadowResult(
+            ambient_C=ambient_C,
+            load_ratio=load_ratio,
+            capacity_kW=None,
+            power_input_kW=None,
+            cop=None,
+            lookup_success=False,
+            validation_warnings=(),
+            validation_errors=(f"ACC V2 shadow failed: {exc}",),
+            engine_version=ENGINE_VERSION,
+        )
+
+def get_acc_operating_point(project_input, ambient_C=None, load_ratio=None, configuration_path=None):
+    """Optional ACC V2 hook; disabled by default and not used by legacy formulas."""
+    return run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path)
+
+def resolve_acc_operating_point(project_input, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=None, configuration_path=None):
+    """Resolve ACC operating point source with mandatory legacy fallback."""
+    result, _temperature_power_factor = _resolve_acc_operating_point_for_solver(
+        project_input, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c, configuration_path
+    )
+    return result
+
+def _resolve_acc_operating_point_for_solver(project_input, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=None, configuration_path=None):
+    from acc_v2_engine import ACCV2ProductionResult, ENGINE_VERSION, is_acc_v2_enabled
+
+    legacy_power, legacy_cop, legacy_source, legacy_ambient, legacy_temperature_power_factor = _evaluate_acc_equipment_curve(
+        acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=oat_c
+    )
+    legacy_result = ACCV2ProductionResult(
+        source=legacy_source,
+        lookup_success=False,
+        fallback_used=False,
+        engine_version="legacy",
+        ambient_C=legacy_ambient,
+        load_ratio=load_ratio,
+        capacity_kW=None,
+        power_input_kW=legacy_power,
+        cop=legacy_cop,
+    )
+
+    if not is_acc_v2_enabled(project_input):
+        return legacy_result, legacy_temperature_power_factor
+    if configuration_path is None:
+        configuration_path = _get(project_input, ["acc_v2", "configuration_path"])
+    if configuration_path is None or oat_c is None or load_ratio is None:
+        return _fallback_acc_v2_result(legacy_result), legacy_temperature_power_factor
+    try:
+        from acc_v2_engine import create_acc_v2_engine
+
+        engine = create_acc_v2_engine(configuration_path)
+        point = engine.evaluate_operating_point(ambient_C=oat_c, load_ratio=load_ratio)
+        total_power_kw = point.power_input_kW * max(1, int(active_units))
+        return ACCV2ProductionResult(
+            source="acc_v2",
+            lookup_success=True,
+            fallback_used=False,
+            engine_version=ENGINE_VERSION,
+            ambient_C=point.ambient_C,
+            load_ratio=point.load_ratio,
+            capacity_kW=point.capacity_kW,
+            power_input_kW=total_power_kw,
+            cop=point.cop,
+        ), None
+    except Exception:
+        return _fallback_acc_v2_result(legacy_result), legacy_temperature_power_factor
+
+def _fallback_acc_v2_result(legacy_result):
+    from acc_v2_engine import ACCV2ProductionResult
+
+    return ACCV2ProductionResult(
+        source=legacy_result.source,
+        lookup_success=False,
+        fallback_used=True,
+        engine_version="legacy",
+        ambient_C=legacy_result.ambient_C,
+        load_ratio=legacy_result.load_ratio,
+        capacity_kW=legacy_result.capacity_kW,
+        power_input_kW=legacy_result.power_input_kW,
+        cop=legacy_result.cop,
+    )
+
 # -------------------------
 # 1D interpolation (linear / pchip)
 # points: [[x1,y1],[x2,y2],...], must be sorted by x asc, unique x
@@ -1345,6 +1465,88 @@ def _library_fixed_power_per_unit(binding, load_ratio):
     return max(0.0, float(eval_curve_1d(points, load_ratio, "linear")))
 
 
+def _library_equipment_binding(bindings, candidate_ids):
+    """Return a Configuration Library equipment binding by exact or prefix ID."""
+    if not isinstance(bindings, dict):
+        return None, None
+    normalized_candidates = [str(item).upper() for item in candidate_ids]
+    for equipment_id, binding in bindings.items():
+        equipment_id_text = str(equipment_id)
+        binding_equipment_id = str(binding.get("equipment_id")) if isinstance(binding, dict) else ""
+        keys = [equipment_id_text.upper(), binding_equipment_id.upper()]
+        if any(key in normalized_candidates for key in keys):
+            return equipment_id_text, binding
+    for equipment_id, binding in bindings.items():
+        equipment_id_text = str(equipment_id).upper()
+        binding_equipment_id = str(binding.get("equipment_id", "")).upper() if isinstance(binding, dict) else ""
+        if any(equipment_id_text.startswith(prefix) or binding_equipment_id.startswith(prefix) for prefix in normalized_candidates):
+            return str(equipment_id), binding
+    return None, None
+
+
+def _curve_from_library_binding(binding, curve_id):
+    """Convert a loaded Configuration Library binding into a generic curve dict."""
+    rows = binding.get("curve_data", []) if isinstance(binding, dict) else []
+    return {
+        "type": "1d_lookup_table",
+        "x_axis": "load_ratio",
+        "output": "power_kW",
+        "interpolation": "linear",
+        "data": rows if isinstance(rows, list) else [],
+        "curve_id": curve_id,
+    }
+
+
+def _lookup_library_power_per_unit_with_engine(
+    configuration_equipment_engines,
+    equipment_id,
+    binding,
+    load_ratio,
+    equipment_label,
+    ambient_C=None,
+):
+    """Evaluate loaded Configuration Library load_ratio -> power_kW data through the generic engine."""
+    if not isinstance(binding, dict):
+        raise ValueError(f"{equipment_label} equipment binding is missing.")
+    from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
+
+    engine_equipment_id = binding.get("equipment_id") or equipment_id or equipment_label
+    curve_id = f"{engine_equipment_id}_power_vs_load"
+    engine_key = f"{equipment_label}:{engine_equipment_id}"
+    if engine_key not in configuration_equipment_engines:
+        configuration_equipment_engines[engine_key] = ConfigurationLibraryEquipmentEngine(
+            EquipmentEngineConfig(
+                preloaded_curves={
+                    engine_equipment_id: _curve_from_library_binding(binding, curve_id)
+                }
+            )
+        )
+    lookup_result = configuration_equipment_engines[engine_key].lookup_power(
+        engine_equipment_id,
+        load_ratio,
+        ambient_C=ambient_C,
+    )
+    if not lookup_result.lookup_success:
+        raise ValueError("; ".join(lookup_result.errors) or f"{equipment_label} lookup failed.")
+    return max(0.0, float(lookup_result.power_kW or 0.0))
+
+
+def _electrical_efficiency_curve(equipment_id, path_name, efficiency):
+    """Build a generic electrical efficiency curve from loaded equipment data."""
+    curve_id = f"{equipment_id}_{path_name}_efficiency"
+    return {
+        "type": "1d_lookup_table",
+        "x_axis": "load_ratio",
+        "output": "efficiency",
+        "interpolation": "linear",
+        "data": [
+            {"load_ratio": 0.0, "efficiency": efficiency},
+            {"load_ratio": 1.0, "efficiency": efficiency},
+        ],
+        "curve_id": curve_id,
+    }
+
+
 def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=None):
     """Return ACC power/COP using ambient interpolation, with load-ratio fallback."""
     if not isinstance(acc_curve, dict) or not isinstance(acc_curve.get("data"), list):
@@ -1660,6 +1862,10 @@ def compute_pue_project(input_obj):
         "annual_results": {},
         "peak_results": {}
     }
+    configuration_library_direct_mode = (
+        isinstance(input_obj.get("library_context"), dict)
+        or isinstance(input_obj.get("configuration_library"), dict)
+    )
 
     if len(hourly_it_load) == 0 or len(dry_bulb) == 0:
         # fallback to a single design snapshot
@@ -1731,6 +1937,7 @@ def compute_pue_project(input_obj):
 
     n = max(len(hourly_it_load), len(dry_bulb))
     dry_cooler_over_capacity_count = 0
+    configuration_equipment_engines = {}
     for i in range(n):
         it_kw = _num(hourly_it_load[i], 0.0) if i < len(hourly_it_load) else 0.0
         oat_c = _num(dry_bulb[i], None)
@@ -1776,6 +1983,9 @@ def compute_pue_project(input_obj):
         cw_pump_power_per_unit_kw = 0.0
         pump_power_per_unit_kw = 0.0
         pump_power_total_check = True
+        chw_pump_curve_source = "legacy_non_configuration_mode"
+        configuration_library_chw_pump_requested = False
+        configuration_library_chw_pump_error = None
         pump_debug_rows = []
         if pumps_enabled and pump_curve_refs:
             pump_values_per_unit = []
@@ -1783,8 +1993,37 @@ def compute_pue_project(input_obj):
                 pump_curve_value = None
                 pump_curve_load_value = pump_load_ratio
                 pump_source = "curve_missing"
+                pump_ref_text = str(pump_ref)
+                source_equipment_id = str(pumps_cfg.get("source_equipment_id") or "")
+                is_configuration_library_chw_pump = (
+                    "CHW_PUMP_2" in pump_ref_text.upper()
+                    or source_equipment_id.upper() == "CHW_PUMP_2"
+                )
+                if is_configuration_library_chw_pump:
+                    configuration_library_chw_pump_requested = True
                 raw_curve = curve_lib.get("raw_curves", {}).get(str(pump_ref), {}) if isinstance(curve_lib, dict) else {}
-                if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
+                if is_configuration_library_chw_pump:
+                    try:
+                        from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
+
+                        equipment_engine_id = source_equipment_id or "CHW_PUMP_2"
+                        if equipment_engine_id not in configuration_equipment_engines:
+                            configuration_equipment_engines[equipment_engine_id] = ConfigurationLibraryEquipmentEngine(
+                                EquipmentEngineConfig(preloaded_curves={equipment_engine_id: raw_curve})
+                            )
+                        lookup_result = configuration_equipment_engines[equipment_engine_id].lookup_power(
+                            equipment_engine_id,
+                            pump_curve_load_value,
+                        )
+                        if not lookup_result.lookup_success:
+                            raise ValueError("; ".join(lookup_result.errors) or "CHW_PUMP_2 lookup failed.")
+                        pump_curve_load_value = lookup_result.load_ratio
+                        pump_curve_value = lookup_result.power_kW
+                        pump_source = "configuration_library_solver_curve"
+                    except Exception as exc:
+                        configuration_library_chw_pump_error = str(exc)
+                        pump_curve_value = None
+                elif isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
                     raw_points = raw_curve.get("points")
                     if not isinstance(raw_points, list):
                         raw_points = raw_curve.get("data", [])
@@ -1809,20 +2048,26 @@ def compute_pue_project(input_obj):
                             pump_curve_load_value = pump_load_ratio * 100.0
                         pump_curve_value = _num(eval_curve_1d(pts, pump_curve_load_value, raw_curve.get("interpolation", "linear")), None)
                         pump_source = "raw_points"
-                if pump_curve_value is None:
+                if pump_curve_value is None and not is_configuration_library_chw_pump:
                     pump_curve_value = _curve_value(curve_lib, str(pump_ref), pump_curve_load_value, None)
                     if pump_curve_value is not None:
                         pump_source = "curve_value"
                 if pump_curve_value is None:
                     continue
                 output_name = str(raw_curve.get("output", "")).lower() if isinstance(raw_curve, dict) else ""
-                if "kw" in output_name or "power_kw" in output_name:
+                if pump_source == "configuration_library_solver_curve" or "kw" in output_name or "power_kw" in output_name:
                     pump_kw = max(0.0, float(pump_curve_value))
-                    pump_source = f"{pump_source}_power_kw_direct"
+                    pump_source = (
+                        "configuration_library_solver_curve"
+                        if is_configuration_library_chw_pump
+                        else f"{pump_source}_power_kw_direct"
+                    )
                 else:
                     rated_each = (0.01 * float(cooling_unit_capacity_kw or 0.0)) / max(len(pump_curve_refs), 1)
                     pump_kw = max(0.0, float(pump_curve_value) * rated_each)
                     pump_source = f"{pump_source}_power_factor_times_rated"
+                if pump_source == "configuration_library_solver_curve":
+                    chw_pump_curve_source = "configuration_library_solver_curve"
                 pump_values_per_unit.append(pump_kw)
                 pump_ref_lower = str(pump_ref).lower()
                 if "chw" in pump_ref_lower:
@@ -1841,11 +2086,30 @@ def compute_pue_project(input_obj):
                 pump_power_per_unit_kw = sum(pump_values_per_unit)
                 pumps_kw = pump_power_per_unit_kw * cooling_unit_count
                 pump_power_total_check = abs((pump_power_per_unit_kw * cooling_unit_count) - pumps_kw) <= 1e-9
-        airflow_kw = 0.02 * it_kw  # 2% of IT load
+        if (
+            configuration_library_direct_mode
+            and pumps_enabled
+            and (
+                configuration_library_chw_pump_requested
+                or str(pumps_cfg.get("source_equipment_id") or "").upper() == "CHW_PUMP_2"
+            )
+            and chw_pump_curve_source != "configuration_library_solver_curve"
+        ):
+            reason = configuration_library_chw_pump_error or "CHW_PUMP_2 curve reference is missing or produced no valid operating point."
+            error_message = (
+                "CHW_PUMP_2 Solver_Curve missing or invalid. Configuration Library direct mode "
+                "requires CHW_PUMP_2 load_ratio \u2192 power_kW data. "
+                f"Reason: {reason}"
+            )
+            validation.setdefault("errors", []).append(error_message)
+            result["validation"] = validation
+            result["error"] = error_message
+            return result
+        airflow_kw = 0.0 if configuration_library_direct_mode else 0.02 * it_kw
         fan_curve_value = None
         fan_curve_load_value = load_ratio
-        fan_power_source = "disabled" if not fans_enabled else "curve_missing"
-        if fans_enabled and fan_curve_ref:
+        fan_power_source = "configuration_library_solver_curve" if configuration_library_direct_mode else ("disabled" if not fans_enabled else "curve_missing")
+        if not configuration_library_direct_mode and fans_enabled and fan_curve_ref:
             raw_curve = curve_lib.get("raw_curves", {}).get(fan_curve_ref, {}) if isinstance(curve_lib, dict) else {}
             if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
                 raw_points = raw_curve.get("points")
@@ -2048,9 +2312,36 @@ def compute_pue_project(input_obj):
             cop = 3.0  # Default COP = 3.0
             cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
-        acc_power_kw, acc_cop, acc_curve_source, acc_ambient_c, acc_temperature_power_factor = _evaluate_acc_equipment_curve(
-            acc_curve, unit_load_ratio, total_thermal_load, library_active_units, oat_c=oat_c
+        acc_operating_point, acc_temperature_power_factor = _resolve_acc_operating_point_for_solver(
+            input_obj, acc_curve, unit_load_ratio, total_thermal_load, library_active_units, oat_c=oat_c
         )
+        acc_power_kw = acc_operating_point.power_input_kW
+        acc_cop = acc_operating_point.cop
+        acc_curve_source = acc_operating_point.source
+        acc_ambient_c = acc_operating_point.ambient_C
+        if configuration_library_direct_mode:
+            if getattr(acc_operating_point, "fallback_used", False):
+                error_message = (
+                    "ACC Solver_Curve missing or invalid. Configuration Library direct mode "
+                    "requires ACC Solver_Curve data and does not allow ACC legacy fallback."
+                )
+                validation.setdefault("errors", []).append(error_message)
+                result["validation"] = validation
+                result["error"] = error_message
+                return result
+            if acc_power_kw is None:
+                error_message = (
+                    "ACC Solver_Curve missing or invalid. Configuration Library direct mode "
+                    "requires ACC load_ratio and/or ambient Solver_Curve power data."
+                )
+                validation.setdefault("errors", []).append(error_message)
+                result["validation"] = validation
+                result["error"] = error_message
+                return result
+            if acc_curve_source == "acc_v2":
+                acc_curve_source = "acc_v2_solver_curve_direct"
+            else:
+                acc_curve_source = "configuration_library_solver_curve"
         if acc_power_kw is not None:
             chiller_kw = acc_power_kw
             cop = acc_cop
@@ -2117,21 +2408,220 @@ def compute_pue_project(input_obj):
 
         # Optional Configuration Library fixed-power white-space equipment.
         # These are MEP terminal loads and do not alter legacy auxiliary logic.
-        cdu_power_kw = _library_fixed_power_per_unit(library_fixed_power.get("CDU_2"), project_load_ratio) * library_active_units
-        rtc_power_kw = _library_fixed_power_per_unit(library_fixed_power.get("RTC_2"), project_load_ratio) * library_active_units
-        mau_power_kw = _library_fixed_power_per_unit(library_fixed_power.get("MAU_2"), project_load_ratio) * library_active_units
+        cdu_curve_source = "legacy_non_configuration_mode"
+        rtc_curve_source = "legacy_non_configuration_mode"
+        mau_curve_source = "legacy_non_configuration_mode"
+        cdu_power_kw = 0.0
+        rtc_power_kw = 0.0
+        mau_power_kw = 0.0
+        cdu_equipment_id, cdu_binding = _library_equipment_binding(library_fixed_power, ("CDU_2", "CDU"))
+        rtc_equipment_id, rtc_binding = _library_equipment_binding(library_fixed_power, ("RTC_1&2", "RTC_2", "RTC"))
+        mau_equipment_id, mau_binding = _library_equipment_binding(library_fixed_power, ("MAU_1&2", "MAU_2", "MAU"))
+        if configuration_library_direct_mode:
+            for label, display_id, equipment_id, binding in (
+                ("cdu", "CDU_2", cdu_equipment_id, cdu_binding),
+                ("rtc", "RTC_1&2", rtc_equipment_id, rtc_binding),
+                ("mau", "MAU_1&2", mau_equipment_id, mau_binding),
+            ):
+                try:
+                    power_per_unit = _lookup_library_power_per_unit_with_engine(
+                        configuration_equipment_engines,
+                        equipment_id or display_id,
+                        binding,
+                        project_load_ratio,
+                        label,
+                    )
+                    if label == "cdu":
+                        cdu_power_kw = power_per_unit * library_active_units
+                        cdu_curve_source = "configuration_library_solver_curve"
+                    elif label == "rtc":
+                        rtc_power_kw = power_per_unit * library_active_units
+                        rtc_curve_source = "configuration_library_solver_curve"
+                    else:
+                        mau_power_kw = power_per_unit * library_active_units
+                        mau_curve_source = "configuration_library_solver_curve"
+                except Exception as exc:
+                    error_message = (
+                        f"{display_id} Solver_Curve missing or invalid. Configuration Library direct mode "
+                        f"requires {display_id} load_ratio \u2192 power_kW data. "
+                        f"Reason: {exc}"
+                    )
+                    validation.setdefault("errors", []).append(error_message)
+                    result["validation"] = validation
+                    result["error"] = error_message
+                    return result
+        else:
+            cdu_power_kw = _library_fixed_power_per_unit(cdu_binding, project_load_ratio) * library_active_units
+            rtc_power_kw = _library_fixed_power_per_unit(rtc_binding, project_load_ratio) * library_active_units
+            mau_power_kw = _library_fixed_power_per_unit(mau_binding, project_load_ratio) * library_active_units
         white_space_equipment_power_kw = cdu_power_kw + rtc_power_kw + mau_power_kw
-        engine_output_kw, engine_efficiency, engine_fuel_input_kw, engine_waste_heat_kw, engine_curve_source = _evaluate_engine_curve(
-            engine_curve, project_load_ratio, library_active_units
-        )
-        engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
-            engine_radiator_curve, project_load_ratio, library_active_units, engine_waste_heat_kw
-        )
+        if configuration_library_direct_mode:
+            airflow_kw = mau_power_kw
+            fan_curve_value = mau_power_kw
+            fan_power_source = "configuration_library_solver_curve"
+        engine_curve_type = None
+        engine_radiator_curve_type = None
+        if configuration_library_direct_mode:
+            try:
+                engine_binding = {
+                    "equipment_id": "ENGINE_3",
+                    "curve_data": engine_curve.get("data", []) if isinstance(engine_curve, dict) else [],
+                }
+                engine_power_per_unit = _lookup_library_power_per_unit_with_engine(
+                    configuration_equipment_engines,
+                    "ENGINE_3",
+                    engine_binding,
+                    project_load_ratio,
+                    "engine",
+                )
+                engine_output_kw = engine_power_per_unit * library_active_units
+                efficiency_points = []
+                for row in engine_binding["curve_data"]:
+                    if not isinstance(row, dict):
+                        continue
+                    x = _num(row.get("load_ratio"), None)
+                    efficiency = _num(row.get("engine_efficiency"), None)
+                    if efficiency is None:
+                        efficiency = _num(row.get("efficiency"), None)
+                    if x is not None and efficiency is not None:
+                        efficiency_points.append([x, efficiency])
+                if efficiency_points:
+                    engine_efficiency = float(eval_curve_1d(efficiency_points, project_load_ratio, "linear"))
+                else:
+                    engine_efficiency = _num(engine_curve.get("default_efficiency") if isinstance(engine_curve, dict) else None, 0.40)
+                engine_efficiency = _clamp(float(engine_efficiency), 1e-6, 1.0)
+                engine_fuel_input_kw = engine_output_kw / engine_efficiency
+                engine_waste_heat_kw = max(0.0, engine_fuel_input_kw - engine_output_kw)
+                engine_curve_source = "configuration_library_solver_curve"
+                engine_curve_type = "one_dimensional_power"
+            except Exception as exc:
+                error_message = (
+                    "ENGINE_3 Solver_Curve missing or invalid. Configuration Library direct mode "
+                    f"requires ENGINE_3 load_ratio \u2192 power_kW data. Reason: {exc}"
+                )
+                validation.setdefault("errors", []).append(error_message)
+                result["validation"] = validation
+                result["error"] = error_message
+                return result
+            try:
+                radiator_binding = {
+                    "equipment_id": "ENGINE_RADIATOR_1",
+                    "curve_data": engine_radiator_curve.get("data", []) if isinstance(engine_radiator_curve, dict) else [],
+                }
+                from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
+
+                radiator_engine_key = "engine_radiator:ENGINE_RADIATOR_1"
+                if radiator_engine_key not in configuration_equipment_engines:
+                    configuration_equipment_engines[radiator_engine_key] = ConfigurationLibraryEquipmentEngine(
+                        EquipmentEngineConfig(
+                            preloaded_curves={
+                                "ENGINE_RADIATOR_1": _curve_from_library_binding(
+                                    radiator_binding,
+                                    "ENGINE_RADIATOR_1_power_vs_load",
+                                )
+                            }
+                        )
+                    )
+                radiator_result = configuration_equipment_engines[radiator_engine_key].lookup_power(
+                    "ENGINE_RADIATOR_1",
+                    project_load_ratio,
+                    ambient_C=oat_c,
+                )
+                if not radiator_result.lookup_success:
+                    raise ValueError("; ".join(radiator_result.errors) or "ENGINE_RADIATOR_1 lookup failed.")
+                radiator_power_per_unit = max(0.0, float(radiator_result.power_kW or radiator_result.power_input_kW or 0.0))
+                engine_radiator_power_kw = radiator_power_per_unit * library_active_units
+                engine_radiator_curve_source = "configuration_library_solver_curve"
+                engine_radiator_curve_type = radiator_result.curve_type
+            except Exception as exc:
+                error_message = (
+                    "ENGINE_RADIATOR_1 Solver_Curve missing or invalid. Configuration Library direct mode "
+                    f"requires ENGINE_RADIATOR_1 load_ratio \u2192 power_kW data. Reason: {exc}"
+                )
+                validation.setdefault("errors", []).append(error_message)
+                result["validation"] = validation
+                result["error"] = error_message
+                return result
+        else:
+            engine_output_kw, engine_efficiency, engine_fuel_input_kw, engine_waste_heat_kw, engine_curve_source = _evaluate_engine_curve(
+                engine_curve, project_load_ratio, library_active_units
+            )
+            engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
+                engine_radiator_curve, project_load_ratio, library_active_units, engine_waste_heat_kw
+            )
 
         # Total facility power
         it_terminal_load_kw = it_kw
         mep_terminal_load_kw = cooling_kw + pumps_kw + airflow_kw + aux_kw + other_kw + white_space_equipment_power_kw + engine_radiator_power_kw
-        if electrical_path_enabled:
+        electrical_distribution_curve_source = "legacy_non_configuration_mode"
+        electrical_distribution_curve_type = None
+        electrical_distribution_base_power_kw = None
+        if configuration_library_direct_mode:
+            electrical_error = None
+            if not electrical_path_enabled:
+                electrical_error = (
+                    "ELECTRICAL_DISTRIBUTION_2 equipment data is missing valid IT and MEP efficiencies."
+                )
+            else:
+                try:
+                    from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
+
+                    electrical_equipment_id = "ELECTRICAL_DISTRIBUTION_2"
+                    it_curve_id = f"{electrical_equipment_id}:IT"
+                    mep_curve_id = f"{electrical_equipment_id}:MEP"
+                    engine_key = "electrical_distribution:ELECTRICAL_DISTRIBUTION_2"
+                    if engine_key not in configuration_equipment_engines:
+                        configuration_equipment_engines[engine_key] = ConfigurationLibraryEquipmentEngine(
+                            EquipmentEngineConfig(
+                                preloaded_curves={
+                                    it_curve_id: _electrical_efficiency_curve(
+                                        electrical_equipment_id, "IT", it_path_efficiency
+                                    ),
+                                    mep_curve_id: _electrical_efficiency_curve(
+                                        electrical_equipment_id, "MEP", mep_path_efficiency
+                                    ),
+                                }
+                            )
+                        )
+                    electrical_engine = configuration_equipment_engines[engine_key]
+                    it_loss_result = electrical_engine.lookup_electrical_loss(
+                        it_curve_id,
+                        project_load_ratio,
+                        base_power_kW=it_terminal_load_kw,
+                    )
+                    mep_loss_result = electrical_engine.lookup_electrical_loss(
+                        mep_curve_id,
+                        project_load_ratio,
+                        base_power_kW=mep_terminal_load_kw,
+                    )
+                    if not it_loss_result.lookup_success:
+                        raise ValueError("; ".join(it_loss_result.errors) or "IT electrical distribution lookup failed.")
+                    if not mep_loss_result.lookup_success:
+                        raise ValueError("; ".join(mep_loss_result.errors) or "MEP electrical distribution lookup failed.")
+                    it_electrical_loss_kw = max(0.0, float(it_loss_result.loss_kW or 0.0))
+                    mep_electrical_loss_kw = max(0.0, float(mep_loss_result.loss_kW or 0.0))
+                    power_dist_loss = it_electrical_loss_kw + mep_electrical_loss_kw
+                    it_upstream_power_kw = it_terminal_load_kw + it_electrical_loss_kw
+                    mep_upstream_power_kw = mep_terminal_load_kw + mep_electrical_loss_kw
+                    total_facility_power = it_upstream_power_kw + mep_upstream_power_kw
+                    electrical_distribution_curve_source = "configuration_library_solver_curve"
+                    electrical_distribution_curve_type = "efficiency"
+                    electrical_distribution_base_power_kw = it_terminal_load_kw + mep_terminal_load_kw
+                except Exception as exc:
+                    electrical_error = str(exc)
+            if electrical_distribution_curve_source != "configuration_library_solver_curve":
+                reason = electrical_error or "ELECTRICAL_DISTRIBUTION_2 lookup failed."
+                error_message = (
+                    "ELECTRICAL_DISTRIBUTION_2 Solver_Curve missing or invalid. Configuration Library direct mode "
+                    "requires electrical distribution loss data using one of: load_ratio + efficiency, "
+                    "load_ratio + loss_fraction, or load_ratio + loss_kW. "
+                    f"Reason: {reason}"
+                )
+                validation.setdefault("errors", []).append(error_message)
+                result["validation"] = validation
+                result["error"] = error_message
+                return result
+        elif electrical_path_enabled:
             it_upstream_power_kw = it_terminal_load_kw / it_path_efficiency
             mep_upstream_power_kw = mep_terminal_load_kw / mep_path_efficiency
             it_electrical_loss_kw = it_upstream_power_kw - it_terminal_load_kw
@@ -2205,6 +2695,7 @@ def compute_pue_project(input_obj):
             "pump_power_total_check": pump_power_total_check,
             "pump_power_kW": pumps_kw,
             "pumps_kw": pumps_kw,
+            "chw_pump_curve_source": chw_pump_curve_source,
             "pump_power_details": pump_debug_rows,
             "airflow_power_kW": airflow_kw,
             "terminal_fan_power_kW": airflow_kw,
@@ -2222,17 +2713,26 @@ def compute_pue_project(input_obj):
             "it_electrical_loss_kW": it_electrical_loss_kw,
             "mep_electrical_loss_kW": mep_electrical_loss_kw,
             "electrical_path_applied": electrical_path_enabled,
+            "electrical_distribution_curve_source": electrical_distribution_curve_source,
+            "electrical_distribution_curve_type": electrical_distribution_curve_type,
+            "electrical_distribution_base_power_kW": electrical_distribution_base_power_kw,
             "cdu_power_kW": cdu_power_kw,
+            "cdu_curve_source": cdu_curve_source,
             "rtc_power_kW": rtc_power_kw,
+            "rtc_curve_source": rtc_curve_source,
             "mau_power_kW": mau_power_kw,
+            "mau_curve_source": mau_curve_source,
             "white_space_equipment_power_kW": white_space_equipment_power_kw,
             "engine_output_kW": engine_output_kw,
+            "engine_power_kW": engine_output_kw,
             "engine_efficiency": engine_efficiency,
             "engine_fuel_input_kW": engine_fuel_input_kw,
             "engine_waste_heat_kW": engine_waste_heat_kw,
             "engine_curve_source": engine_curve_source,
+            "engine_curve_type": engine_curve_type,
             "engine_radiator_power_kW": engine_radiator_power_kw,
             "engine_radiator_curve_source": engine_radiator_curve_source,
+            "engine_radiator_curve_type": engine_radiator_curve_type,
             "auxiliary_power_kW": aux_kw + other_kw,
             "total_facility_power_kW": total_facility_power,
             "hourly_PUE": pue
@@ -2261,8 +2761,23 @@ def compute_pue_project(input_obj):
     dry_cooler_max_heat_rejection = max(dry_cooler_heat_rejection_values) if dry_cooler_heat_rejection_values else None
     dry_cooler_max_load_ratio_raw = max(dry_cooler_load_ratio_raw_values) if dry_cooler_load_ratio_raw_values else None
     annual_pump = sum(item.get("pump_power_kW", 0.0) for item in result["hourly_results"])
+    chw_pump_curve_sources = [
+        item.get("chw_pump_curve_source")
+        for item in result["hourly_results"]
+        if item.get("chw_pump_curve_source") not in (None, "not_applied")
+    ]
     annual_terminal_fan = sum(item.get("terminal_fan_power_kW", 0.0) for item in result["hourly_results"])
     annual_loss = sum(item.get("electrical_loss_kW", 0.0) for item in result["hourly_results"])
+    electrical_distribution_curve_sources = [
+        item.get("electrical_distribution_curve_source")
+        for item in result["hourly_results"]
+        if item.get("electrical_distribution_curve_source") not in (None, "not_applied")
+    ]
+    electrical_distribution_curve_types = [
+        item.get("electrical_distribution_curve_type")
+        for item in result["hourly_results"]
+        if item.get("electrical_distribution_curve_type") not in (None, "not_applied")
+    ]
     annual_it_terminal = sum(item.get("it_terminal_load_kW", item.get("IT_load_kW", 0.0)) for item in result["hourly_results"])
     annual_it_upstream = sum(item.get("it_upstream_power_kW", item.get("IT_load_kW", 0.0)) for item in result["hourly_results"])
     annual_mep_terminal = sum(item.get("mep_terminal_load_kW", 0.0) for item in result["hourly_results"])
@@ -2272,6 +2787,21 @@ def compute_pue_project(input_obj):
     annual_cdu = sum(item.get("cdu_power_kW", 0.0) for item in result["hourly_results"])
     annual_rtc = sum(item.get("rtc_power_kW", 0.0) for item in result["hourly_results"])
     annual_mau = sum(item.get("mau_power_kW", 0.0) for item in result["hourly_results"])
+    cdu_curve_sources = [
+        item.get("cdu_curve_source")
+        for item in result["hourly_results"]
+        if item.get("cdu_curve_source") not in (None, "not_applied")
+    ]
+    rtc_curve_sources = [
+        item.get("rtc_curve_source")
+        for item in result["hourly_results"]
+        if item.get("rtc_curve_source") not in (None, "not_applied")
+    ]
+    mau_curve_sources = [
+        item.get("mau_curve_source")
+        for item in result["hourly_results"]
+        if item.get("mau_curve_source") not in (None, "not_applied")
+    ]
     annual_white_space_equipment = sum(item.get("white_space_equipment_power_kW", 0.0) for item in result["hourly_results"])
     annual_acc = sum(item.get("acc_power_kW", 0.0) for item in result["hourly_results"])
     acc_cop_values = [item.get("acc_cop") for item in result["hourly_results"] if item.get("acc_cop") is not None]
@@ -2283,9 +2813,11 @@ def compute_pue_project(input_obj):
     annual_engine_waste_heat = sum(item.get("engine_waste_heat_kW", 0.0) for item in result["hourly_results"])
     engine_efficiency_values = [item.get("engine_efficiency") for item in result["hourly_results"] if item.get("engine_efficiency") is not None]
     engine_curve_sources = [item.get("engine_curve_source") for item in result["hourly_results"] if item.get("engine_curve_source") not in (None, "not_applied")]
+    engine_curve_types = [item.get("engine_curve_type") for item in result["hourly_results"] if item.get("engine_curve_type") not in (None, "not_applied")]
     annual_engine_radiator = sum(item.get("engine_radiator_power_kW", 0.0) for item in result["hourly_results"])
     max_engine_radiator = max((item.get("engine_radiator_power_kW", 0.0) for item in result["hourly_results"]), default=0.0)
     engine_radiator_sources = [item.get("engine_radiator_curve_source") for item in result["hourly_results"] if item.get("engine_radiator_curve_source") not in (None, "not_applied")]
+    engine_radiator_curve_types = [item.get("engine_radiator_curve_type") for item in result["hourly_results"] if item.get("engine_radiator_curve_type") not in (None, "not_applied")]
     annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
     annual_pue = annual_facility / annual_it_terminal if annual_it_terminal > 0 else None
     hourly_pues = [item.get("hourly_PUE") for item in result["hourly_results"] if item.get("hourly_PUE") is not None]
@@ -2318,13 +2850,27 @@ def compute_pue_project(input_obj):
         "dry_cooler_max_heat_rejection_kW": dry_cooler_max_heat_rejection,
         "dry_cooler_max_load_ratio_raw": dry_cooler_max_load_ratio_raw,
         "annual_pump_energy_kWh": annual_pump,
+        "chw_pump_curve_source": chw_pump_curve_sources[0] if chw_pump_curve_sources else "legacy_non_configuration_mode",
         "annual_terminal_fan_energy_kWh": annual_terminal_fan,
         "annual_electrical_loss_kWh": annual_loss,
+        "electrical_distribution_curve_source": (
+            electrical_distribution_curve_sources[0]
+            if electrical_distribution_curve_sources
+            else "legacy_non_configuration_mode"
+        ),
+        "electrical_distribution_curve_type": (
+            electrical_distribution_curve_types[0]
+            if electrical_distribution_curve_types
+            else None
+        ),
         "annual_it_electrical_loss_kWh": annual_it_electrical_loss,
         "annual_mep_electrical_loss_kWh": annual_mep_electrical_loss,
         "annual_cdu_energy_kWh": annual_cdu,
+        "cdu_curve_source": cdu_curve_sources[0] if cdu_curve_sources else "legacy_non_configuration_mode",
         "annual_rtc_energy_kWh": annual_rtc,
+        "rtc_curve_source": rtc_curve_sources[0] if rtc_curve_sources else "legacy_non_configuration_mode",
         "annual_mau_energy_kWh": annual_mau,
+        "mau_curve_source": mau_curve_sources[0] if mau_curve_sources else "legacy_non_configuration_mode",
         "annual_white_space_equipment_energy_kWh": annual_white_space_equipment,
         "annual_acc_energy_kWh": annual_acc,
         "average_acc_cop": sum(acc_cop_values) / len(acc_cop_values) if acc_cop_values else None,
@@ -2334,13 +2880,16 @@ def compute_pue_project(input_obj):
         "max_acc_power_kW": max_acc_power,
         "acc_curve_source": acc_curve_sources[0] if acc_curve_sources else "not_applied",
         "annual_engine_output_kWh": annual_engine_output,
+        "annual_engine_energy_kWh": annual_engine_output,
         "annual_engine_fuel_input_kWh": annual_engine_fuel,
         "annual_engine_waste_heat_kWh": annual_engine_waste_heat,
         "average_engine_efficiency": sum(engine_efficiency_values) / len(engine_efficiency_values) if engine_efficiency_values else None,
         "engine_curve_source": engine_curve_sources[0] if engine_curve_sources else "not_applied",
+        "engine_curve_type": engine_curve_types[0] if engine_curve_types else None,
         "annual_engine_radiator_energy_kWh": annual_engine_radiator,
         "max_engine_radiator_power_kW": max_engine_radiator,
         "engine_radiator_curve_source": engine_radiator_sources[0] if engine_radiator_sources else "not_applied",
+        "engine_radiator_curve_type": engine_radiator_curve_types[0] if engine_radiator_curve_types else None,
         "annual_auxiliary_energy_kWh": annual_aux,
         "min_hourly_PUE": min(hourly_pues) if hourly_pues else None,
         "max_hourly_PUE": max(hourly_pues) if hourly_pues else None

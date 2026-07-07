@@ -36,6 +36,55 @@ class CalculationResult:
 
 
 @dataclass
+class HourlyResult:
+    hour_index: int | None = None
+    it_load_kw: float | None = None
+    outdoor_dry_bulb_c: float | None = None
+    outdoor_wet_bulb_c: float | None = None
+    cooling_power_kw: float | None = None
+    pump_power_kw: float | None = None
+    fan_power_kw: float | None = None
+    electrical_loss_kw: float | None = None
+    auxiliary_power_kw: float | None = None
+    total_facility_power_kw: float | None = None
+    hourly_pue: float | None = None
+    equipment_results: dict[str, Any] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def make_hourly_result(**kwargs):
+    """Return a standardized HourlyResult with safe defaults."""
+    return HourlyResult(**kwargs)
+
+
+@dataclass
+class AnnualResult:
+    annual_average_pue: float | None = None
+    annual_it_energy_kwh: float | None = None
+    annual_facility_energy_kwh: float | None = None
+    annual_cooling_energy_kwh: float | None = None
+    annual_chiller_energy_kwh: float | None = None
+    annual_heat_rejection_energy_kwh: float | None = None
+    annual_pump_energy_kwh: float | None = None
+    annual_fan_energy_kwh: float | None = None
+    annual_electrical_loss_kwh: float | None = None
+    annual_auxiliary_energy_kwh: float | None = None
+    peak_total_facility_power_kw: float | None = None
+    min_hourly_pue: float | None = None
+    max_hourly_pue: float | None = None
+    equipment_energy_breakdown: dict[str, Any] = field(default_factory=dict)
+    monthly_average_pue: list[float] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def make_annual_result(**kwargs):
+    """Return a standardized AnnualResult with safe defaults."""
+    return AnnualResult(**kwargs)
+
+
+@dataclass
 class CalculatorCapability:
     calculator_id: str
     display_name: str
