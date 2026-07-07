@@ -6,6 +6,7 @@ metadata-only and is not imported by solver.py.
 
 from copy import deepcopy
 
+from equipment_registry import equipment_ids_equivalent
 from topology_registry import get_topology, get_topology_equipment
 
 
@@ -75,12 +76,14 @@ PERFORMANCE_REQUIREMENT_REGISTRY = {
     },
     "terminal_fan_curve": {
         "requirement_id": "terminal_fan_curve",
-        "display_name": "Terminal Fan Curve",
+        "display_name": "MAU / Terminal Fan Curve",
         "requirement_category": "equipment_performance_curve",
         "expected_file_type": ["xlsx", "csv", "json"],
         "typical_independent_variables": ["airflow", "fan speed", "static pressure"],
         "typical_dependent_variables": ["fan power"],
-        "used_by_equipment_ids": ["terminal_fan"],
+        # MAU is the canonical engineering equipment. terminal_fan is a legacy
+        # compatibility alias for the current simplified fan/fixed-power model.
+        "used_by_equipment_ids": ["mau", "terminal_fan"],
         "implementation_status": "implemented",
     },
     "electrical_efficiency_curve": {
@@ -95,12 +98,14 @@ PERFORMANCE_REQUIREMENT_REGISTRY = {
     },
     "auxiliary_fixed_load": {
         "requirement_id": "auxiliary_fixed_load",
-        "display_name": "Auxiliary Fixed Load",
+        "display_name": "RTC Fixed / Terminal Load",
         "requirement_category": "fixed_load_model",
         "expected_file_type": ["xlsx", "csv", "json"],
         "typical_independent_variables": ["operating hour", "scenario"],
         "typical_dependent_variables": ["auxiliary power", "auxiliary energy"],
-        "used_by_equipment_ids": ["auxiliary_load"],
+        # RTC is the canonical engineering equipment. auxiliary_load is only a
+        # backward-compatible alias, not an exact engineering definition.
+        "used_by_equipment_ids": ["rtc", "auxiliary_load"],
         "implementation_status": "implemented",
     },
     "gas_engine_curve": {
@@ -171,7 +176,7 @@ PERFORMANCE_REQUIREMENT_REGISTRY = {
     },
     "heat_exchanger_curve": {
         "requirement_id": "heat_exchanger_curve",
-        "display_name": "Heat Exchanger Curve",
+        "display_name": "Engine Radiator Curve",
         "requirement_category": "equipment_performance_curve",
         "expected_file_type": ["xlsx", "csv", "json"],
         "typical_independent_variables": [
@@ -180,7 +185,9 @@ PERFORMANCE_REQUIREMENT_REGISTRY = {
             "flow rates",
         ],
         "typical_dependent_variables": ["heat transfer rate", "leaving fluid temperatures"],
-        "used_by_equipment_ids": ["heat_exchanger"],
+        # Engine Radiator is canonical. heat_exchanger is only a compatibility
+        # alias for older topology definitions.
+        "used_by_equipment_ids": ["engine_radiator", "heat_exchanger"],
         "implementation_status": "placeholder",
     },
 }
@@ -220,7 +227,7 @@ def list_requirements_by_equipment(equipment_id):
     return [
         deepcopy(requirement)
         for requirement in PERFORMANCE_REQUIREMENT_REGISTRY.values()
-        if equipment_id in requirement["used_by_equipment_ids"]
+        if any(equipment_ids_equivalent(equipment_id, used_id) for used_id in requirement["used_by_equipment_ids"])
     ]
 
 

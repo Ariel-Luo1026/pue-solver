@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from configuration_library_scanner import parse_equipment_folder_name
+from equipment_registry import canonicalize_equipment_id
 
 
 def _selected_curve(library_input, equipment_id):
@@ -12,11 +13,12 @@ def _selected_curve(library_input, equipment_id):
 
 
 def _resolve_equipment_key(mapping, preferred_equipment_id, canonical_equipment_id):
+    canonical_equipment_id = canonicalize_equipment_id(canonical_equipment_id)
     if preferred_equipment_id in mapping:
         return preferred_equipment_id
     for equipment_id in sorted(mapping):
         parsed = parse_equipment_folder_name(equipment_id)
-        if parsed["canonical_equipment_id"] == canonical_equipment_id:
+        if canonicalize_equipment_id(parsed["canonical_equipment_id"]) == canonical_equipment_id:
             return equipment_id
     return preferred_equipment_id
 
@@ -94,7 +96,7 @@ def convert_library_input_to_solver_input(library_input):
     acc_equipment_id = _resolve_equipment_key(selected_curves, "ACC_2", "acc_unit")
     pump_equipment_id = _resolve_equipment_key(selected_curves, "CHW_PUMP_2", "pump")
     engine_equipment_id = _resolve_equipment_key(selected_curves, "ENGINE_2", "gas_engine")
-    radiator_equipment_id = _resolve_equipment_key(selected_curves, "ENGINE_RADIATOR_2", "heat_exchanger")
+    radiator_equipment_id = _resolve_equipment_key(selected_curves, "ENGINE_RADIATOR_2", "engine_radiator")
 
     acc_rows = _selected_curve(library_input, acc_equipment_id)
     pump_rows = _selected_curve(library_input, pump_equipment_id)

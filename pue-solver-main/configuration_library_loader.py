@@ -11,6 +11,7 @@ from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
 from configuration_library_scanner import parse_equipment_folder_name
+from equipment_registry import canonicalize_equipment_id
 
 SUPPORTED_CONFIGURATIONS = {"ACC_1.5MW_GASENGINE_CDU"}
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
@@ -256,7 +257,7 @@ def _resolve_actual_equipment_folder(equipment_root, requested_equipment_id):
         return requested_equipment_id
 
     requested = parse_equipment_folder_name(requested_equipment_id)
-    requested_canonical = requested["canonical_equipment_id"]
+    requested_canonical = requested["canonical_equipment_id"] or canonicalize_equipment_id(requested_equipment_id)
     if not requested_canonical or not equipment_root.is_dir():
         return requested_equipment_id
 
@@ -397,7 +398,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
     acc_id = _resolve_loaded_equipment_id(loaded["equipment"], "ACC_2", "acc_unit")
     pump_id = _resolve_loaded_equipment_id(loaded["equipment"], "CHW_PUMP_2", "pump")
     engine_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_2", "gas_engine")
-    radiator_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_RADIATOR_2", "heat_exchanger")
+    radiator_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_RADIATOR_2", "engine_radiator")
     electrical_id = _resolve_loaded_equipment_id(
         loaded["equipment"], "ELECTRICAL_DISTRIBUTION_2", "electrical_distribution"
     )
@@ -405,8 +406,8 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         _resolve_loaded_equipment_id(loaded["equipment"], preferred, canonical)
         for preferred, canonical in (
             ("CDU_2", "cdu"),
-            ("RTC_2", "auxiliary_load"),
-            ("MAU_2", "terminal_fan"),
+            ("RTC_2", "rtc"),
+            ("MAU_2", "mau"),
         )
     ]
 
@@ -470,10 +471,11 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
 
 
 def _resolve_loaded_equipment_id(equipment_packages, preferred_equipment_id, canonical_equipment_id):
+    canonical_equipment_id = canonicalize_equipment_id(canonical_equipment_id)
     if preferred_equipment_id in equipment_packages:
         return preferred_equipment_id
     for equipment_id in sorted(equipment_packages):
         parsed = parse_equipment_folder_name(equipment_id)
-        if parsed["canonical_equipment_id"] == canonical_equipment_id:
+        if canonicalize_equipment_id(parsed["canonical_equipment_id"]) == canonical_equipment_id:
             return equipment_id
     raise KeyError(f"No equipment package found for {preferred_equipment_id} / {canonical_equipment_id}")

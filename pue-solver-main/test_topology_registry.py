@@ -7,6 +7,7 @@ from topology_registry import (
     get_topology_equipment,
     list_topologies,
 )
+from equipment_registry import equipment_ids_equivalent
 
 
 class TopologyRegistryTest(unittest.TestCase):
@@ -66,10 +67,10 @@ class TopologyRegistryTest(unittest.TestCase):
     def test_all_topology_equipment_ids_are_valid(self):
         for topology_id in TOPOLOGY_REGISTRY:
             records = get_topology_equipment(topology_id)
-            self.assertEqual(
-                [record["equipment_id"] for record in records],
-                get_topology(topology_id)["equipment_ids"],
-            )
+            expected_ids = get_topology(topology_id)["equipment_ids"]
+            self.assertEqual(len(records), len(expected_ids))
+            for record, expected_id in zip(records, expected_ids):
+                self.assertTrue(equipment_ids_equivalent(record["equipment_id"], expected_id))
 
     def test_acc_topology_includes_current_acc_equipment_references(self):
         equipment_ids = set(get_topology("acc")["equipment_ids"])

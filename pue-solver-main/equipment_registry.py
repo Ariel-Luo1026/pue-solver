@@ -62,10 +62,11 @@ EQUIPMENT_REGISTRY = {
         "calculation_role": "fluid circulation power for cooling loops",
         "implementation_status": "implemented",
     },
-    "terminal_fan": {
-        "equipment_id": "terminal_fan",
-        "display_name": "Terminal Fan",
+    "mau": {
+        "equipment_id": "mau",
+        "display_name": "MAU",
         "equipment_category": "air_movement",
+        "category": "air_movement",
         "energy_type": ["electricity"],
         "typical_inputs": [
             "airflow",
@@ -77,8 +78,15 @@ EQUIPMENT_REGISTRY = {
             "air circulation",
         ],
         "required_performance_curves": ["Fan power curve"],
-        "calculation_role": "white-space air movement support load",
+        "calculation_role": "make-up air unit fan or fixed-power support load in the current simplified model",
         "implementation_status": "implemented",
+        "status": "implemented",
+        "canonical_name": "mau",
+        "aliases": ["terminal_fan"],
+        "engineering_description": (
+            "Make-Up Air Unit; may include fan, filter, damper and air-side "
+            "conditioning equipment; currently modeled as fan or fixed power where applicable."
+        ),
     },
     "electrical_distribution": {
         "equipment_id": "electrical_distribution",
@@ -98,13 +106,14 @@ EQUIPMENT_REGISTRY = {
         "calculation_role": "electrical-loss accounting for facility power",
         "implementation_status": "implemented",
     },
-    "auxiliary_load": {
-        "equipment_id": "auxiliary_load",
-        "display_name": "Auxiliary Load",
+    "rtc": {
+        "equipment_id": "rtc",
+        "display_name": "RTC",
         "equipment_category": "auxiliary",
+        "category": "auxiliary",
         "energy_type": ["electricity"],
         "typical_inputs": [
-            "auxiliary load allowance",
+            "RTC terminal load allowance",
             "operating hours",
             "scenario factor",
         ],
@@ -113,8 +122,15 @@ EQUIPMENT_REGISTRY = {
             "auxiliary energy",
         ],
         "required_performance_curves": ["Auxiliary load profile"],
-        "calculation_role": "non-primary support load included in facility energy",
+        "calculation_role": "room terminal cooling / temperature control load represented by fixed or fan power",
         "implementation_status": "implemented",
+        "status": "implemented",
+        "canonical_name": "rtc",
+        "aliases": ["auxiliary_load"],
+        "engineering_description": (
+            "Room terminal cooling / room temperature control equipment; currently "
+            "modeled mainly through RTC fan power or terminal cooling behavior."
+        ),
     },
     "chiller": {
         "equipment_id": "chiller",
@@ -210,30 +226,82 @@ EQUIPMENT_REGISTRY = {
         "calculation_role": "on-site power source option for cooling-system configurations",
         "implementation_status": "implemented",
     },
-    "heat_exchanger": {
-        "equipment_id": "heat_exchanger",
-        "display_name": "Heat Exchanger",
+    "engine_radiator": {
+        "equipment_id": "engine_radiator",
+        "display_name": "Engine Radiator",
         "equipment_category": "heat_transfer",
+        "category": "heat_transfer",
         "energy_type": ["thermal"],
         "typical_inputs": [
-            "hot-side inlet temperature",
-            "cold-side inlet temperature",
-            "flow rates",
+            "engine waste heat",
+            "radiator fan speed",
+            "ambient temperature",
         ],
         "typical_outputs": [
-            "heat transfer rate",
-            "leaving fluid temperatures",
+            "engine radiator power",
+            "engine heat rejection capacity",
         ],
         "required_performance_curves": ["Heat exchanger performance curve"],
-        "calculation_role": "thermal transfer equipment for future hybrid topologies",
+        "calculation_role": "gas engine radiator / radiator fan / engine heat rejection equipment",
         "implementation_status": "placeholder",
+        "status": "placeholder",
+        "canonical_name": "engine_radiator",
+        "aliases": ["heat_exchanger"],
+        "engineering_description": (
+            "Gas engine radiator / radiator fan / engine heat rejection equipment; "
+            "not a generic heat exchanger."
+        ),
     },
 }
 
 
+# Compatibility aliases only:
+# - auxiliary_load resolves to rtc, but RTC is not a generic auxiliary load.
+# - terminal_fan resolves to mau, but MAU is not the same engineering device as RTC.
+# - heat_exchanger resolves to engine_radiator, but an engine radiator is not a generic plate heat exchanger.
+EQUIPMENT_ALIASES = {
+    alias: equipment_id
+    for equipment_id, equipment in EQUIPMENT_REGISTRY.items()
+    for alias in equipment.get("aliases", [])
+}
+
+
+for _equipment_id, _equipment in EQUIPMENT_REGISTRY.items():
+    _equipment.setdefault("canonical_name", _equipment_id)
+    _equipment.setdefault("aliases", [])
+    _equipment.setdefault("category", _equipment.get("equipment_category"))
+    _equipment.setdefault("status", _equipment.get("implementation_status"))
+    _equipment.setdefault("engineering_description", _equipment.get("calculation_role", ""))
+
+
+def canonicalize_equipment_id(equipment_id):
+    """Return the engineering canonical equipment ID for an ID or legacy alias."""
+    if equipment_id is None:
+        return None
+    value = str(equipment_id)
+    return EQUIPMENT_ALIASES.get(value, value)
+
+
+def get_equipment_aliases(equipment_id):
+    """Return compatibility aliases for an equipment ID."""
+    canonical_id = canonicalize_equipment_id(equipment_id)
+    equipment = EQUIPMENT_REGISTRY.get(canonical_id)
+    return list(equipment.get("aliases", [])) if equipment else []
+
+
+def is_equipment_alias(equipment_id):
+    """Return True when equipment_id is a legacy compatibility alias."""
+    return str(equipment_id) in EQUIPMENT_ALIASES
+
+
+def equipment_ids_equivalent(a, b):
+    """Return True when two equipment IDs resolve to the same canonical ID."""
+    return canonicalize_equipment_id(a) == canonicalize_equipment_id(b)
+
+
 def get_equipment(equipment_id):
     """Return equipment metadata by equipment ID, or None if it is unknown."""
-    equipment = EQUIPMENT_REGISTRY.get(equipment_id)
+    equipment = EQUIPMENT_REGISTRY.get(canonicalize_equipment_id(equipment_id))
     return deepcopy(equipment) if equipment else None
 
 

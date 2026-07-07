@@ -124,11 +124,11 @@ class ConfigurationValidatorTest(unittest.TestCase):
             summary = self._validate_path(configuration_path)
 
         self.assertIn(
-            {"equipment_folder": "RTC_2", "equipment_id": "auxiliary_load", "message": "RTC_2 → auxiliary_load is tentative."},
+            {"equipment_folder": "RTC_2", "equipment_id": "rtc", "message": "RTC_2 → rtc is tentative."},
             summary["tentative_equipment_mappings"],
         )
         self.assertIn(
-            "Review tentative mapping: RTC_2 → auxiliary_load",
+            "Review tentative mapping: RTC_2 → rtc",
             summary["recommended_next_actions"],
         )
 
@@ -142,13 +142,35 @@ class ConfigurationValidatorTest(unittest.TestCase):
             summary = self._validate_path(configuration_path)
 
         self.assertIn(
-            {"equipment_folder": "RTC_1&2", "equipment_id": "auxiliary_load", "message": "RTC_1&2 → auxiliary_load is tentative."},
+            {"equipment_folder": "RTC_1&2", "equipment_id": "rtc", "message": "RTC_1&2 → rtc is tentative."},
             summary["tentative_equipment_mappings"],
         )
         self.assertIn(
-            {"equipment_folder": "MAU_1&2", "equipment_id": "terminal_fan", "message": "MAU_1&2 → terminal_fan is tentative."},
+            {"equipment_folder": "MAU_1&2", "equipment_id": "mau", "message": "MAU_1&2 → mau is tentative."},
             summary["tentative_equipment_mappings"],
         )
+
+    def test_canonical_detected_ids_satisfy_legacy_topology_expectations(self):
+        with TemporaryDirectory() as temp_dir:
+            configuration_path = self._make_configuration(
+                temp_dir,
+                "ACC_1.5MW_GASENGINE_CDU",
+                [
+                    "ACC_2",
+                    "CDU_2",
+                    "CHW_PUMP_2",
+                    "ELECTRICAL_DISTRIBUTION_2",
+                    "ENGINE_3",
+                    "MAU_1&2",
+                    "RTC_1&2",
+                ],
+            )
+            summary = self._validate_path(configuration_path)
+
+        self.assertNotIn("terminal_fan", summary["missing_equipment_ids"])
+        self.assertNotIn("auxiliary_load", summary["missing_equipment_ids"])
+        self.assertIn("terminal_fan", summary["present_equipment_ids"])
+        self.assertIn("auxiliary_load", summary["present_equipment_ids"])
 
     def test_validate_configuration_library_returns_multiple_summaries(self):
         with TemporaryDirectory() as temp_dir:

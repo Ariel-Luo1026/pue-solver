@@ -35,9 +35,9 @@ class ConfigurationLibraryScannerTest(unittest.TestCase):
                 "electrical_distribution",
             ),
             "ENGINE_3": ("ENGINE", "3", "gas_engine"),
-            "ENGINE_RADIATOR_1": ("ENGINE_RADIATOR", "1", "heat_exchanger"),
-            "MAU_1&2": ("MAU", "1&2", "terminal_fan"),
-            "RTC_1&2": ("RTC", "1&2", "auxiliary_load"),
+            "ENGINE_RADIATOR_1": ("ENGINE_RADIATOR", "1", "engine_radiator"),
+            "MAU_1&2": ("MAU", "1&2", "mau"),
+            "RTC_1&2": ("RTC", "1&2", "rtc"),
         }
 
         for folder_name, (equipment_type, instance_token, equipment_id) in cases.items():
@@ -55,12 +55,32 @@ class ConfigurationLibraryScannerTest(unittest.TestCase):
             "ACC_01_02": ("01_02", True),
             "ACC_A": ("A", False),
             "ACC_North": ("North", False),
+            "RTC_01_02": ("01_02", True),
+            "RTC_North": ("North", False),
+            "MAU_01_02": ("01_02", True),
+            "MAU_North": ("North", False),
+            "ENGINE_RADIATOR_North": ("North", False),
         }
 
         for folder_name, (instance_token, grouped) in cases.items():
             with self.subTest(folder_name=folder_name):
                 parsed = parse_equipment_folder_name(folder_name)
-                self.assertEqual(parsed["canonical_equipment_id"], "acc_unit")
+                expected_equipment_id = {
+                    "RTC": "rtc",
+                    "MAU": "mau",
+                    "ENGINE_RADIATOR": "engine_radiator",
+                }
+                self.assertEqual(
+                    parsed["canonical_equipment_id"],
+                    next(
+                        (
+                            equipment_id
+                            for prefix, equipment_id in expected_equipment_id.items()
+                            if folder_name.startswith(prefix)
+                        ),
+                        "acc_unit",
+                    ),
+                )
                 self.assertEqual(parsed["instance_token"], instance_token)
                 self.assertEqual(parsed["is_grouped_instance"], grouped)
 
@@ -68,7 +88,7 @@ class ConfigurationLibraryScannerTest(unittest.TestCase):
         parsed = parse_equipment_folder_name("ENGINE_RADIATOR_1")
 
         self.assertEqual(parsed["equipment_type_token"], "ENGINE_RADIATOR")
-        self.assertEqual(parsed["canonical_equipment_id"], "heat_exchanger")
+        self.assertEqual(parsed["canonical_equipment_id"], "engine_radiator")
         self.assertNotEqual(parsed["canonical_equipment_id"], "gas_engine")
 
     def test_parse_equipment_folder_name_marks_grouped_instances(self):
@@ -167,12 +187,10 @@ class ConfigurationLibraryScannerTest(unittest.TestCase):
             )
             manifest = scan_single_configuration(configuration_path)
 
-        self.assertIn("heat_exchanger", manifest["detected_equipment_ids"])
-        self.assertIn("terminal_fan", manifest["detected_equipment_ids"])
-        self.assertIn("auxiliary_load", manifest["detected_equipment_ids"])
-        self.assertTrue(
-            any("tentative" in message.lower() for message in manifest["validation_messages"])
-        )
+        self.assertIn("engine_radiator", manifest["detected_equipment_ids"])
+        self.assertIn("mau", manifest["detected_equipment_ids"])
+        self.assertIn("rtc", manifest["detected_equipment_ids"])
+        self.assertTrue(any("engine_radiator" in message for message in manifest["validation_messages"]))
 
     def test_scanner_recognizes_updated_engineering_equipment_folder_names(self):
         with TemporaryDirectory() as temp_dir:
@@ -198,9 +216,9 @@ class ConfigurationLibraryScannerTest(unittest.TestCase):
         self.assertIn("pump", manifest["detected_equipment_ids"])
         self.assertIn("electrical_distribution", manifest["detected_equipment_ids"])
         self.assertIn("gas_engine", manifest["detected_equipment_ids"])
-        self.assertIn("heat_exchanger", manifest["detected_equipment_ids"])
-        self.assertIn("terminal_fan", manifest["detected_equipment_ids"])
-        self.assertIn("auxiliary_load", manifest["detected_equipment_ids"])
+        self.assertIn("engine_radiator", manifest["detected_equipment_ids"])
+        self.assertIn("mau", manifest["detected_equipment_ids"])
+        self.assertIn("rtc", manifest["detected_equipment_ids"])
         self.assertEqual(manifest["unexpected_equipment_folders"], [])
         self.assertIn("detected_equipment_instances", manifest)
         grouped = {

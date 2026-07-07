@@ -2,7 +2,11 @@ import unittest
 
 from equipment_registry import (
     EQUIPMENT_REGISTRY,
+    canonicalize_equipment_id,
+    equipment_ids_equivalent,
     get_equipment,
+    get_equipment_aliases,
+    is_equipment_alias,
     list_equipment,
     list_equipment_by_category,
     list_equipment_by_status,
@@ -17,15 +21,15 @@ class EquipmentRegistryTest(unittest.TestCase):
                 "acc_unit",
                 "cdu",
                 "pump",
-                "terminal_fan",
+                "mau",
                 "electrical_distribution",
-                "auxiliary_load",
+                "rtc",
                 "chiller",
                 "dry_cooler",
                 "cooling_tower",
                 "absorption_chiller",
                 "gas_engine",
-                "heat_exchanger",
+                "engine_radiator",
             },
         )
         self.assertEqual(len(list_equipment()), 12)
@@ -64,12 +68,41 @@ class EquipmentRegistryTest(unittest.TestCase):
         self.assertIn("dry_cooler", placeholder_ids)
         self.assertIn("cooling_tower", placeholder_ids)
         self.assertIn("absorption_chiller", placeholder_ids)
-        self.assertIn("heat_exchanger", placeholder_ids)
+        self.assertIn("engine_radiator", placeholder_ids)
 
     def test_lookup_results_are_copies(self):
         equipment = get_equipment("acc_unit")
         equipment["typical_inputs"].append("Mutation")
         self.assertNotIn("Mutation", get_equipment("acc_unit")["typical_inputs"])
+
+    def test_engineering_canonical_alias_lookup(self):
+        cases = (
+            ("rtc", "auxiliary_load"),
+            ("mau", "terminal_fan"),
+            ("engine_radiator", "heat_exchanger"),
+        )
+        for canonical_id, alias in cases:
+            with self.subTest(canonical_id=canonical_id, alias=alias):
+                canonical = get_equipment(canonical_id)
+                legacy = get_equipment(alias)
+                self.assertIsNotNone(canonical)
+                self.assertIsNotNone(legacy)
+                self.assertEqual(canonical["canonical_name"], canonical_id)
+                self.assertEqual(legacy["canonical_name"], canonical_id)
+                self.assertEqual(canonicalize_equipment_id(alias), canonical_id)
+                self.assertTrue(is_equipment_alias(alias))
+                self.assertIn(alias, get_equipment_aliases(canonical_id))
+                self.assertTrue(equipment_ids_equivalent(canonical_id, alias))
+
+    def test_engineering_aliases_are_not_cross_equivalent(self):
+        self.assertFalse(equipment_ids_equivalent("rtc", "mau"))
+        self.assertFalse(equipment_ids_equivalent("rtc", "terminal_fan"))
+
+    def test_engineering_descriptions_use_specific_equipment_meaning(self):
+        self.assertIn("room terminal", get_equipment("rtc")["engineering_description"].lower())
+        self.assertIn("make-up air unit", get_equipment("mau")["engineering_description"].lower())
+        description = get_equipment("engine_radiator")["engineering_description"].lower()
+        self.assertTrue("gas engine radiator" in description or "radiator fan" in description)
 
 
 if __name__ == "__main__":

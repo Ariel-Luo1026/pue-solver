@@ -5,24 +5,33 @@ human-readable completeness summaries without invoking solver.py.
 """
 
 from configuration_library_scanner import parse_equipment_folder_name, scan_configuration_library
+from equipment_registry import equipment_ids_equivalent
 
 
 TENTATIVE_FOLDER_PREFIX_MAPPINGS = {
-    "ENGINE_RADIATOR": "heat_exchanger",
-    "MAU": "terminal_fan",
-    "RTC": "auxiliary_load",
+    # These are engineering canonical names. Legacy aliases remain compatible,
+    # but they are not exact engineering definitions:
+    # auxiliary_load -> rtc, terminal_fan -> mau, heat_exchanger -> engine_radiator.
+    "ENGINE_RADIATOR": "engine_radiator",
+    "MAU": "mau",
+    "RTC": "rtc",
 }
 
 
 def validate_configuration_manifest(manifest):
     """Return a validation summary for a scanner manifest."""
     topology_equipment_ids = list(manifest.get("topology_equipment_ids") or [])
+    detected_equipment_ids = list(manifest.get("detected_equipment_ids", []))
     present_equipment_ids = [
-        equipment_id
-        for equipment_id in manifest.get("detected_equipment_ids", [])
-        if equipment_id in topology_equipment_ids
+        expected_id
+        for expected_id in topology_equipment_ids
+        if any(equipment_ids_equivalent(expected_id, detected_id) for detected_id in detected_equipment_ids)
     ]
-    missing_equipment_ids = list(manifest.get("missing_expected_equipment_ids") or [])
+    missing_equipment_ids = [
+        expected_id
+        for expected_id in topology_equipment_ids
+        if not any(equipment_ids_equivalent(expected_id, detected_id) for detected_id in detected_equipment_ids)
+    ] or list(manifest.get("missing_expected_equipment_ids") or [])
     unexpected_equipment_folders = list(manifest.get("unexpected_equipment_folders") or [])
     tentative_equipment_mappings = _detect_tentative_equipment_mappings(
         manifest.get("equipment_folders", []),
@@ -144,4 +153,3 @@ def _recommended_next_actions(
     for folder_name in unexpected_equipment_folders:
         actions.append(f"Confirm equipment folder meaning: {folder_name}")
     return actions
-

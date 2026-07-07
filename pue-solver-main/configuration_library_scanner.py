@@ -8,6 +8,7 @@ library contents.
 from pathlib import Path
 import re
 
+from equipment_registry import canonicalize_equipment_id, equipment_ids_equivalent
 from topology_registry import get_topology
 
 
@@ -29,12 +30,16 @@ EQUIPMENT_FOLDER_PREFIX_MAP = {
     "CDU": ("cdu", None),
     "CHW_PUMP": ("pump", None),
     "CW_PUMP": ("pump", None),
+    "HW_PUMP": ("pump", None),
     "PUMP": ("pump", None),
     "ELECTRICAL_DISTRIBUTION": ("electrical_distribution", None),
     "ENGINE": ("gas_engine", None),
+    "CENTRIFUGAL_CHILLER": ("chiller", None),
     "CHILLER": ("chiller", None),
     "DRY_COOLER": ("dry_cooler", None),
+    "DRYCOOLER": ("dry_cooler", None),
     "COOLING_TOWER": ("cooling_tower", None),
+    "COOLINGTOWER": ("cooling_tower", None),
     "ABS": ("absorption_chiller", None),
     "SMOKE_WATER_HX": ("heat_exchanger", None),
     "HEAT_EXCHANGER": ("heat_exchanger", None),
@@ -42,16 +47,16 @@ EQUIPMENT_FOLDER_PREFIX_MAP = {
     # They intentionally satisfy existing framework equipment IDs instead of
     # changing topology expectations or calculation behavior in this phase.
     "ENGINE_RADIATOR": (
-        "heat_exchanger",
-        "ENGINE_RADIATOR detected; mapped tentatively to heat_exchanger.",
+        "engine_radiator",
+        "ENGINE_RADIATOR detected; mapped to engine_radiator.",
     ),
     "MAU": (
-        "terminal_fan",
-        "MAU detected; mapped tentatively to terminal_fan.",
+        "mau",
+        "MAU detected; mapped to mau.",
     ),
     "RTC": (
-        "auxiliary_load",
-        "RTC detected; mapping is tentative.",
+        "rtc",
+        "RTC detected; mapped to rtc.",
     ),
 }
 
@@ -88,7 +93,7 @@ def scan_single_configuration(configuration_path):
     missing_expected_equipment_ids = [
         equipment_id
         for equipment_id in topology_equipment_ids
-        if equipment_id not in detected_equipment_ids
+        if not any(equipment_ids_equivalent(equipment_id, detected_id) for detected_id in detected_equipment_ids)
     ]
 
     validation_messages = []
@@ -207,6 +212,7 @@ def parse_equipment_folder_name(folder_name):
     for prefix in sorted(EQUIPMENT_FOLDER_PREFIX_MAP, key=len, reverse=True):
         if normalized == prefix or normalized.startswith(f"{prefix}_"):
             equipment_id, message = EQUIPMENT_FOLDER_PREFIX_MAP[prefix]
+            equipment_id = canonicalize_equipment_id(equipment_id)
             instance_token = _extract_instance_token(original_name, prefix)
             return {
                 "original_name": original_name,

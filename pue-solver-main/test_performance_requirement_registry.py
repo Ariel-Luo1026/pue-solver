@@ -87,6 +87,23 @@ class PerformanceRequirementRegistryTest(unittest.TestCase):
         self.assertIn("it_load_profile", requirement_ids)
         self.assertIn("weather_profile", requirement_ids)
 
+    def test_canonical_equipment_requirement_lookup_supports_legacy_aliases(self):
+        canonical_cases = {
+            "rtc": "auxiliary_fixed_load",
+            "auxiliary_load": "auxiliary_fixed_load",
+            "mau": "terminal_fan_curve",
+            "terminal_fan": "terminal_fan_curve",
+            "engine_radiator": "heat_exchanger_curve",
+            "heat_exchanger": "heat_exchanger_curve",
+        }
+        for equipment_id, requirement_id in canonical_cases.items():
+            with self.subTest(equipment_id=equipment_id):
+                requirement_ids = {
+                    requirement["requirement_id"]
+                    for requirement in list_requirements_by_equipment(equipment_id)
+                }
+                self.assertIn(requirement_id, requirement_ids)
+
     def test_lookup_results_are_copies(self):
         requirement = get_performance_requirement("acc_performance_curve")
         requirement["typical_independent_variables"].append("Mutation")
