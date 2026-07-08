@@ -4,6 +4,7 @@ The loader normalizes workbook content but deliberately does not invoke or
 modify solver.py. XLSX reading uses the Python standard library only.
 """
 
+import json
 from math import ceil
 from pathlib import Path
 from re import match
@@ -15,9 +16,43 @@ from equipment_registry import canonicalize_equipment_id
 
 SUPPORTED_CONFIGURATIONS = {"ACC_1.5MW_GASENGINE_CDU"}
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
+SHARED_ALIAS_PATH = Path(__file__).resolve().parent / "Configuration Library" / "equipment_aliases.json"
+DEFAULT_EQUIPMENT_ALIASES = {
+    "RTC_1": "RTC_1&2",
+    "RTC_2": "RTC_1&2",
+    "MAU_1": "MAU_1&2",
+    "MAU_2": "MAU_1&2",
+    "ENGINE_2": "ENGINE_3",
+    "ENGINE_RADIATOR_2": "ENGINE_RADIATOR_1",
+}
 
 _MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def load_equipment_aliases(alias_path=None):
+    """Load shared equipment aliases, falling back to the built-in map."""
+    aliases = dict(DEFAULT_EQUIPMENT_ALIASES)
+    path = Path(alias_path) if alias_path else SHARED_ALIAS_PATH
+    try:
+        with path.open(encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return aliases
+    if isinstance(loaded, dict):
+        aliases.update({
+            str(key): str(value)
+            for key, value in loaded.items()
+            if key is not None and value is not None
+        })
+    return aliases
+
+
+def resolve_equipment_alias(equipment_id, aliases=None):
+    """Return the shared canonical equipment ID for a raw equipment ID."""
+    aliases = aliases if isinstance(aliases, dict) else load_equipment_aliases()
+    text = str(equipment_id or "")
+    return aliases.get(text) or aliases.get(text.upper()) or text
 
 
 def _column_index(cell_reference):
@@ -252,6 +287,12 @@ def _resolve_actual_equipment_folder(equipment_root, requested_equipment_id):
     the logical package key and only redirects the workbook read to an existing
     same-type folder. No calculation data is changed.
     """
+    aliased_equipment_id = resolve_equipment_alias(requested_equipment_id)
+    if aliased_equipment_id != requested_equipment_id:
+        alias_workbook = equipment_root / aliased_equipment_id / f"{aliased_equipment_id}.xlsx"
+        if alias_workbook.is_file():
+            return aliased_equipment_id
+
     exact_workbook = equipment_root / requested_equipment_id / f"{requested_equipment_id}.xlsx"
     if exact_workbook.is_file():
         return requested_equipment_id

@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 
 from configuration_library_loader import (
+    _resolve_actual_equipment_folder,
     calculate_installed_units,
     calculate_required_units,
     calculate_running_units,
@@ -10,8 +11,12 @@ from configuration_library_loader import (
     build_solver_input_from_library,
     load_configuration_library,
     load_equipment_packages,
+    load_equipment_aliases,
+    resolve_equipment_alias,
     select_solver_curve,
 )
+from test_acc_v2_curve_reader import _write_xlsx
+from tools.validate_configuration_library import validate_configuration_library
 
 
 class ConfigurationLibraryLoaderTest(unittest.TestCase):
@@ -63,6 +68,43 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertIn("Solver_Curve", self.loaded["equipment"]["ACC_2"]["solver_curves"])
         self.assertIn("Solver_Curve_Normal", self.loaded["equipment"]["CHW_PUMP_2"]["solver_curves"])
         self.assertIn("Solver_Curve_Failure", self.loaded["equipment"]["ENGINE_2"]["solver_curves"])
+
+    def test_shared_equipment_alias_json_loads_required_mappings(self):
+        aliases = load_equipment_aliases()
+        expected = {
+            "RTC_1": "RTC_1&2",
+            "RTC_2": "RTC_1&2",
+            "MAU_1": "MAU_1&2",
+            "MAU_2": "MAU_1&2",
+            "ENGINE_2": "ENGINE_3",
+            "ENGINE_RADIATOR_2": "ENGINE_RADIATOR_1",
+        }
+        for raw, resolved in expected.items():
+            self.assertEqual(aliases[raw], resolved)
+            self.assertEqual(resolve_equipment_alias(raw, aliases), resolved)
+
+    def test_alias_resolution_prefers_shared_alias_workbook(self):
+        with TemporaryDirectory() as temp_dir:
+            equipment_root = Path(temp_dir) / "equipment"
+            canonical = equipment_root / "RTC_1&2"
+            canonical.mkdir(parents=True)
+            _write_xlsx(canonical / "RTC_1&2.xlsx", {"Solver_Curve": [["load_ratio", "power_kW"], [0.5, 12]]})
+
+            self.assertEqual(_resolve_actual_equipment_folder(equipment_root, "RTC_1"), "RTC_1&2")
+            self.assertEqual(_resolve_actual_equipment_folder(equipment_root, "RTC_2"), "RTC_1&2")
+
+    def test_configuration_library_diagnostic_resolves_aliased_workbooks(self):
+        results = validate_configuration_library()
+        errors = [item for item in results if item["status"] != "ok"]
+        self.assertEqual(errors, [])
+        by_equipment = {(item["configuration"], item["equipment_id"]): item for item in results}
+        self.assertEqual(by_equipment[("ACC_1.5MW_GASENGINE_CDU", "RTC_2")]["resolved_id"], "RTC_1&2")
+        self.assertEqual(by_equipment[("ACC_1.5MW_GASENGINE_CDU", "MAU_2")]["resolved_id"], "MAU_1&2")
+        self.assertEqual(by_equipment[("ACC_1.5MW_GASENGINE_CDU", "ENGINE_2")]["resolved_id"], "ENGINE_3")
+        self.assertEqual(
+            by_equipment[("ACC_1.5MW_GASENGINE_CDU", "ENGINE_RADIATOR_2")]["resolved_id"],
+            "ENGINE_RADIATOR_1",
+        )
 
     def test_normal_and_failure_curve_selection_with_fallback(self):
         equipment = self.loaded["equipment"]

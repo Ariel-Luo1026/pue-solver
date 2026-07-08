@@ -129,6 +129,7 @@ const elStatus = document.getElementById("status");
 const elLog = document.getElementById("log");
 const elIn = document.getElementById("jsonInput");
 const elOut = document.getElementById("jsonOutput");
+const elRuntimeErrorDetails = document.getElementById("runtimeErrorDetails");
 const btnRun = document.getElementById("btnRun");
 const btnExportHtmlReport = document.getElementById("btnExportHtmlReport");
 const btnExportJson = document.getElementById("btnExportJson");
@@ -149,11 +150,61 @@ let lastReportContext = null;
 let scenarioResults = [];
 window.scenario_results = scenarioResults;
 let configurationLibraryData = null;
-let lastAccCalculationEngineSelection = "legacy";
+let lastAccCalculationEngineSelection = "acc_v2";
 const equipmentPdfSpecs = {};
+const CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE = "acc_v2_direct_solver_curve_hourly";
+const CONFIGURATION_LIBRARY_ACC_ENGINE = "acc_v2_configuration_library";
+const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
 
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
+
+function clearRuntimeErrorDetails() {
+    if (!elRuntimeErrorDetails) return;
+    elRuntimeErrorDetails.textContent = "";
+    elRuntimeErrorDetails.style.display = "none";
+}
+
+function showRuntimeErrorDetails(message) {
+    if (!elRuntimeErrorDetails) return;
+    elRuntimeErrorDetails.textContent = String(message || "");
+    elRuntimeErrorDetails.style.display = "block";
+}
+
+function formatRuntimeException(error) {
+    if (!error) return "Unknown runtime error";
+    const message = error.message ? String(error.message) : String(error);
+    const stack = error.stack ? String(error.stack) : "";
+    return stack && !stack.includes(message) ? `${message}\n${stack}` : (stack || message);
+}
+
+async function loadPythonModuleIntoPyodide(fileName) {
+    const text = await fetch(`./${fileName}`).then(response => {
+        if (!response.ok) throw new Error(`Failed to load ${fileName}`);
+        return response.text();
+    });
+    pyodide.FS.writeFile(fileName, text);
+}
+
+function ensurePyodideDir(path) {
+    if (!pyodide) throw new Error("Pyodide is not loaded.");
+    const parts = String(path || "").split("/").filter(Boolean);
+    let current = "";
+    parts.forEach(part => {
+        current = current ? `${current}/${part}` : part;
+        try {
+            pyodide.FS.stat(current);
+        } catch (_) {
+            pyodide.FS.mkdir(current);
+        }
+    });
+}
+
+function writeBinaryFileToPyodide(path, arrayBuffer) {
+    const directory = String(path || "").split("/").slice(0, -1).join("/");
+    if (directory) ensurePyodideDir(directory);
+    pyodide.FS.writeFile(path, new Uint8Array(arrayBuffer));
+}
 
 function ensureAccExcelReplicatedHourlyLoaded() {
     pyodide.runPython(`
@@ -163,40 +214,31 @@ if "compute_acc_excel_replicated_hourly" not in globals():
 }
 
 function getSelectedAccCalculationEngine() {
-    const selected = document.getElementById("accCalculationEngine")?.value || "legacy";
-    return selected === "acc_v2" ? "acc_v2" : "legacy";
+    return "acc_v2";
 }
 
-function applyAccCalculationEngineSelection(inputObj, calculationMode) {
-    const legacyOnlyBenchmarkModes = ["excel_benchmark_compatible", "excel_replicated_hourly"];
-    const selectedEngine = getSelectedAccCalculationEngine();
-    lastAccCalculationEngineSelection = legacyOnlyBenchmarkModes.includes(calculationMode) ? "legacy" : selectedEngine;
-    if (!inputObj || typeof inputObj !== "object" || legacyOnlyBenchmarkModes.includes(calculationMode)) {
+function applyAccCalculationEngineSelection(inputObj, calculationMode = CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE, configurationPath = null) {
+    lastAccCalculationEngineSelection = getSelectedAccCalculationEngine();
+    if (!inputObj || typeof inputObj !== "object") {
         return inputObj;
     }
+    inputObj.run_mode = calculationMode || CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE;
+    inputObj.acc_engine = CONFIGURATION_LIBRARY_ACC_ENGINE;
     inputObj.feature_flags = inputObj.feature_flags && typeof inputObj.feature_flags === "object"
         ? inputObj.feature_flags
         : {};
-    if (selectedEngine === "acc_v2") {
-        inputObj.feature_flags.acc_v2_enabled = true;
-        inputObj.acc_v2 = inputObj.acc_v2 && typeof inputObj.acc_v2 === "object"
-            ? inputObj.acc_v2
-            : {};
-        inputObj.acc_v2.enabled = true;
-    } else {
-        inputObj.feature_flags.acc_v2_enabled = false;
-        if (inputObj.acc_v2 && typeof inputObj.acc_v2 === "object") {
-            inputObj.acc_v2.enabled = false;
-        }
-    }
+    inputObj.feature_flags.acc_v2_enabled = true;
+    inputObj.acc_v2 = inputObj.acc_v2 && typeof inputObj.acc_v2 === "object"
+        ? inputObj.acc_v2
+        : {};
+    inputObj.acc_v2.enabled = true;
+    const activeConfigurationPath = configurationPath || inputObj.configuration_path || inputObj.configuration_name || inputObj.project?.name;
+    if (activeConfigurationPath) inputObj.acc_v2.configuration_path = activeConfigurationPath;
     return inputObj;
 }
 
 function getAccEngineUsedLabel(outputObj) {
-    if (lastAccCalculationEngineSelection !== "acc_v2") return "Legacy";
-    const hourly = Array.isArray(outputObj?.hourly_results) ? outputObj.hourly_results : [];
-    const usedAccV2 = hourly.some(row => String(row?.acc_curve_source || "").toLowerCase().startsWith("acc_v2"));
-    return usedAccV2 ? "ACC V2" : "ACC V2 unavailable";
+    return "ACC V2 Configuration Library Engine";
 }
 
 function getCoolingSystemSelection() {
@@ -209,6 +251,13 @@ function getCoolingSystemSelection() {
     const unitConfig = config?.cooling_unit_capacities?.[String(capacityMw)];
     const powerConfig = unitConfig?.power_sources?.[powerSource];
     return { type, capacityMw, powerSource, scenarioKey, scenario, config, unitConfig, powerConfig };
+}
+
+function isConfigurationLibraryDirectModeActive(selection = getCoolingSystemSelection()) {
+    return Boolean(configurationLibraryData)
+        && configurationLibraryData.cooling_system_type === selection.type
+        && Number(configurationLibraryData.cooling_unit_capacity_mw) === Number(selection.capacityMw)
+        && configurationLibraryData.power_source === selection.powerSource;
 }
 
 function equipmentIdDisplayName(equipmentId) {
@@ -263,17 +312,96 @@ function equipmentCurveFamily(value) {
     return normalizeEquipmentCurveKey(value).replace(/_?\d+$/, "").replace(/_+$/, "");
 }
 
+const DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES = Object.freeze({
+    RTC_1: "RTC_1&2",
+    RTC_2: "RTC_1&2",
+    MAU_1: "MAU_1&2",
+    MAU_2: "MAU_1&2",
+    ENGINE_2: "ENGINE_3",
+    ENGINE_RADIATOR_2: "ENGINE_RADIATOR_1"
+});
+let directModeEquipmentAliases = { ...DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES };
+
+const DIRECT_MODE_EQUIPMENT_ORDER = Object.freeze(["ACC_2", "CHW_PUMP_2", "CDU_2", "RTC_1&2", "MAU_1&2", "ELECTRICAL_DISTRIBUTION_2", "ENGINE_3", "ENGINE_RADIATOR_1"]);
+const DIRECT_MODE_WHITE_SPACE_EQUIPMENT = Object.freeze(["CDU_2", "RTC_1&2", "MAU_1&2"]);
+const DIRECT_MODE_GRAY_SPACE_EQUIPMENT = Object.freeze(["ACC_2", "CHW_PUMP_2", "ELECTRICAL_DISTRIBUTION_2", "ENGINE_3", "ENGINE_RADIATOR_1"]);
+const DIRECT_MODE_CURVE_METADATA_FIELDS = Object.freeze({
+    ACC_2: { source: "acc_curve_source", type: null },
+    CHW_PUMP_2: { source: "chw_pump_curve_source", type: null },
+    CDU_2: { source: "cdu_curve_source", type: null },
+    "RTC_1&2": { source: "rtc_curve_source", type: null },
+    "MAU_1&2": { source: "mau_curve_source", type: null },
+    ELECTRICAL_DISTRIBUTION_2: { source: "electrical_distribution_curve_source", type: "electrical_distribution_curve_type" },
+    ENGINE_3: { source: "engine_curve_source", type: "engine_curve_type" },
+    ENGINE_RADIATOR_1: { source: "engine_radiator_curve_source", type: "engine_radiator_curve_type" }
+});
+
+const DIRECT_MODE_EQUIPMENT_CANDIDATES = Object.freeze({
+    "RTC_1&2": ["RTC_1&2", "RTC_2", "rtc", "auxiliary_load"],
+    "MAU_1&2": ["MAU_1&2", "MAU_2", "mau", "terminal_fan"],
+    ENGINE_3: ["ENGINE_3", "ENGINE_2", "engine", "generator", "gas_engine"],
+    ENGINE_RADIATOR_1: ["ENGINE_RADIATOR_1", "ENGINE_RADIATOR_2", "engine_radiator", "radiator", "heat_exchanger"]
+});
+
+function resolveDirectModeEquipmentId(equipmentId) {
+    const text = String(equipmentId || "");
+    return directModeEquipmentAliases[text] || directModeEquipmentAliases[text.toUpperCase()] || equipmentId;
+}
+
+function resolveFrontendEquipmentId(equipmentId) {
+    return resolveDirectModeEquipmentId(equipmentId);
+}
+
+async function loadConfigurationEquipmentAliases() {
+    const aliasUrl = new URL("Configuration Library/equipment_aliases.json", document.baseURI);
+    try {
+        const response = await fetch(aliasUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Could not load ${aliasUrl.href} (HTTP ${response.status}).`);
+        const loaded = await response.json();
+        if (loaded && typeof loaded === "object" && !Array.isArray(loaded)) {
+            directModeEquipmentAliases = { ...DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES, ...loaded };
+        }
+    } catch (_) {
+        directModeEquipmentAliases = { ...DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES };
+    }
+    return directModeEquipmentAliases;
+}
+
+function findLibraryEquipmentPackage(data, equipmentId) {
+    const resolvedId = resolveDirectModeEquipmentId(equipmentId);
+    const packages = Object.entries(data?.equipment || {});
+    const candidateIds = DIRECT_MODE_EQUIPMENT_CANDIDATES[resolvedId] || [resolvedId];
+    for (const candidate of candidateIds) {
+        const normalized = normalizeEquipmentCurveKey(candidate);
+        const exact = packages.find(([key, item]) =>
+            normalizeEquipmentCurveKey(key) === normalized ||
+            normalizeEquipmentCurveKey(item?.equipment_id) === normalized
+        );
+        if (exact) return { resolvedId, packageKey: exact[0], equipmentPackage: exact[1] };
+    }
+    const family = equipmentCurveFamily(resolvedId);
+    const familyMatch = packages.find(([, item]) => equipmentCurveFamily(item?.equipment_id) === family);
+    if (familyMatch) return { resolvedId, packageKey: familyMatch[0], equipmentPackage: familyMatch[1] };
+    return { resolvedId, packageKey: null, equipmentPackage: null };
+}
+
+function isDirectModeResolvedAlias(equipmentFolder, equipmentId) {
+    if (!equipmentFolder || !equipmentId) return false;
+    const resolvedId = resolveDirectModeEquipmentId(equipmentId);
+    const normalizedFolder = normalizeEquipmentCurveKey(equipmentFolder);
+    const normalizedResolved = normalizeEquipmentCurveKey(resolvedId);
+    if (normalizedFolder === normalizedResolved) return true;
+    return (DIRECT_MODE_EQUIPMENT_CANDIDATES[resolvedId] || [resolvedId])
+        .some(candidate => normalizeEquipmentCurveKey(candidate) === normalizedFolder);
+}
+
 function libraryCurveForEquipment(equipmentId) {
-    const packages = Object.values(configurationLibraryData?.equipment || {});
-    const normalized = normalizeEquipmentCurveKey(equipmentId);
-    const family = equipmentCurveFamily(normalized);
-    const equipmentPackage = packages.find(item => normalizeEquipmentCurveKey(item.equipment_id) === normalized)
-        || packages.find(item => equipmentCurveFamily(item.equipment_id) === family);
+    const { resolvedId, equipmentPackage } = findLibraryEquipmentPackage(configurationLibraryData, equipmentId);
     if (!equipmentPackage) return null;
     const scenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
     const selected = selectLibrarySolverCurve(equipmentPackage, scenario);
     if (!selected.sheet_name) return null;
-    return { equipmentPackage, selected };
+    return { resolvedId, equipmentPackage, selected };
 }
 
 function uploadedCurveForEquipment(equipmentId) {
@@ -329,14 +457,19 @@ async function checkSelectedDefaultCurveFiles(powerConfig) {
 
 function renderCoolingSystemSelection() {
     const { type, capacityMw, powerSource, scenario, config, powerConfig } = getCoolingSystemSelection();
+    const directModeActive = isConfigurationLibraryDirectModeActive({ type, capacityMw, powerSource });
     const renderList = (id, values) => {
         const el = document.getElementById(id);
         if (el) el.innerHTML = values.map(value => `<li>${esc(value)}</li>`).join("");
     };
-    renderList("whiteSpaceEquipmentList", (powerConfig?.white_space_equipment || []).map(equipmentIdDisplayName));
-    renderList("graySpaceEquipmentList", (powerConfig?.gray_space_equipment || []).map(equipmentIdDisplayName));
-    const curveSources = buildSelectedCurveSources(powerConfig);
-    const curveRows = [
+    renderList("whiteSpaceEquipmentList", directModeActive
+        ? DIRECT_MODE_WHITE_SPACE_EQUIPMENT
+        : (powerConfig?.white_space_equipment || []).map(equipmentIdDisplayName));
+    renderList("graySpaceEquipmentList", directModeActive
+        ? DIRECT_MODE_GRAY_SPACE_EQUIPMENT
+        : (powerConfig?.gray_space_equipment || []).map(equipmentIdDisplayName));
+    const curveSources = directModeActive ? {} : buildSelectedCurveSources(powerConfig);
+    const curveRows = directModeActive ? FRAMEWORK_DIAGNOSTIC_TOPOLOGIES.ACC.performance_requirements.map(name => `Required: ${name}`) : [
         ...(powerConfig?.required_curves || []).map(name => `Required: ${name}`),
         ...Object.entries(curveSources).map(([equipmentId, source]) => {
             const status = source.source_type === "uploaded" ? "Using uploaded curve" :
@@ -349,10 +482,7 @@ function renderCoolingSystemSelection() {
     checkSelectedDefaultCurveFiles(powerConfig);
     const status = document.getElementById("coolingSystemStatus");
     if (status) {
-        const libraryRunnable = configurationLibraryData
-            && configurationLibraryData.cooling_system_type === type
-            && Number(configurationLibraryData.cooling_unit_capacity_mw) === Number(capacityMw)
-            && configurationLibraryData.power_source === powerSource;
+        const libraryRunnable = directModeActive;
         const runnable = (config?.implemented && powerSource === DEFAULT_POWER_SOURCE) || libraryRunnable;
         status.textContent = runnable ? `${type}, ${capacityMw} MW, ${powerSource}, ${scenario.display_name}: ${libraryRunnable ? "Configuration Library calculation model" : "calculation model"} available.`
             : powerSource !== DEFAULT_POWER_SOURCE ? POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE : COOLING_MODEL_UNAVAILABLE_MESSAGE;
@@ -363,6 +493,12 @@ function renderCoolingSystemSelection() {
 }
 
 function renderScenarioSummary() {
+    const panel = document.getElementById("scenarioSummaryPanel");
+    if (isConfigurationLibraryDirectModeActive()) {
+        if (panel) panel.style.display = "none";
+        return;
+    }
+    if (panel) panel.style.display = "block";
     const body = document.getElementById("scenarioSummaryBody");
     if (!body) return;
     const selection = getCoolingSystemSelection();
@@ -485,7 +621,9 @@ function frameworkEquipmentIdFromFolder(equipmentFolder) {
 }
 
 function tentativeFrameworkMapping(equipmentFolder, equipmentId) {
-    return String(equipmentFolder || "") === String(equipmentId || "") ? null : `${equipmentFolder} -> ${equipmentId}`;
+    if (String(equipmentFolder || "") === String(equipmentId || "")) return null;
+    if (isDirectModeResolvedAlias(equipmentFolder, equipmentId)) return null;
+    return `${equipmentFolder} -> ${equipmentId}`;
 }
 
 function buildFrameworkDiagnosticsPreview() {
@@ -3987,6 +4125,140 @@ async function fetchConfigurationWorkbook(relativePath) {
     return sheets;
 }
 
+function configurationLibraryFetchPath(relativePath) {
+    return String(relativePath || "").split("/").map(segment => encodeURIComponent(segment)).join("/");
+}
+
+async function fetchConfigurationLibraryArrayBuffer(relativePath) {
+    const workbookUrl = new URL(configurationLibraryFetchPath(relativePath), CONFIGURATION_LIBRARY_ROOT_URL);
+    const response = await fetch(workbookUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Could not load ${workbookUrl.href} (HTTP ${response.status}).`);
+    return response.arrayBuffer();
+}
+
+function configurationLibraryPyodidePath(configurationName) {
+    return `${CONFIGURATION_LIBRARY_PYODIDE_ROOT}/${configurationName}`;
+}
+
+function buildConfigurationLibraryWorkbookSyncPlan(data) {
+    const configurationName = data?.configuration_name;
+    const directModeItems = DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+        const resolved = findLibraryEquipmentPackage(data, equipmentId);
+        const aliases = DIRECT_MODE_EQUIPMENT_CANDIDATES[resolved.resolvedId] || [resolved.resolvedId];
+        const sourceIds = [resolved.resolvedId, ...aliases, resolved.equipmentPackage?.equipment_id, resolved.packageKey]
+            .filter(Boolean)
+            .filter((value, index, values) => values.indexOf(value) === index);
+        return { sourceIds, targetId: resolved.resolvedId, required: true };
+    });
+    const loadedItems = Object.entries(data?.equipment || {}).map(([key, item]) => {
+        const loadedId = item?.equipment_id || key;
+        const resolvedId = resolveDirectModeEquipmentId(loadedId);
+        if (DIRECT_MODE_EQUIPMENT_ORDER.includes(resolvedId)) return null;
+        return {
+            sourceIds: [loadedId],
+            targetId: loadedId,
+            required: false
+        };
+    }).filter(Boolean);
+    const seenTargets = new Set();
+    return [...directModeItems, ...loadedItems].filter(item => {
+        if (!item.sourceIds?.length || !item.targetId) return false;
+        const targetPath = `equipment/${item.targetId}/${item.targetId}.xlsx`;
+        if (seenTargets.has(targetPath)) return false;
+        seenTargets.add(targetPath);
+        item.sourceRelativePaths = item.sourceIds.map(sourceId => `${configurationName}/equipment/${sourceId}/${sourceId}.xlsx`);
+        item.pyodideRelativePath = targetPath;
+        return true;
+    });
+}
+
+async function fetchFirstConfigurationLibraryWorkbook(relativePaths) {
+    const errors = [];
+    for (const relativePath of relativePaths || []) {
+        try {
+            return {
+                relativePath,
+                arrayBuffer: await fetchConfigurationLibraryArrayBuffer(relativePath)
+            };
+        } catch (error) {
+            errors.push(`${relativePath}: ${String(error.message || error)}`);
+        }
+    }
+    throw new Error(errors.join("; "));
+}
+
+async function fetchResolvedConfigurationEquipmentWorkbook(configurationBase, rawEquipmentId) {
+    const resolvedId = resolveFrontendEquipmentId(rawEquipmentId);
+    const candidateIds = [resolvedId, rawEquipmentId]
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index);
+    const errors = [];
+    for (const candidateId of candidateIds) {
+        const packagePath = `equipment/${candidateId}/${candidateId}.xlsx`;
+        try {
+            return {
+                resolvedId,
+                rawEquipmentId,
+                sourceEquipmentId: candidateId,
+                packagePath,
+                sheets: await fetchConfigurationWorkbook(`${configurationBase}/${packagePath}`)
+            };
+        } catch (error) {
+            errors.push(`${packagePath}: ${String(error.message || error)}`);
+        }
+    }
+    throw new Error(errors.join("; "));
+}
+
+function verifyConfigurationLibrarySynced(configurationPath) {
+    const accWorkbookPath = `${configurationPath}/equipment/ACC_2/ACC_2.xlsx`;
+    try {
+        pyodide.FS.stat(accWorkbookPath);
+    } catch (_) {
+        throw new Error("Configuration Library workbooks were not synced into Pyodide runtime. Please reload the Configuration Library.");
+    }
+}
+
+async function syncConfigurationLibraryToPyodide(selectedConfiguration) {
+    if (!pyodide) throw new Error("Pyodide is not loaded.");
+    const configurationName = selectedConfiguration?.configuration_name;
+    if (!configurationName) throw new Error("Configuration Library path is missing. Please click Load Configuration Library before running.");
+    const configurationPath = configurationLibraryPyodidePath(configurationName);
+    ensurePyodideDir(configurationPath);
+
+    const syncedPaths = [];
+    const workbookPaths = [];
+    const supportFiles = ["configuration.xlsx", "scenario.xlsx", "input/IT_LOAD_90_PERCENT.xlsx"];
+    for (const relativePath of supportFiles) {
+        const arrayBuffer = await fetchConfigurationLibraryArrayBuffer(`${configurationName}/${relativePath}`);
+        const pyodidePath = `${configurationPath}/${relativePath}`;
+        writeBinaryFileToPyodide(pyodidePath, arrayBuffer);
+        syncedPaths.push(pyodidePath);
+    }
+
+    const workbookPlan = buildConfigurationLibraryWorkbookSyncPlan(selectedConfiguration);
+    for (const item of workbookPlan) {
+        let fetched;
+        try {
+            fetched = await fetchFirstConfigurationLibraryWorkbook(item.sourceRelativePaths);
+        } catch (error) {
+            throw new Error(`Could not sync Configuration Library workbook ${item.sourceRelativePaths?.[0]}: ${String(error.message || error)}`);
+        }
+        const pyodidePath = `${configurationPath}/${item.pyodideRelativePath}`;
+        writeBinaryFileToPyodide(pyodidePath, fetched.arrayBuffer);
+        syncedPaths.push(pyodidePath);
+        workbookPaths.push(pyodidePath);
+    }
+
+    verifyConfigurationLibrarySynced(configurationPath);
+    return {
+        configuration_name: configurationName,
+        configuration_path: configurationPath,
+        workbook_paths: workbookPaths,
+        synced_paths: syncedPaths
+    };
+}
+
 function configurationKeyValues(rows, key = "Parameter", value = "Value") {
     return Object.fromEntries((rows || []).filter(row => row[key] !== null).map(row => [row[key], row[value]]));
 }
@@ -4018,6 +4290,44 @@ function selectLibrarySolverCurve(equipmentPackage, scenarioName) {
     return { status: "Missing Solver_Curve", sheet_name: null, curve: null };
 }
 
+function librarySelectedCurveType(selected) {
+    if (selected?.electrical_path) return "electrical_efficiency";
+    const rows = selected?.curve || [];
+    const first = rows.find(row => row && typeof row === "object") || {};
+    const keys = new Set(Object.keys(first).map(key => normalizeEquipmentCurveKey(key)));
+    const has = (...names) => names.some(name => keys.has(normalizeEquipmentCurveKey(name)));
+    if (has("ambient_C") && has("load_ratio") && has("power_input_kW")) return "two_dimensional_power";
+    if (has("load_ratio") && has("power_kW", "engine_output_kW", "radiator_fan_power_kW")) return "one_dimensional_power";
+    if (has("load_ratio") && has("efficiency")) return "electrical_efficiency";
+    if (has("load_ratio") && has("loss_fraction")) return "electrical_loss_fraction";
+    if (has("load_ratio") && has("loss_kW")) return "electrical_loss_kW";
+    return "Not available";
+}
+
+function displayCurveType(curveType) {
+    const normalized = String(curveType || "");
+    return {
+        efficiency: "electrical_efficiency",
+        loss_fraction: "electrical_loss_fraction",
+        loss_kW: "electrical_loss_kW"
+    }[normalized] || normalized;
+}
+
+function firstAvailableResultField(source, fieldNames) {
+    return fieldNames.map(field => source?.[field]).find(value => value !== null && value !== undefined && value !== "");
+}
+
+function sumAvailableResultFields(source, fieldNames) {
+    const values = fieldNames.map(field => source?.[field]);
+    if (values.some(value => value === null || value === undefined || !Number.isFinite(Number(value)))) return null;
+    return values.reduce((sum, value) => sum + Number(value), 0);
+}
+
+function maxHourlyResultField(hourlyRows, fieldNames) {
+    const values = (hourlyRows || []).flatMap(row => fieldNames.map(field => Number(row?.[field]))).filter(Number.isFinite);
+    return values.length ? Math.max(...values) : null;
+}
+
 function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) {
     const totalCapacityMw = getProjectReportInfo().capacityMw;
     if (!(Number(totalCapacityMw) > 0)) return null;
@@ -4036,24 +4346,29 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     const designItLoadKw = Number(totalCapacityMw) * 1000;
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
-    const selectedCurves = Object.fromEntries(Object.entries(data.equipment).map(([equipmentId, item]) => [
-        equipmentId, selectLibrarySolverCurve(item, scenarioName)
-    ]));
+    const selectedCurves = Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+        const resolved = findLibraryEquipmentPackage(data, equipmentId);
+        return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, scenarioName)];
+    }));
     const binding = (equipmentId, role) => {
-        const item = data.equipment[equipmentId];
-        const selected = selectedCurves[equipmentId];
+        const resolved = findLibraryEquipmentPackage(data, equipmentId);
+        const item = resolved.equipmentPackage;
+        const selected = selectedCurves[resolved.resolvedId];
         return {
             enabled: item?.status !== "Missing",
-            equipment_id: equipmentId,
+            equipment_id: resolved.resolvedId,
+            source_equipment_id: item?.equipment_id || null,
             role,
             package_path: item?.package_path || null,
             selected_curve_sheet: selected?.sheet_name || null,
-            selected_curve_status: selected?.status || "Missing Curve",
+            selected_curve_status: selected?.status || "Missing Solver_Curve",
             curve_data: selected?.curve || null
         };
     };
     const electricalPath = data.equipment.ELECTRICAL_DISTRIBUTION_2?.electrical_path || null;
     return {
+        configuration_name: data.configuration_name,
+        configuration_path: data.configuration_path || data.configuration_name,
         cooling_system_type: data.cooling_system_type,
         cooling_unit_capacity_mw: data.cooling_unit_capacity_mw,
         power_source: data.power_source,
@@ -4134,6 +4449,8 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         }
     };
     return {
+        configuration_name: libraryInput.configuration_name,
+        configuration_path: libraryInput.configuration_path || libraryInput.configuration_name,
         cooling_system_type: libraryInput.cooling_system_type,
         cooling_unit_capacity_mw: libraryInput.cooling_unit_capacity_mw,
         power_source: libraryInput.power_source,
@@ -4195,53 +4512,44 @@ async function runUsingConfigurationLibrary() {
         if (status) status.textContent = "Load Configuration Library first.";
         return;
     }
-    const calculationMode = document.getElementById("configurationCalculationMode")?.value || "dynamic_hourly";
+    const calculationMode = CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE;
     const libraryInput = buildFrontendSolverInputFromLibrary(configurationLibraryData);
     if (!libraryInput) {
         if (status) status.textContent = "Enter Total IT Capacity before running the configuration.";
         return;
     }
+    let syncResult;
+    try {
+        syncResult = await syncConfigurationLibraryToPyodide(configurationLibraryData);
+    } catch (error) {
+        if (status) {
+            status.textContent = String(error.message || error);
+            status.style.color = "#dc2626";
+        }
+        log("Configuration Library workbook sync failed:\n" + String(error.message || error));
+        return;
+    }
+    configurationLibraryData.configuration_path = syncResult.configuration_path;
+    configurationLibraryData.pyodide_sync = syncResult;
+    libraryInput.configuration_path = syncResult.configuration_path;
     configurationLibraryData.standardized_solver_input = libraryInput;
     const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput);
-    applyAccCalculationEngineSelection(adaptedInput, calculationMode);
-    elIn.value = pretty(adaptedInput);
-    const calculationModeLabel = calculationMode === "excel_benchmark_compatible"
-        ? "Excel Benchmark Annual Equivalent Mode"
-        : (calculationMode === "excel_replicated_hourly" ? "Excel Replicated Hourly Mode" : (calculationMode === "experimental_acc_hourly_shape" ? "ACC V2 Direct Solver_Curve Hourly Mode" : "Dynamic Hourly Simulation"));
-    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name} / ${calculationModeLabel}...`;
-    if (["excel_benchmark_compatible", "excel_replicated_hourly", "experimental_acc_hourly_shape"].includes(calculationMode)) {
-        const benchmarkSolverFn = calculationMode === "excel_replicated_hourly"
-            ? "compute_acc_excel_replicated_hourly"
-            : (calculationMode === "experimental_acc_hourly_shape" ? "compute_acc_experimental_hourly_shape" : "compute_acc_excel_benchmark");
-        if (benchmarkSolverFn === "compute_acc_excel_replicated_hourly") {
-            ensureAccExcelReplicatedHourlyLoaded();
+    applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path);
+    if (!adaptedInput.acc_v2?.configuration_path) {
+        if (status) {
+            status.textContent = "Configuration Library path is missing. Please click Load Configuration Library before running.";
+            status.style.color = "#dc2626";
         }
-        const alternatives = [
-            ["Normal", "normal_75"],
-            ["Failure", "one_failure_three_active"]
-        ];
-        alternatives.forEach(([scenarioName, scenarioKey]) => {
-            if (scenarioName === libraryInput.scenario_name) return;
-            const alternative = convertFrontendLibraryInputToSolverInput(
-                buildFrontendSolverInputFromLibrary(configurationLibraryData, scenarioName)
-            );
-            applyAccCalculationEngineSelection(alternative, calculationMode);
-            pyodide.globals.set("benchmark_json_str", JSON.stringify(alternative));
-            pyodide.globals.set("benchmark_solver_fn", benchmarkSolverFn);
-            const output = JSON.parse(pyodide.runPython(`
-import json
-benchmark_input = json.loads(benchmark_json_str)
-if benchmark_solver_fn == "compute_acc_excel_replicated_hourly" and "compute_acc_excel_replicated_hourly" not in globals():
-    raise RuntimeError("compute_acc_excel_replicated_hourly is not loaded")
-benchmark_output = compute_acc_excel_replicated_hourly(benchmark_input) if benchmark_solver_fn == "compute_acc_excel_replicated_hourly" else (compute_acc_experimental_hourly_shape(benchmark_input) if benchmark_solver_fn == "compute_acc_experimental_hourly_shape" else compute_acc_excel_benchmark(benchmark_input))
-json.dumps(benchmark_output)
-            `));
-            recordScenarioResult(scenarioKey, output.annual_results);
-        });
-        await run({ libraryRun: true, libraryInput: adaptedInput, solverFn: benchmarkSolverFn });
-    } else {
-        await run({ libraryRun: true, libraryInput: adaptedInput });
+        return;
     }
+    elIn.value = pretty(adaptedInput);
+    const calculationModeLabel = "Configuration Library Direct Solver_Curve Hourly Simulation";
+    if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name} / ${calculationModeLabel}...`;
+    log(
+        `Configuration Library synced: ${syncResult.configuration_name}, workbooks=${syncResult.workbook_paths.length}\n` +
+        syncResult.workbook_paths.slice(0, 5).join("\n")
+    );
+    await run({ libraryRun: true, libraryInput: adaptedInput });
 }
 
 function renderConfigurationLibrarySummary(data) {
@@ -4256,7 +4564,12 @@ function renderConfigurationLibrarySummary(data) {
     const itSample = standardized?.project?.it_load?.hourly_it_load_kW?.slice(0, 3) || [];
     const electricalPath = standardized?.electrical_path;
     const annualElectrical = data.last_solver_output?.annual_results || {};
+    const hourlyElectrical = Array.isArray(data.last_solver_output?.hourly_results) ? data.last_solver_output.hourly_results : [];
     const resultValue = (value, formatter) => value != null ? formatter(value) : "Not available";
+    const whiteSpaceEnergy = firstAvailableResultField(annualElectrical, ["annual_white_space_equipment_energy_kWh"])
+        ?? sumAvailableResultFields(annualElectrical, ["annual_cdu_energy_kWh", "annual_rtc_energy_kWh", "annual_mau_energy_kWh"]);
+    const engineRadiatorMaxPower = firstAvailableResultField(annualElectrical, ["max_engine_radiator_power_kW"])
+        ?? maxHourlyResultField(hourlyElectrical, ["engine_radiator_power_kW"]);
     const values = [
         ["Loaded configuration name", data.configuration_name],
         ["Cooling unit capacity", `${data.cooling_unit_capacity_mw} MW`],
@@ -4275,39 +4588,46 @@ function renderConfigurationLibrarySummary(data) {
         ["IT Electrical Distribution Loss", resultValue(annualElectrical.annual_it_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
         ["MEP Electrical Distribution Loss", resultValue(annualElectrical.annual_mep_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
         ["Total Electrical Distribution Loss", resultValue(annualElectrical.annual_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["CHW Pump Energy", resultValue(firstAvailableResultField(annualElectrical, ["annual_chw_pump_energy_kWh", "annual_pump_energy_kWh"]), value => `${fmtInteger(value)} kWh`)],
         ["CDU Energy", resultValue(annualElectrical.annual_cdu_energy_kWh, value => `${fmtInteger(value)} kWh`)],
         ["RTC Energy", resultValue(annualElectrical.annual_rtc_energy_kWh, value => `${fmtInteger(value)} kWh`)],
         ["MAU Energy", resultValue(annualElectrical.annual_mau_energy_kWh, value => `${fmtInteger(value)} kWh`)],
-        ["White Space Equipment Energy", resultValue(annualElectrical.annual_white_space_equipment_energy_kWh, value => `${fmtInteger(value)} kWh`)],
-        ["ACC Energy", resultValue(annualElectrical.annual_acc_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["White Space Equipment Energy", resultValue(whiteSpaceEnergy, value => `${fmtInteger(value)} kWh`)],
+        ["ACC Energy", resultValue(firstAvailableResultField(annualElectrical, ["annual_acc_energy_kWh", "annual_ACC_energy_kWh"]), value => `${fmtInteger(value)} kWh`)],
         ["Average ACC COP", resultValue(annualElectrical.average_acc_cop, value => fmtNumber(value, 3))],
         ["Max ACC Power", resultValue(annualElectrical.max_acc_power_kW, value => `${fmtNumber(value, 1)} kW`)],
         ["ACC Curve Source", annualElectrical.acc_curve_source || "Not available"],
-        ["Engine Output", resultValue(annualElectrical.annual_engine_output_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Engine Output", resultValue(firstAvailableResultField(annualElectrical, ["annual_engine_energy_kWh", "annual_engine_output_kWh"]), value => `${fmtInteger(value)} kWh`)],
         ["Engine Fuel", resultValue(annualElectrical.annual_engine_fuel_input_kWh, value => `${fmtInteger(value)} kWh`)],
         ["Waste Heat", resultValue(annualElectrical.annual_engine_waste_heat_kWh, value => `${fmtInteger(value)} kWh`)],
         ["Average Engine Efficiency", resultValue(annualElectrical.average_engine_efficiency, value => `${fmtNumber(value * 100, 2)}%`)],
         ["Engine Radiator Energy", resultValue(annualElectrical.annual_engine_radiator_energy_kWh, value => `${fmtInteger(value)} kWh`)],
-        ["Engine Radiator Max Power", resultValue(annualElectrical.max_engine_radiator_power_kW, value => `${fmtNumber(value, 1)} kW`)],
+        ["Engine Radiator Max Power", resultValue(engineRadiatorMaxPower, value => `${fmtNumber(value, 1)} kW`)],
         ["Radiator Curve Source", annualElectrical.engine_radiator_curve_source || "Not available"]
     ];
     summary.style.display = "grid";
     const selectedScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
-    const directEquipmentOrder = ["ACC_2", "CHW_PUMP_2", "CDU_2", "RTC_1&2", "MAU_1&2", "ELECTRICAL_DISTRIBUTION_2", "ENGINE_3", "ENGINE_RADIATOR_1"];
-    const equipmentRows = directEquipmentOrder.map(equipmentId => {
-        const item = data.equipment?.[equipmentId] || { equipment_id: equipmentId, status: "Missing", solver_curves: {} };
+    const equipmentRows = DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+        const resolved = findLibraryEquipmentPackage(data, equipmentId);
+        const item = resolved.equipmentPackage || { equipment_id: resolved.resolvedId, status: "Missing", solver_curves: {} };
         const selected = selectLibrarySolverCurve(item, selectedScenario);
+        const packageStatus = resolved.equipmentPackage ? "Found" : "Missing Workbook";
+        const metadataFields = DIRECT_MODE_CURVE_METADATA_FIELDS[resolved.resolvedId] || {};
+        const solverSource = metadataFields.source ? annualElectrical[metadataFields.source] : null;
+        const solverCurveType = metadataFields.type ? annualElectrical[metadataFields.type] : null;
         const curveSheets = selected.electrical_path ? ["Solver (Electrical Path)"] : Object.keys(item.solver_curves || {});
+        const sheetFoundDisplay = curveSheets.length ? curveSheets.join(", ") : (resolved.equipmentPackage ? "Unknown" : "None");
         const selectedDisplay = selected.electrical_path
             ? `<b>Electrical Path Found</b><br>IT Path Efficiency: ${fmtNumber(selected.electrical_path.it_efficiency * 100, 2)}%<br>MEP Path Efficiency: ${fmtNumber(selected.electrical_path.mep_efficiency * 100, 2)}%`
-            : esc(selected.sheet_name || "Missing Solver_Curve");
-        const sourceStatus = selected.sheet_name || selected.electrical_path
+            : esc(selected.sheet_name || (resolved.equipmentPackage ? "Not evaluated" : "Missing Solver_Curve"));
+        const sourceStatus = !resolved.equipmentPackage ? "Missing Workbook" : (["configuration_library_solver_curve", "acc_v2_solver_curve_direct"].includes(String(solverSource || "")) || selected.sheet_name || selected.electrical_path
             ? "Using Configuration Library Solver_Curve"
-            : "Missing Solver_Curve";
+            : "Not evaluated");
+        const curveType = displayCurveType(solverCurveType) || (selected.sheet_name || selected.electrical_path ? librarySelectedCurveType(selected) : (resolved.equipmentPackage ? "Unknown" : "Not available"));
         return `<tr>
-            <td>${esc(item.equipment_id)}</td><td>${esc(item.status)}</td>
-            <td>${esc(curveSheets.length ? curveSheets.join(", ") : "None")}</td>
-            <td>${selectedDisplay}</td><td>${esc(sourceStatus)}</td>
+            <td>${esc(resolved.resolvedId)}</td><td>${esc(packageStatus)}</td>
+            <td>${esc(sheetFoundDisplay)}</td>
+            <td>${selectedDisplay}</td><td>${esc(sourceStatus)}</td><td>${esc(curveType)}</td>
         </tr>`;
     }).join("");
     summary.innerHTML = values.map(([label, value]) =>
@@ -4315,7 +4635,7 @@ function renderConfigurationLibrarySummary(data) {
     ).join("") + `<div class="fileSlot" style="grid-column:1/-1; overflow-x:auto;">
         <div class="panelTitle">Equipment Package Auto Binding — ${esc(selectedScenario)}</div>
         <table style="width:100%; min-width:720px;"><thead><tr>
-            <th>Equipment ID</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th>
+            <th>Equipment ID</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th><th>Curve Type</th>
         </tr></thead><tbody>${equipmentRows}</tbody></table>
     </div>`;
 }
@@ -4328,6 +4648,7 @@ async function loadSelectedConfigurationLibrary() {
     if (status) status.textContent = `Loading ${configurationName}...`;
     if (button) button.disabled = true;
     try {
+        await loadConfigurationEquipmentAliases();
         const base = encodeURIComponent(configurationName);
         const configurationSheets = await fetchConfigurationWorkbook(`${base}/configuration.xlsx`);
         const equipmentPerUnit = (configurationSheets.Equipment_List || []).map(row => ({
@@ -4335,15 +4656,17 @@ async function loadSelectedConfigurationLibrary() {
             per_cooling_unit: Number(row["Per Cooling Unit"] || 0)
         }));
         const equipmentRequests = equipmentPerUnit.map(async ({ equipment_id: equipmentId }) => {
-            const packagePath = `equipment/${equipmentId}/${equipmentId}.xlsx`;
+            const resolvedId = resolveFrontendEquipmentId(equipmentId);
+            const packagePath = `equipment/${resolvedId}/${resolvedId}.xlsx`;
             try {
-                const sheets = await fetchConfigurationWorkbook(`${base}/${packagePath}`);
+                const fetched = await fetchResolvedConfigurationEquipmentWorkbook(base, equipmentId);
+                const sheets = fetched.sheets;
                 const curveNames = ["Solver_Curve", "Solver_Curve_Normal", "Solver_Curve_Failure"].filter(name => sheets[name]);
                 const information = librarySheetKeyValues(sheets.Information);
                 const metadata = librarySheetKeyValues(sheets.Metadata);
                 const validation = librarySheetKeyValues(sheets.Validation);
                 const equipmentType = information["Equipment Type"] || metadata.equipment_type || null;
-                const isElectricalPath = equipmentId.startsWith("ELECTRICAL_DISTRIBUTION") || String(equipmentType || "").toLowerCase() === "electrical distribution";
+                const isElectricalPath = resolvedId.startsWith("ELECTRICAL_DISTRIBUTION") || String(equipmentType || "").toLowerCase() === "electrical distribution";
                 let electricalPath = null;
                 if (isElectricalPath) {
                     const efficiencies = Object.fromEntries((sheets.Solver || []).map(row => [String(row.Path || "").toUpperCase(), Number(row.overall_efficiency)]));
@@ -4353,10 +4676,12 @@ async function loadSelectedConfigurationLibrary() {
                     };
                 }
                 const electricalPathFound = electricalPath && electricalPath.it_efficiency !== null && electricalPath.mep_efficiency !== null;
-                return [equipmentId, {
-                    equipment_id: equipmentId,
+                return [fetched.resolvedId, {
+                    equipment_id: fetched.resolvedId,
+                    source_equipment_id: fetched.rawEquipmentId,
+                    source_workbook_equipment_id: fetched.sourceEquipmentId,
                     equipment_type: equipmentType,
-                    package_path: packagePath,
+                    package_path: fetched.packagePath,
                     status: electricalPathFound ? "Electrical Path Found" : "Found",
                     available_sheets: Object.keys(sheets),
                     solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]])),
@@ -4365,8 +4690,8 @@ async function loadSelectedConfigurationLibrary() {
                     validation_status: validation["Validation Status"] || validation.Status || "Available"
                 }];
             } catch (_) {
-                return [equipmentId, {
-                    equipment_id: equipmentId, equipment_type: null, package_path: packagePath,
+                return [resolvedId, {
+                    equipment_id: resolvedId, source_equipment_id: equipmentId, equipment_type: null, package_path: packagePath,
                     status: "Missing", available_sheets: [], solver_curves: {}, performance_map: [], electrical_path: null,
                     validation_status: "Missing equipment package"
                 }];
@@ -4428,9 +4753,10 @@ async function loadSelectedConfigurationLibrary() {
             equipment_packages: configurationLibraryData.equipment,
             selected_curves: Object.fromEntries(scenarios.map(scenario => [
                 scenario.scenario,
-                Object.fromEntries(Object.entries(configurationLibraryData.equipment).map(([equipmentId, item]) => [
-                    equipmentId, selectLibrarySolverCurve(item, scenario.scenario)
-                ]))
+                Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+                    const resolved = findLibraryEquipmentPackage(configurationLibraryData, equipmentId);
+                    return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, scenario.scenario)];
+                }))
             ])),
             it_load_profile: configurationLibraryData.it_load
         };
@@ -5117,6 +5443,25 @@ async function init() {
         elStatus.textContent = "正在加载 Pyodide…";
         pyodide = await loadPyodide();
 
+        const directModePythonModules = [
+            "equipment_registry.py",
+            "topology_registry.py",
+            "configuration_library_scanner.py",
+            "configuration_library_loader.py",
+            "equipment_curve_reader.py",
+            "equipment_curve_lookup.py",
+            "equipment_engine.py",
+            "unit_quantity.py",
+            "configuration_direct_mode_audit.py",
+            "acc_v2_curve_lookup.py",
+            "acc_v2_curve_reader.py",
+            "acc_v2_diagnostics.py",
+            "acc_v2_engine.py"
+        ];
+        for (const moduleName of directModePythonModules) {
+            await loadPythonModuleIntoPyodide(moduleName);
+        }
+
         const pyText = await fetch("./solver.py").then(r => r.text());
         await pyodide.runPythonAsync(pyText);
         const benchmarkText = await fetch("./acc_excel_benchmark.py").then(r => r.text());
@@ -5157,6 +5502,7 @@ async function init() {
 
 async function run(options = {}) {
     if (!pyodide) return;
+    clearRuntimeErrorDetails();
 
     try {
         const coolingSelection = getCoolingSystemSelection();
@@ -5270,9 +5616,57 @@ json.dumps(out, indent=2)
         const outObj = JSON.parse(outStr);
 
         // Check if this is a 8760-hour project result
-        const isProjectResult = outObj.annual_results && outObj.hourly_results;
+        const hourlyRows = Array.isArray(outObj.hourly_results) ? outObj.hourly_results : [];
+        const isProjectResult = outObj.annual_results && hourlyRows.length > 0;
+        if (outObj.error) {
+            const message = String(outObj.error);
+            console.error(outObj);
+            lastReportContext = null;
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+            if (btnExportJson) btnExportJson.disabled = true;
+            hideProjectVisualization();
+            showRuntimeErrorDetails(message);
+            if (libraryRun && configurationLibraryData) {
+                configurationLibraryData.last_solver_output = null;
+                const libraryStatus = document.getElementById("configurationLibraryStatus");
+                if (libraryStatus) {
+                    libraryStatus.textContent = message;
+                    libraryStatus.style.color = "#dc2626";
+                }
+            }
+            const d = job.diagnostics || {};
+            setSolverDataStatus(
+                `Solver: ${executedSolverFn} | IT hours=${d.itHours || 0} | weather hours=${d.weatherHours || 0} | output rows=${hourlyRows.length} | Error: ${message}`,
+                "error"
+            );
+            log(`Solver error\n${message}`);
+            return;
+        }
+        if (outObj.annual_results && Array.isArray(outObj.hourly_results) && hourlyRows.length === 0) {
+            const message = outObj.error || "Solver returned zero hourly rows. No annual results were rendered.";
+            lastReportContext = null;
+            if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
+            if (btnExportJson) btnExportJson.disabled = true;
+            hideProjectVisualization();
+            if (libraryRun && configurationLibraryData) {
+                configurationLibraryData.last_solver_output = null;
+                const libraryStatus = document.getElementById("configurationLibraryStatus");
+                if (libraryStatus) {
+                    libraryStatus.textContent = message;
+                    libraryStatus.style.color = "#dc2626";
+                }
+            }
+            const d = job.diagnostics || {};
+            setSolverDataStatus(
+                `Solver: ${executedSolverFn} | IT hours=${d.itHours || 0} | weather hours=${d.weatherHours || 0} | output rows=0 | Error: ${message}`,
+                "error"
+            );
+            log(`Solver returned zero hourly rows\n${message}`);
+            return;
+        }
 
         if (isProjectResult) {
+            clearRuntimeErrorDetails();
             // Show visualization for 8760-hour results
             showProjectVisualization(outObj);
             const outputWarnings = Array.isArray(outObj.warnings) ? outObj.warnings : [];
@@ -5313,6 +5707,7 @@ json.dumps(out, indent=2)
                 `Peak hour=${peak.peak_hour_index}, facility power=${fmtInteger(peak.peak_total_facility_power_kW)} kW`
             );
         } else {
+            clearRuntimeErrorDetails();
             // Show compact visualization for single-point results
             showSinglePointVisualization(outObj);
             lastReportContext = { input: job.input, output: outObj, job, generatedAt: new Date().toISOString() };
@@ -5375,11 +5770,13 @@ json.dumps(out, indent=2)
 
     } catch (e) {
         console.error(e);
+        const message = formatRuntimeException(e);
         lastReportContext = null;
         if (btnExportHtmlReport) btnExportHtmlReport.disabled = true;
         if (btnExportJson) btnExportJson.disabled = true;
-        setSolverDataStatus(`运行失败：${String(e.message || e)}`, "error");
-        log("❌ Run 失败：\n" + String(e));
+        showRuntimeErrorDetails(message);
+        setSolverDataStatus(`运行失败：${message}`, "error");
+        log("❌ Run 失败：\n" + message);
     }
 }
 
