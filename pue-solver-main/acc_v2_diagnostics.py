@@ -59,6 +59,9 @@ def build_acc_v2_preview(configuration_path):
     validation = validate_acc_dataset(acc_preview)
     warnings = list(preview.warnings) + list(validation.warnings)
     errors = list(preview.errors) + list(validation.errors)
+    acc_diagnostics = acc_preview.metadata.get("diagnostics") if getattr(acc_preview, "metadata", None) else None
+    if acc_diagnostics and errors:
+        errors.append(acc_diagnostics)
     curve_summaries = {
         "acc_unit": summarize_acc_curve(acc_preview),
         "rtc": summarize_rtc_curve(rtc_preview),

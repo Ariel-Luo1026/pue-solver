@@ -165,6 +165,7 @@ def _success_result(preview, operating_point, **values):
         source_workbook=preview.source_workbook,
         source_sheet=preview.source_sheet,
         lookup_success=True,
+        metadata=dict(getattr(preview, "metadata", {}) or {}),
         **values,
     )
 
@@ -177,6 +178,7 @@ def _error_result(preview, errors):
         source_sheet=preview.source_sheet,
         lookup_success=False,
         errors=list(errors),
+        metadata=dict(getattr(preview, "metadata", {}) or {}),
     )
 
 

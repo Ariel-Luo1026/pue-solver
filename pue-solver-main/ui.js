@@ -1,4 +1,9 @@
 let pyodide = null;
+let pyodideReadyPromise = null;
+let pyodideDirectModeModulesLoaded = false;
+let pyodideSolverLoaded = false;
+let pyodideBenchmarkLoaded = false;
+let runInProgress = false;
 
 const WHITE_SPACE_BY_MODEL = {
     1: ["CDU_1", "RTC_1", "RTC_2", "MAU_1", "MAU_2"],
@@ -155,9 +160,30 @@ const equipmentPdfSpecs = {};
 const CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE = "acc_v2_direct_solver_curve_hourly";
 const CONFIGURATION_LIBRARY_ACC_ENGINE = "acc_v2_configuration_library";
 const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
+const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
+    "equipment_registry.py",
+    "topology_registry.py",
+    "configuration_library_scanner.py",
+    "configuration_library_loader.py",
+    "equipment_curve_reader.py",
+    "equipment_curve_lookup.py",
+    "equipment_engine.py",
+    "unit_quantity.py",
+    "configuration_direct_mode_audit.py",
+    "acc_v2_curve_lookup.py",
+    "acc_v2_curve_reader.py",
+    "acc_v2_diagnostics.py",
+    "acc_v2_engine.py"
+]);
 
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
+
+function setRunButtonsDisabled(disabled) {
+    if (btnRun) btnRun.disabled = disabled;
+    const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
+    if (runLibraryButton) runLibraryButton.disabled = disabled || !configurationLibraryData;
+}
 
 function clearRuntimeErrorDetails() {
     if (!elRuntimeErrorDetails) return;
@@ -176,6 +202,74 @@ function formatRuntimeException(error) {
     const message = error.message ? String(error.message) : String(error);
     const stack = error.stack ? String(error.stack) : "";
     return stack && !stack.includes(message) ? `${message}\n${stack}` : (stack || message);
+}
+
+async function ensurePyodideReady() {
+    if (pyodide && window.pyodideReady) return pyodide;
+    if (pyodideReadyPromise) return pyodideReadyPromise;
+
+    pyodideReadyPromise = (async () => {
+        try {
+            if (elStatus) elStatus.textContent = "Loading calculation engine...";
+            setSolverDataStatus("Loading calculation engine...", "info");
+            if (!pyodide) {
+                console.time("loadPyodide");
+                try {
+                    pyodide = await loadPyodide();
+                } finally {
+                    console.timeEnd("loadPyodide");
+                }
+            }
+
+            if (!pyodideDirectModeModulesLoaded) {
+                console.time("fetch/write module loop");
+                try {
+                    for (const moduleName of DIRECT_MODE_PYTHON_MODULES) {
+                        await loadPythonModuleIntoPyodide(moduleName);
+                    }
+                    pyodideDirectModeModulesLoaded = true;
+                } finally {
+                    console.timeEnd("fetch/write module loop");
+                }
+            }
+
+            if (!pyodideSolverLoaded) {
+                console.time("solver.py runPythonAsync");
+                try {
+                    const pyText = await fetch("./solver.py").then(r => r.text());
+                    await pyodide.runPythonAsync(pyText);
+                    pyodideSolverLoaded = true;
+                } finally {
+                    console.timeEnd("solver.py runPythonAsync");
+                }
+            }
+
+            if (!pyodideBenchmarkLoaded) {
+                console.time("benchmark runPythonAsync");
+                try {
+                    const benchmarkText = await fetch("./acc_excel_benchmark.py").then(r => r.text());
+                    await pyodide.runPythonAsync(benchmarkText);
+                    ensureAccExcelReplicatedHourlyLoaded();
+                    pyodideBenchmarkLoaded = true;
+                } finally {
+                    console.timeEnd("benchmark runPythonAsync");
+                }
+            }
+
+            window.pyodide = pyodide;
+            window.pyodideReady = true;
+            if (elStatus) elStatus.textContent = "Calculation engine ready.";
+            setSolverDataStatus("Calculation engine ready.", "ok");
+            return pyodide;
+        } catch (error) {
+            window.pyodideReady = false;
+            pyodideReadyPromise = null;
+            if (elStatus) elStatus.textContent = "Calculation engine failed.";
+            setSolverDataStatus(`Calculation engine failed: ${String(error.message || error)}`, "error");
+            throw error;
+        }
+    })();
+    return pyodideReadyPromise;
 }
 
 async function loadPythonModuleIntoPyodide(fileName) {
@@ -239,6 +333,28 @@ function applyAccCalculationEngineSelection(inputObj, calculationMode = CONFIGUR
 
 function getAccEngineUsedLabel(outputObj) {
     return "ACC V2 Configuration Library Engine";
+}
+
+function isConfigurationLibraryAccV2DirectResult(outputObj = {}, inputObj = null) {
+    const output = outputObj && typeof outputObj === "object" ? outputObj : {};
+    const input = inputObj && typeof inputObj === "object" ? inputObj : {};
+    const annual = output.annual_results && typeof output.annual_results === "object" ? output.annual_results : {};
+    const firstHour = Array.isArray(output.hourly_results) && output.hourly_results.length ? output.hourly_results[0] : {};
+    const calculationMode = output.calculation_mode || annual.calculation_mode || output.project?.calculation_mode || input.project?.calculation_mode;
+    const benchmarkMode = ["excel_benchmark_compatible", "excel_replicated_hourly", "experimental_acc_hourly_shape"].includes(String(calculationMode || ""));
+    const accV2Enabled = input.acc_engine === CONFIGURATION_LIBRARY_ACC_ENGINE
+        || input.feature_flags?.acc_v2_enabled === true
+        || input.acc_v2?.enabled === true
+        || Boolean(configurationLibraryData);
+    const libraryDirect = input.run_mode === CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE
+        || input.acc_engine === CONFIGURATION_LIBRARY_ACC_ENGINE
+        || Boolean(input.library_context)
+        || Boolean(input.configuration_library)
+        || Boolean(configurationLibraryData);
+    const accCurveSource = annual.acc_curve_source || firstHour.acc_curve_source;
+    const usesConfigurationCurve = ["acc_v2_solver_curve_direct", "configuration_library_solver_curve"].includes(String(accCurveSource || ""));
+    const project8760 = calculationMode === "project_8760" || (Array.isArray(output.hourly_results) && output.hourly_results.length > 1);
+    return !benchmarkMode && accV2Enabled && libraryDirect && project8760 && usesConfigurationCurve;
 }
 
 function getCoolingSystemSelection() {
@@ -2247,9 +2363,10 @@ function buildHtmlReport(context) {
     const isAnnualBenchmarkMode = output.calculation_mode === "excel_benchmark_compatible" || annual.calculation_mode === "excel_benchmark_compatible";
     const isExcelReplicatedHourlyMode = output.calculation_mode === "excel_replicated_hourly" || annual.calculation_mode === "excel_replicated_hourly";
     const isExperimentalHourlyMode = output.calculation_mode === "experimental_acc_hourly_shape" || annual.calculation_mode === "experimental_acc_hourly_shape";
+    const isConfigurationLibraryAccV2DirectMode = isConfigurationLibraryAccV2DirectResult(output, context.input);
     const isBenchmarkMode = isAnnualBenchmarkMode || isExcelReplicatedHourlyMode || isExperimentalHourlyMode;
     const hasExperimentalPeakWarning = isExperimentalHourlyMode && annual.acc_peak_power_warning === true;
-    const isAccV2DirectMode = isExperimentalHourlyMode && annual.acc_direct_solver_curve === true;
+    const isAccV2DirectMode = (isExperimentalHourlyMode && annual.acc_direct_solver_curve === true) || isConfigurationLibraryAccV2DirectMode;
     const isAccMode = isBenchmarkMode || context.input?.cooling_system_type === "ACC" || annual.annual_acc_energy_kWh != null;
     const benchmark = output.benchmark_components || {};
     const benchmarkAverage = benchmark.component_average_kW || {};
@@ -2476,6 +2593,7 @@ function buildHtmlReport(context) {
     <h2>1. Executive Summary</h2>
     ${isBenchmarkMode ? `<p>This assessment evaluates the annual operating performance of the JUNO data center using an hourly weather-driven simulation with the project-specific ACC cooling architecture.</p>` : ""}
     ${isAccV2DirectMode ? `<div class="note"><b>ACC V2 direct mode:</b> Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` : ""}
+    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>ACC Calculation Mode:</b> True EPW × Solver_Curve<br><b>Annual Calibration:</b> Not applied<br><b>Annual Calibration Factor:</b> 1.0</div>` : ""}
     ${hasExperimentalPeakWarning ? `<div class="note" style="background:#F5F5F5;border-left-color:#7A7A7A;color:#222222;"><b>Warning:</b> Direct hourly ACC power exceeds scenario peak ACC power by more than 10%. Peak Hourly PUE should be reviewed against design intent.</div>` : ""}
     ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
     <div class="meta">
@@ -2501,7 +2619,12 @@ function buildHtmlReport(context) {
             ...(isExperimentalHourlyMode ? [
                 ["ACC Curve Source", esc(annual.acc_curve_source || benchmark.acc_curve_source || "N/A")],
                 ["External Annual Adjustment Applied", annual.acc_annual_calibration_applied === false ? "No" : "N/A"]
-            ] : [["ACC Annual Weather Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)]]),
+            ] : (isConfigurationLibraryAccV2DirectMode ? [
+                ["ACC Calculation Mode", "True EPW × Solver_Curve"],
+                ["Annual Calibration", "Not applied"],
+                ["Annual Calibration Factor", "1.0"],
+                ["ACC Curve Source", esc(annual.acc_curve_source || "N/A")]
+            ] : [["ACC Annual Weather Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)]])),
             ["IT Efficiency", percentText(benchmark.it_efficiency, 4)],
             ["MEP Efficiency", percentText(benchmark.mep_efficiency, 4)]
         ] : []),
@@ -2553,26 +2676,26 @@ function buildHtmlReport(context) {
 <section>
     <h2>4. Methodology</h2>
     ${isBenchmarkMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isExperimentalHourlyMode ? "The assessment uses Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup. EPW dry-bulb temperature and hourly load ratio determine hourly ACC power." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
+        <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isAccV2DirectMode ? "The assessment uses Configuration Library-driven ACC simulation using True EPW × Solver_Curve calculation. EPW dry-bulb temperature and hourly load ratio determine hourly ACC power. Annual Calibration is Not applied." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
         <div class="card">
             <h3>ACC Unit Architecture</h3>
-            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isExperimentalHourlyMode ? "ACC operation follows direct Configuration Library Solver_Curve lookup for every hour." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
+            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isAccV2DirectMode ? "ACC operation follows direct Configuration Library Solver_Curve lookup for every hour." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
             <table><tbody>${tableRows([
                 ["ACC Unit Capacity", `${reportValue(context.input?.cooling_unit_capacity_mw, " MW", 1)}`],
                 ["Active ACC Units", esc(output.project?.active_units ?? "N/A")],
-            ["Calculation Method", isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : "Annual-equivalent energy performance model")],
+            ["Calculation Method", isAccV2DirectMode ? "Configuration Library Solver_Curve direct hourly simulation" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : "Annual-equivalent energy performance model")],
                 ["Hourly Dispatch", isAnnualBenchmarkMode ? "Not applied in annual-equivalent assessment" : "Hourly weather-driven simulation"]
             ])}</tbody></table>
         </div>
         <h3>Calculation Methodology</h3>
         <table><tbody>${tableRows([
-            ["ACC Average Power", isExcelReplicatedHourlyMode ? "<code>Hourly ACC performance profile integrated over the annual weather year</code>" : (isExperimentalHourlyMode ? "<code>sum(hourly ACC Solver_Curve power) / annual hours</code>" : "<code>Scenario peak ACC power × annual weather factor</code>")],
+            ["ACC Average Power", isExcelReplicatedHourlyMode ? "<code>Hourly ACC performance profile integrated over the annual weather year</code>" : (isAccV2DirectMode ? "<code>sum(hourly ACC Solver_Curve power) / annual hours</code>" : "<code>Scenario peak ACC power × annual weather factor</code>")],
             ["Other Equipment", "<code>Scenario equipment power × annual IT load factor</code>"],
             ["Electrical Distribution Loss", "<code>Load / path efficiency - load</code>"],
             ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
         ])}</tbody></table>
     ` : `
-    <p>${isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured."}</p>
+    <p>${isConfigurationLibraryAccV2DirectMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, EPW dry-bulb temperature, Configuration Library Solver_Curve ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses. Annual Calibration is Not applied." : (isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured.")}</p>
     <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
     ${coolingUnitInfo ? `
         <div class="card">
@@ -2634,11 +2757,13 @@ function buildHtmlReport(context) {
 <section>
     <h2>6. Equipment Curve Register</h2>
     ${isAccMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isExperimentalHourlyMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and hourly load ratio." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
+        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and hourly load ratio." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
         <table><tbody>${tableRows([
             ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
-            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isExperimentalHourlyMode ? "Direct ACC Solver_Curve lookup" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
-            ["Annual Adjustment", isExperimentalHourlyMode ? "None — annual ACC energy is the sum of hourly ACC power" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
+            ["ACC Calculation Mode", isAccV2DirectMode ? "True EPW × Solver_Curve" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
+            ["Annual Calibration", isAccV2DirectMode ? "Not applied" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
+            ["Annual Calibration Factor", isAccV2DirectMode ? "1.0" : "N/A"],
+            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Direct ACC Solver_Curve lookup" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
             ["Weather Representation", isAnnualBenchmarkMode ? "Annualized weather factor" : "Hourly weather data"]
         ])}</tbody></table>
     ` : `
@@ -2770,8 +2895,12 @@ function buildHtmlReport(context) {
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> using the project-specific hourly ACC performance model. Hourly component powers and PUE are derived from the selected scenario equipment powers and electrical-loss methodology.`
             : (isExperimentalHourlyMode
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on direct hourly ACC Solver_Curve lookup using EPW dry-bulb temperature and hourly load ratio. ACC annual energy is calculated as the sum of hourly ACC power with no external annual adjustment.`
+            : (isConfigurationLibraryAccV2DirectMode
+            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
             : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. CHW pump, CDU / RTC / MAU equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical distribution losses are calculated from the project IT and MEP efficiency assumptions.`))
-        : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`}</p>
+        : (isConfigurationLibraryAccV2DirectMode
+        ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
+        : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`)}</p>
     <table><tbody>${tableRows(isBenchmarkMode ? [
         ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
         ["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Not applicable in annual-equivalent assessment")]
@@ -4519,7 +4648,9 @@ async function runUsingConfigurationLibrary() {
         return;
     }
     let syncResult;
+    setRunButtonsDisabled(true);
     try {
+        await ensurePyodideReady();
         syncResult = await syncConfigurationLibraryToPyodide(configurationLibraryData);
     } catch (error) {
         if (status) {
@@ -4527,6 +4658,7 @@ async function runUsingConfigurationLibrary() {
             status.style.color = "#dc2626";
         }
         log("Configuration Library workbook sync failed:\n" + String(error.message || error));
+        setRunButtonsDisabled(false);
         return;
     }
     configurationLibraryData.configuration_path = syncResult.configuration_path;
@@ -4549,7 +4681,11 @@ async function runUsingConfigurationLibrary() {
         `Configuration Library synced: ${syncResult.configuration_name}, workbooks=${syncResult.workbook_paths.length}\n` +
         syncResult.workbook_paths.slice(0, 5).join("\n")
     );
-    await run({ libraryRun: true, libraryInput: adaptedInput });
+    try {
+        await run({ libraryRun: true, libraryInput: adaptedInput });
+    } finally {
+        setRunButtonsDisabled(false);
+    }
 }
 
 function renderConfigurationLibrarySummary(data) {
@@ -4565,6 +4701,7 @@ function renderConfigurationLibrarySummary(data) {
     const electricalPath = standardized?.electrical_path;
     const annualElectrical = data.last_solver_output?.annual_results || {};
     const hourlyElectrical = Array.isArray(data.last_solver_output?.hourly_results) ? data.last_solver_output.hourly_results : [];
+    const directAccV2Disclosure = isConfigurationLibraryAccV2DirectResult(data.last_solver_output || {}, data.standardized_solver_input || null);
     const resultValue = (value, formatter) => value != null ? formatter(value) : "Not available";
     const whiteSpaceEnergy = firstAvailableResultField(annualElectrical, ["annual_white_space_equipment_energy_kWh"])
         ?? sumAvailableResultFields(annualElectrical, ["annual_cdu_energy_kWh", "annual_rtc_energy_kWh", "annual_mau_energy_kWh"]);
@@ -4582,6 +4719,11 @@ function renderConfigurationLibrarySummary(data) {
         ["Standby Units", unitQuantity?.standby_units ?? "Enter Total IT Capacity"],
         ["Active units for selected scenario", activeUnits ?? "Enter Total IT Capacity"],
         ["Redundancy", unitQuantity?.redundancy || "Auto"],
+        ...(directAccV2Disclosure ? [
+            ["ACC Calculation Mode", "True EPW × Solver_Curve"],
+            ["Annual Calibration", "Not applied"],
+            ["Annual Calibration Factor", "1.0"]
+        ] : []),
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
         ["Electrical IT / MEP efficiency", electricalPath
             ? `${fmtNumber(electricalPath.it_efficiency * 100, 2)}% / ${fmtNumber(electricalPath.mep_efficiency * 100, 2)}%` : "Missing"],
@@ -4929,9 +5071,16 @@ function showProjectVisualization(outObj) {
     const principle = document.getElementById("calculationPrinciple");
     if (principle) {
         const accEngineUsed = getAccEngineUsedLabel(outObj);
+        const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
+        const accDisclosure = isDirectAccV2
+            ? `<div style="margin:6px 0;">ACC Calculation Mode: True EPW × Solver_Curve</div>` +
+              `<div style="margin:6px 0;">Annual Calibration: Not applied</div>` +
+              `<div style="margin:6px 0 8px 0;">Annual Calibration Factor: 1.0</div>`
+            : "";
         principle.innerHTML =
             "<b>计算原理</b><br>" +
             `<div style="margin:6px 0 8px 0;">ACC Engine Used: ${esc(accEngineUsed)}</div>` +
+            accDisclosure +
             "全年模式调用 <code>compute_pue_project(dc)</code>。每小时读取 <code>project.it_load.hourly_it_load_kW</code> 与 <code>weather.hourly_data.dry_bulb_C</code>，" +
             "由电气效率曲线估算 UPS/变压器损耗，由 <code>chiller_COP_H_vs_load</code> COP 曲面估算冷水机功率，并按小时计算 " +
             "<code>PUE = total_facility_power_kW / IT_load_kW</code>。年度 PUE 使用全年设施能耗除以全年 IT 能耗。";
@@ -5440,36 +5589,8 @@ elOut.value = "";
 
 async function init() {
     try {
-        elStatus.textContent = "正在加载 Pyodide…";
-        pyodide = await loadPyodide();
-
-        const directModePythonModules = [
-            "equipment_registry.py",
-            "topology_registry.py",
-            "configuration_library_scanner.py",
-            "configuration_library_loader.py",
-            "equipment_curve_reader.py",
-            "equipment_curve_lookup.py",
-            "equipment_engine.py",
-            "unit_quantity.py",
-            "configuration_direct_mode_audit.py",
-            "acc_v2_curve_lookup.py",
-            "acc_v2_curve_reader.py",
-            "acc_v2_diagnostics.py",
-            "acc_v2_engine.py"
-        ];
-        for (const moduleName of directModePythonModules) {
-            await loadPythonModuleIntoPyodide(moduleName);
-        }
-
-        const pyText = await fetch("./solver.py").then(r => r.text());
-        await pyodide.runPythonAsync(pyText);
-        const benchmarkText = await fetch("./acc_excel_benchmark.py").then(r => r.text());
-        await pyodide.runPythonAsync(benchmarkText);
-        ensureAccExcelReplicatedHourlyLoaded();
-
-        window.pyodide = pyodide;
-        window.pyodideReady = true;
+        elStatus.textContent = "Page ready. Calculation engine will load when you click Run.";
+        window.pyodideReady = false;
 
         try {
             window.curveLib = await fetch("./curves.json").then(r => r.json());
@@ -5478,7 +5599,7 @@ async function init() {
             window.curveLib = { curves_1d: {}, cop_surfaces: {} };
         }
 
-        elStatus.textContent = "Pyodide 已就绪：solver.py 已加载。";
+        elStatus.textContent = "Page ready. Calculation engine will load when you click Run.";
         btnRun.disabled = false;
 
         if (window.initCurveEditors) window.initCurveEditors();
@@ -5495,13 +5616,15 @@ async function init() {
         );
     } catch (e) {
         console.error(e);
-        elStatus.textContent = "Pyodide 加载失败（看 Log/Console）";
+        elStatus.textContent = "初始化失败（看 Log/Console）";
         log("❌ 初始化失败：\n" + String(e));
     }
 }
 
 async function run(options = {}) {
-    if (!pyodide) return;
+    if (runInProgress) return;
+    runInProgress = true;
+    setRunButtonsDisabled(true);
     clearRuntimeErrorDetails();
 
     try {
@@ -5596,6 +5719,7 @@ async function run(options = {}) {
         }
 
         const executedSolverFn = requestedSolverFn || job.solverFn;
+        await ensurePyodideReady();
         if (executedSolverFn === "compute_acc_excel_replicated_hourly") {
             ensureAccExcelReplicatedHourlyLoaded();
         }
@@ -5777,6 +5901,9 @@ json.dumps(out, indent=2)
         showRuntimeErrorDetails(message);
         setSolverDataStatus(`运行失败：${message}`, "error");
         log("❌ Run 失败：\n" + message);
+    } finally {
+        runInProgress = false;
+        setRunButtonsDisabled(false);
     }
 }
 

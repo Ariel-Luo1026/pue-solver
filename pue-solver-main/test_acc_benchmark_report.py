@@ -124,10 +124,10 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
         self.assertIn('Number(annual.max_hourly_PUE)', self.ui)
         self.assertIn('isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)', self.ui)
 
-    def test_experimental_hourly_shape_mode_is_wired_to_ui_and_report(self):
+    def test_experimental_hourly_shape_mode_is_not_exposed_in_direct_ui_but_report_support_remains(self):
         index = Path(__file__).with_name("index.html").read_text(encoding="utf-8")
-        self.assertIn('value="experimental_acc_hourly_shape"', index)
-        self.assertIn("ACC V2 Direct Solver_Curve Hourly Mode", index)
+        self.assertNotIn('value="experimental_acc_hourly_shape"', index)
+        self.assertNotIn("ACC V2 Direct Solver_Curve Hourly Mode", index)
         self.assertIn("compute_acc_experimental_hourly_shape", self.ui)
         self.assertIn('const isExperimentalHourlyMode =', self.ui)
         self.assertNotIn("Excel Benchmark Hourly Equivalent Mode", index)
@@ -143,10 +143,10 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
         for field in ("max_acc_power_kW", "scenario_peak_acc_power_kW", "acc_peak_to_scenario_peak_ratio"):
             self.assertIn(field, self.ui)
 
-    def test_excel_replicated_hourly_mode_is_wired_and_distinct(self):
+    def test_excel_replicated_hourly_mode_is_not_exposed_in_direct_ui_but_report_support_remains(self):
         index = Path(__file__).with_name("index.html").read_text(encoding="utf-8")
-        self.assertIn('value="excel_replicated_hourly"', index)
-        self.assertIn("Excel Replicated Hourly Mode", index)
+        self.assertNotIn('value="excel_replicated_hourly"', index)
+        self.assertNotIn("Excel Replicated Hourly Mode", index)
         self.assertIn("compute_acc_excel_replicated_hourly", self.ui)
         self.assertIn('const isExcelReplicatedHourlyMode =', self.ui)
         self.assertIn("Project-specific hourly ACC performance model", self.ui)

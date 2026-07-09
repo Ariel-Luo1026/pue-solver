@@ -72,10 +72,20 @@ def find_equipment_workbook(configuration_path, equipment_id):
 def read_equipment_solver_curve(workbook_path, expected_columns):
     """Read Solver_Curve rows from an equipment workbook."""
     workbook_path = Path(workbook_path)
+    is_acc = _is_acc_workbook_path(workbook_path)
+    if is_acc:
+        _print_acc_workbook_before_open(workbook_path)
     sheets = read_xlsx_sheets(workbook_path)
+    if is_acc:
+        _print_acc_workbook_loaded(sheets)
+        _print_acc_solver_curve_selection("Solver_Curve", sheets)
     if "Solver_Curve" not in sheets:
+        if is_acc:
+            print(f"ACC Solver_Curve sheet missing; available sheet names={list(sheets)}")
         raise ValueError(f"Solver_Curve sheet missing in {workbook_path}")
     rows = _records(sheets["Solver_Curve"])
+    if is_acc:
+        _print_acc_solver_curve_rows(rows)
     validate_solver_curve_columns(rows, expected_columns)
     return rows
 
@@ -150,6 +160,7 @@ def read_acc_v2_equipment_curves(configuration_path):
 def _read_single_equipment_preview(configuration_path, equipment_id, expected_columns):
     workbook_path = find_equipment_workbook(configuration_path, equipment_id)
     if workbook_path is None:
+        diagnostics = _build_acc_diagnostics(None, requested_sheet_name="Solver_Curve") if equipment_id == "acc_unit" else ""
         return EquipmentCurvePreview(
             equipment_id=equipment_id,
             folder_name=None,
@@ -157,12 +168,24 @@ def _read_single_equipment_preview(configuration_path, equipment_id, expected_co
             required_columns_present=False,
             missing_columns=list(expected_columns),
             warnings=["Required equipment workbook not found."],
+            metadata={"canonical_equipment_id": canonicalize_equipment_id(equipment_id), "diagnostics": diagnostics}
+            if diagnostics else {"canonical_equipment_id": canonicalize_equipment_id(equipment_id)},
         )
 
+    is_acc = equipment_id == "acc_unit"
+    if is_acc:
+        _print_acc_workbook_before_open(workbook_path)
     sheets = read_xlsx_sheets(workbook_path)
     sheet_names = list(sheets)
+    if is_acc:
+        _print_acc_workbook_loaded(sheets)
+        _print_acc_solver_curve_selection("Solver_Curve", sheets)
     warnings = _optional_sheet_warnings(sheet_names, equipment_id)
-    if "Solver_Curve" not in sheets:
+    selected_sheet_name = _select_solver_curve_sheet(equipment_id, sheet_names)
+    diagnostics = _build_acc_diagnostics(workbook_path, sheets=sheets, requested_sheet_name="Solver_Curve") if is_acc else ""
+    if selected_sheet_name is None:
+        if is_acc:
+            print(f"ACC Solver_Curve sheet missing; available sheet names={sheet_names}")
         return EquipmentCurvePreview(
             equipment_id=equipment_id,
             folder_name=workbook_path.parent.name,
@@ -171,10 +194,13 @@ def _read_single_equipment_preview(configuration_path, equipment_id, expected_co
             required_columns_present=False,
             missing_columns=list(expected_columns),
             warnings=warnings + ["Solver_Curve sheet missing."],
-            metadata={"canonical_equipment_id": canonicalize_equipment_id(equipment_id)},
+            metadata={"canonical_equipment_id": canonicalize_equipment_id(equipment_id), **({"diagnostics": diagnostics} if diagnostics else {})},
         )
 
-    rows = _records(sheets["Solver_Curve"])
+    rows = _records(sheets[selected_sheet_name])
+    if is_acc:
+        _print_acc_solver_curve_rows(rows)
+        diagnostics = _build_acc_diagnostics(workbook_path, sheets=sheets, requested_sheet_name="Solver_Curve", rows=rows)
     if equipment_id == "acc_unit":
         rows, cop_warnings = _derive_acc_rows(rows)
         warnings.extend(cop_warnings)
@@ -194,7 +220,11 @@ def _read_single_equipment_preview(configuration_path, equipment_id, expected_co
         required_columns_present=validation["required_columns_present"],
         missing_columns=validation["missing_columns"],
         warnings=warnings,
-        metadata={"canonical_equipment_id": canonicalize_equipment_id(equipment_id)},
+        metadata={
+            "canonical_equipment_id": canonicalize_equipment_id(equipment_id),
+            "selected_solver_curve_sheet": selected_sheet_name,
+            **({"diagnostics": diagnostics} if diagnostics else {}),
+        },
     )
 
 
@@ -219,6 +249,18 @@ def _optional_sheet_warnings(sheet_names, equipment_id):
     ]
 
 
+def _select_solver_curve_sheet(equipment_id, sheet_names):
+    if equipment_id == "pump" or canonicalize_equipment_id(equipment_id) == "CHW_PUMP_2":
+        for sheet_name in ("Solver_Curve_Normal", "Solver_Curve"):
+            if sheet_name in sheet_names:
+                return sheet_name
+        scenario_sheets = sorted(
+            sheet_name for sheet_name in sheet_names if sheet_name.startswith("Solver_Curve_")
+        )
+        return scenario_sheets[0] if scenario_sheets else None
+    return "Solver_Curve" if "Solver_Curve" in sheet_names else None
+
+
 def _acc_curve_warnings(rows):
     warnings = []
     seen_points = set()
@@ -238,3 +280,77 @@ def _float_or_none(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _is_acc_workbook_path(workbook_path):
+    return str(Path(workbook_path).stem).upper().startswith("ACC_")
+
+
+def _print_acc_workbook_before_open(workbook_path):
+    workbook_path = Path(workbook_path)
+    exists = workbook_path.is_file()
+    file_size = workbook_path.stat().st_size if exists else None
+    print(f"ACC workbook path={workbook_path}")
+    print(f"ACC workbook exists={exists}")
+    print(f"ACC workbook file size={file_size}")
+
+
+def _print_acc_workbook_loaded(sheets):
+    print("ACC workbook loaded successfully")
+    print(f"ACC workbook sheet names={list(sheets)}")
+
+
+def _print_acc_solver_curve_selection(requested_sheet_name, sheets):
+    print(f"ACC Solver_Curve requested sheet name={requested_sheet_name}")
+    print(f"ACC Solver_Curve available sheet names={list(sheets)}")
+
+
+def _print_acc_solver_curve_rows(rows):
+    columns = []
+    for row in rows or []:
+        for column in row.keys():
+            if column not in columns:
+                columns.append(column)
+    print(f"ACC Solver_Curve row count={len(rows or [])}")
+    print(f"ACC Solver_Curve column count={len(columns)}")
+    print(f"ACC Solver_Curve first five rows={(rows or [])[:5]}")
+
+
+def _build_acc_diagnostics(workbook_path, sheets=None, requested_sheet_name="Solver_Curve", rows=None):
+    lines = ["ACC workbook diagnostics:"]
+    if workbook_path is None:
+        lines.extend([
+            "workbook path=None",
+            "file exists=False",
+            "file size=None",
+        ])
+    else:
+        workbook_path = Path(workbook_path)
+        exists = workbook_path.is_file()
+        file_size = workbook_path.stat().st_size if exists else None
+        lines.extend([
+            f"workbook path={workbook_path}",
+            f"file exists={exists}",
+            f"file size={file_size}",
+        ])
+    sheet_names = list(sheets) if isinstance(sheets, dict) else []
+    lines.extend([
+        f"workbook sheet names={sheet_names}",
+        f"requested sheet name={requested_sheet_name}",
+        f"available sheet names={sheet_names}",
+    ])
+    if rows is None and isinstance(sheets, dict) and requested_sheet_name in sheets:
+        rows = _records(sheets[requested_sheet_name])
+    if rows is not None:
+        columns = []
+        for row in rows or []:
+            for column in row.keys():
+                if column not in columns:
+                    columns.append(column)
+        lines.extend([
+            f"detected header row={columns}",
+            f"row count={len(rows or [])}",
+            f"column count={len(columns)}",
+            f"first five rows={(rows or [])[:5]}",
+        ])
+    return "\n".join(lines)

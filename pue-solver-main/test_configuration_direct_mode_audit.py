@@ -121,16 +121,16 @@ class ConfigurationDirectModeAuditTest(unittest.TestCase):
                 self.assertEqual(output["hourly_results"], [])
                 self.assertEqual(output["annual_results"], {})
 
-    def test_direct_mode_visible_ui_and_report_text_has_no_forbidden_calibration_language(self):
+    def test_direct_mode_visible_ui_and_report_text_allows_required_no_calibration_disclosure_only(self):
         root = Path(__file__).resolve().parent
         visible_sources = [
             (root / "index.html").read_text(encoding="utf-8"),
             (root / "ui.js").read_text(encoding="utf-8"),
         ]
-        visible_text = "\n".join(visible_sources).lower()
+        visible_source = "\n".join(visible_sources)
+        visible_text = visible_source.lower()
 
         forbidden_visible_phrases = (
-            "annual calibration",
             "annual energy performance calibration",
             "benchmark target",
             "weather-driven sensitivity",
@@ -138,6 +138,9 @@ class ConfigurationDirectModeAuditTest(unittest.TestCase):
         )
         for phrase in forbidden_visible_phrases:
             self.assertNotIn(phrase, visible_text)
+        self.assertIn("Annual Calibration", visible_source)
+        self.assertIn("Not applied", visible_source)
+        self.assertNotIn("Annual Calibrated", visible_source)
 
     def test_audit_serialized_output_has_no_forbidden_terms(self):
         serialized = json.dumps(self.result, sort_keys=True).lower()

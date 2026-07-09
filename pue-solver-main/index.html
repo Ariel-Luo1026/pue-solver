@@ -478,7 +478,7 @@
             </div>
         </div>
         <div id="coolingSystemStatus" class="hint" style="margin-top:10px;"></div>
-        <div class="panel" style="margin-top:14px; overflow-x:auto;">
+        <div id="scenarioSummaryPanel" class="panel" style="margin-top:14px; overflow-x:auto;">
             <div class="panelTitle">Scenario Summary</div>
             <table style="width:100%; border-collapse:collapse; min-width:920px;">
                 <thead>
@@ -505,20 +505,11 @@
             <select id="configurationLibrarySelect" style="max-width:360px;">
                 <option value="ACC_1.5MW_GASENGINE_CDU">ACC_1.5MW_GASENGINE_CDU</option>
             </select>
-            <select id="configurationCalculationMode" style="max-width:280px;">
-                <option value="dynamic_hourly">Dynamic Hourly Simulation</option>
-                <option value="excel_benchmark_compatible">Excel Benchmark Annual Equivalent Mode</option>
-                <option value="excel_replicated_hourly">Excel Replicated Hourly Mode</option>
-                <option value="experimental_acc_hourly_shape">ACC V2 Direct Solver_Curve Hourly Mode</option>
-            </select>
-            <select id="accCalculationEngine" style="max-width:300px;" title="Engineering Mode: ACC Calculation Engine">
-                <option value="legacy" selected>Legacy ACC Engine</option>
-                <option value="acc_v2">ACC V2 Configuration Library Engine</option>
-            </select>
+            <span class="hint">Using Configuration Library Direct Solver_Curve hourly simulation.</span>
             <button type="button" class="secondaryButton" id="btnLoadConfigurationLibrary">Load Configuration Library</button>
             <button type="button" class="primaryButton" id="btnRunConfigurationLibrary" disabled>Run Using Configuration Library</button>
         </div>
-        <div class="hint" style="margin-top:8px;">Engineering Mode — ACC Calculation Engine: ACC V2 requires valid Configuration Library Solver_Curve data.</div>
+        <div class="hint" style="margin-top:8px;">Calculation Mode: Configuration Library Direct Solver_Curve Hourly Simulation. ACC Engine: ACC V2 Configuration Library Engine.</div>
         <div class="panel" style="margin-top:14px;">
             <div class="panelTitle">Unit Quantity / Redundancy</div>
             <div class="fileGrid" style="margin-top:10px;">
@@ -689,6 +680,7 @@
             <span class="muted">（如果长时间卡住：检查网络能否访问 pyodide CDN）</span>
         </div>
         <div id="solverDataStatus" class="hint" style="margin-top:8px;"></div>
+        <pre id="runtimeErrorDetails" style="display:none; margin-top:10px; white-space:pre-wrap; overflow:auto; max-height:360px; padding:12px; border:1px solid #fecaca; border-radius:8px; color:#991b1b; background:#fef2f2;"></pre>
     </div>
 
     <!-- ================= IO（仍然两列） ================= -->

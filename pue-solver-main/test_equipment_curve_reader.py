@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -113,6 +115,55 @@ class EquipmentCurveReaderTest(unittest.TestCase):
         self.assertEqual(preview.curve_type, UNKNOWN_SCHEMA)
         self.assertTrue(preview.errors)
         self.assertIn("Unknown Solver_Curve schema", preview.errors[0])
+
+    def test_acc_solver_curve_success_prints_workbook_diagnostics(self):
+        with TemporaryDirectory() as temp_dir:
+            config = _make_config(temp_dir, {
+                "ACC_2": [
+                    ["ambient_C", "load_ratio", "power_input_kW"],
+                    [30, 0.5, 100],
+                    [35, 1.0, 220],
+                ],
+            })
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                preview = read_equipment_solver_curve(config, "acc_unit")
+
+        output = stdout.getvalue()
+        self.assertFalse(preview.errors)
+        self.assertIn("ACC workbook path=", output)
+        self.assertIn("ACC_2.xlsx", output)
+        self.assertIn("ACC workbook exists=True", output)
+        self.assertRegex(output, r"ACC workbook file size=\d+")
+        self.assertIn("ACC workbook loaded successfully", output)
+        self.assertIn("ACC workbook sheet names=", output)
+        self.assertIn("ACC Solver_Curve requested sheet name=Solver_Curve", output)
+        self.assertIn("ACC Solver_Curve available sheet names=", output)
+        self.assertIn("ACC Solver_Curve row count=2", output)
+        self.assertIn("ACC Solver_Curve column count=3", output)
+        self.assertIn("ACC Solver_Curve first five rows=", output)
+        self.assertIn("'ambient_C': 30", output)
+
+    def test_acc_solver_curve_missing_sheet_prints_available_sheets(self):
+        with TemporaryDirectory() as temp_dir:
+            config = Path(temp_dir) / "ACC_1.5MW_GASENGINE_CDU"
+            folder = config / "equipment" / "ACC_2"
+            folder.mkdir(parents=True)
+            _write_xlsx(folder / "ACC_2.xlsx", {"Information": [["A", "B"], [1, 2]]})
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                preview = read_equipment_solver_curve(config, "ACC_2")
+
+        output = stdout.getvalue()
+        self.assertTrue(preview.errors)
+        self.assertIn("ACC workbook path=", output)
+        self.assertIn("ACC workbook exists=True", output)
+        self.assertIn("ACC workbook loaded successfully", output)
+        self.assertIn("ACC Solver_Curve requested sheet name=Solver_Curve", output)
+        self.assertIn("ACC Solver_Curve available sheet names=['Information']", output)
+        self.assertIn("ACC Solver_Curve sheet missing; available sheet names=['Information']", output)
 
 
 def _make_config(root, equipment_sheets):

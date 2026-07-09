@@ -99,6 +99,40 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("directModeEquipmentAliases = { ...DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES }", alias_block)
         self.assertIn('fetch(aliasUrl, { cache: "no-store" })', alias_block)
 
+    def test_pyodide_is_lazy_loaded_after_startup(self):
+        init_block = self._function_source("init")
+        self.assertNotIn("loadPyodide()", init_block)
+        self.assertNotIn("runPythonAsync", init_block)
+        self.assertIn("Calculation engine will load when you click Run", init_block)
+        self.assertIn("btnRun.disabled = false", init_block)
+
+        ensure_block = self._function_source("ensurePyodideReady")
+        self.assertIn("if (pyodide && window.pyodideReady) return pyodide", ensure_block)
+        self.assertIn("if (pyodideReadyPromise) return pyodideReadyPromise", ensure_block)
+        self.assertIn("pyodideReadyPromise = (async () =>", ensure_block)
+        self.assertIn("pyodide = await loadPyodide()", ensure_block)
+        self.assertIn("for (const moduleName of DIRECT_MODE_PYTHON_MODULES)", ensure_block)
+        self.assertIn('console.time("loadPyodide")', ensure_block)
+        self.assertIn('console.time("fetch/write module loop")', ensure_block)
+        self.assertIn('console.time("solver.py runPythonAsync")', ensure_block)
+        self.assertIn('console.time("benchmark runPythonAsync")', ensure_block)
+        self.assertIn("window.pyodideReady = true", ensure_block)
+
+    def test_run_paths_await_lazy_pyodide_engine(self):
+        run_block = self._function_source("run")
+        self.assertIn("if (runInProgress) return", run_block)
+        self.assertIn("setRunButtonsDisabled(true)", run_block)
+        self.assertIn("await ensurePyodideReady()", run_block)
+        self.assertLess(run_block.index("await ensurePyodideReady()"), run_block.index("pyodide.globals.set"))
+        self.assertIn("setRunButtonsDisabled(false)", run_block)
+
+        library_run_block = self._function_source("runUsingConfigurationLibrary")
+        self.assertIn("await ensurePyodideReady()", library_run_block)
+        self.assertLess(
+            library_run_block.index("await ensurePyodideReady()"),
+            library_run_block.index("syncConfigurationLibraryToPyodide(configurationLibraryData)"),
+        )
+
     def test_configuration_library_loader_fetches_canonical_workbook_before_raw_alias(self):
         fetch_block = self._function_source("fetchResolvedConfigurationEquipmentWorkbook")
         self.assertIn("const resolvedId = resolveFrontendEquipmentId(rawEquipmentId)", fetch_block)
@@ -300,6 +334,49 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             "benchmark target",
         ):
             self.assertNotIn(forbidden, report_block)
+
+    def test_configuration_library_acc_v2_direct_disclosure_labels(self):
+        detector_block = self._function_source("isConfigurationLibraryAccV2DirectResult")
+        for text in (
+            "CONFIGURATION_LIBRARY_ACC_ENGINE",
+            "CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE",
+            "project_8760",
+            "acc_v2_solver_curve_direct",
+            "configuration_library_solver_curve",
+            "excel_benchmark_compatible",
+        ):
+            self.assertIn(text, detector_block)
+
+        report_block = self._function_source("buildHtmlReport")
+        for text in (
+            "isConfigurationLibraryAccV2DirectMode",
+            "ACC Calculation Mode",
+            "True EPW × Solver_Curve",
+            "Annual Calibration",
+            "Not applied",
+            "Annual Calibration Factor",
+            "1.0",
+        ):
+            self.assertIn(text, report_block)
+        self.assertNotIn("Annual Calibrated", report_block)
+
+    def test_configuration_library_summary_discloses_no_acc_calibration(self):
+        summary_block = self._function_source("renderConfigurationLibrarySummary")
+        principle_block = self._function_source("showProjectVisualization")
+        for block in (summary_block, principle_block):
+            self.assertIn("isConfigurationLibraryAccV2DirectResult", block)
+            self.assertIn("ACC Calculation Mode", block)
+            self.assertIn("True EPW × Solver_Curve", block)
+            self.assertIn("Annual Calibration", block)
+            self.assertIn("Not applied", block)
+            self.assertNotIn("Annual Calibrated", block)
+
+    def test_benchmark_report_labels_remain_separate(self):
+        report_block = self._function_source("buildHtmlReport")
+        self.assertIn("ACC Annual Weather Factor", report_block)
+        self.assertIn("acc_annual_temperature_factor", report_block)
+        self.assertIn("isAnnualBenchmarkMode", report_block)
+        self.assertIn("excel_benchmark_compatible", report_block)
 
     def _function_source(self, function_name):
         match = re.search(rf"(?:async\s+)?function\s+{re.escape(function_name)}\s*\(", self.ui)

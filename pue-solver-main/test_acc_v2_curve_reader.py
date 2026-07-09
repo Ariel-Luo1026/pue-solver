@@ -1,3 +1,5 @@
+import contextlib
+import io
 import ast
 import unittest
 from pathlib import Path
@@ -41,6 +43,37 @@ class ACCV2CurveReaderTest(unittest.TestCase):
         self.assertEqual(rows[0]["capacity_kW"], 1300)
         self.assertEqual(rows[0]["power_input_kW"], 420)
         self.assertEqual(rows[0]["unit_efficiency_kW_per_kW"], 3.095238)
+
+    def test_acc_solver_curve_reader_prints_workbook_diagnostics(self):
+        with TemporaryDirectory() as temp_dir:
+            workbook = Path(temp_dir) / "ACC_2.xlsx"
+            _write_xlsx(
+                workbook,
+                {
+                    "Solver_Curve": [
+                        list(ACC_SOLVER_CURVE_COLUMNS),
+                        [35, 0.8, 1300, 420, 3.095238],
+                    ],
+                    "Information": [["Parameter", "Value"], ["Equipment", "ACC_2"]],
+                },
+            )
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                rows = read_equipment_solver_curve(workbook, ACC_SOLVER_CURVE_COLUMNS)
+
+        output = stdout.getvalue()
+        self.assertEqual(len(rows), 1)
+        self.assertIn("ACC workbook path=", output)
+        self.assertIn("ACC workbook exists=True", output)
+        self.assertRegex(output, r"ACC workbook file size=\d+")
+        self.assertIn("ACC workbook loaded successfully", output)
+        self.assertIn("ACC workbook sheet names=", output)
+        self.assertIn("ACC Solver_Curve requested sheet name=Solver_Curve", output)
+        self.assertIn("ACC Solver_Curve available sheet names=", output)
+        self.assertIn("ACC Solver_Curve row count=1", output)
+        self.assertIn("ACC Solver_Curve column count=5", output)
+        self.assertIn("ACC Solver_Curve first five rows=", output)
 
     def test_acc_cop_is_derived_if_missing(self):
         row, warnings = derive_acc_cop_if_missing(
@@ -96,6 +129,28 @@ class ACCV2CurveReaderTest(unittest.TestCase):
             rows = read_equipment_solver_curve(workbook, CHW_PUMP_SOLVER_CURVE_COLUMNS)
 
         self.assertEqual([row["power_kW"] for row in rows], [5, 20, 60])
+
+    def test_chw_pump_preview_accepts_scenario_solver_curve_sheets(self):
+        with TemporaryDirectory() as temp_dir:
+            config = _make_configuration(
+                temp_dir,
+                {
+                    "ACC_2": [["ambient_C", "load_ratio", "capacity_kW", "power_input_kW"], [35, 0.8, 1300, 425]],
+                    "RTC_1&2": [["load_ratio", "power_kW"], [0.8, 12]],
+                    "CDU_2": [["load_ratio", "power_kW"], [0.8, 13]],
+                    "CHW_PUMP_2": [["load_ratio", "power_kW"], [0.8, 20]],
+                },
+            )
+            _replace_pump_with_scenario_curves(config)
+
+            preview = read_acc_v2_equipment_curves(config)
+
+        pump = preview.equipment_curves["pump"]
+        self.assertEqual(preview.validation_status, "valid")
+        self.assertTrue(pump.required_columns_present)
+        self.assertEqual(pump.missing_columns, [])
+        self.assertEqual(pump.metadata["selected_solver_curve_sheet"], "Solver_Curve_Normal")
+        self.assertEqual([row["power_kW"] for row in pump.solver_curve_rows], [15, 45])
 
     def test_missing_solver_curve_produces_clear_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -224,6 +279,21 @@ def _make_configuration(root, equipment_sheets):
             },
         )
     return config
+
+
+def _replace_pump_with_scenario_curves(config):
+    folder = Path(config) / "equipment" / "CHW_PUMP_2"
+    _write_xlsx(
+        folder / "CHW_PUMP_2.xlsx",
+        {
+            "Information": [["Parameter", "Value"], ["Equipment", "CHW_PUMP_2"]],
+            "Metadata": [["Parameter", "Value"], ["source", "unit-test"]],
+            "Performance_Map": [["placeholder"], ["not used"]],
+            "Solver_Curve_Normal": [["load_ratio", "power_kW"], [0.5, 15], [1.0, 45]],
+            "Solver_Curve_Failure": [["load_ratio", "power_kW"], [0.5, 20], [1.0, 60]],
+            "Validation": [["Parameter", "Value"], ["Status", "Available"]],
+        },
+    )
 
 
 def _write_xlsx(path, sheets):

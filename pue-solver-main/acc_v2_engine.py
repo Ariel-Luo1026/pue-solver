@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from acc_v2_curve_lookup import ACCOperatingPoint, lookup_acc_curve
-from acc_v2_diagnostics import ACCV2Diagnostic, build_acc_v2_preview
+from acc_v2_diagnostics import ACCV2Diagnostic, build_acc_v2_preview, validate_acc_dataset
 
 
 ENGINE_VERSION = "acc_v2_shadow_13f"
@@ -38,6 +38,7 @@ class ACCV2ProductionResult:
     capacity_kW: float | None
     power_input_kW: float | None
     cop: float | None
+    diagnostics: str | None = None
 
 
 @dataclass
@@ -60,12 +61,27 @@ class ACCV2Engine:
 def create_acc_v2_engine(configuration_path):
     """Build diagnostics and return an initialized ACC V2 engine."""
     diagnostic = build_acc_v2_preview(configuration_path)
-    if diagnostic.validation_summary.validation_status != "valid":
+    acc_errors = _acc_engine_blocking_errors(diagnostic)
+    if acc_errors:
         raise ValueError(
             "ACC V2 diagnostics are invalid: "
-            + "; ".join(diagnostic.validation_summary.errors)
+            + "; ".join(acc_errors)
         )
     return ACCV2Engine(diagnostic=diagnostic)
+
+
+def _acc_engine_blocking_errors(diagnostic):
+    acc_preview = diagnostic.acc_preview
+    if acc_preview is None:
+        return ["acc_unit: workbook not found"]
+    errors = []
+    if not acc_preview.required_columns_present:
+        errors.append(f"acc_unit: missing required columns {acc_preview.missing_columns}")
+    errors.extend(validate_acc_dataset(acc_preview).errors)
+    diagnostics = acc_preview.metadata.get("diagnostics") if getattr(acc_preview, "metadata", None) else None
+    if diagnostics and errors:
+        errors.append(diagnostics)
+    return errors
 
 
 def is_acc_v2_enabled(project_input):

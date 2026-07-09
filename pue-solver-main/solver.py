@@ -99,14 +99,42 @@ def get_acc_operating_point(project_input, ambient_C=None, load_ratio=None, conf
     """Optional ACC V2 hook; disabled by default and not used by legacy formulas."""
     return run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path)
 
-def resolve_acc_operating_point(project_input, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=None, configuration_path=None):
+def resolve_acc_operating_point(
+    project_input,
+    acc_curve,
+    load_ratio,
+    cooling_load_kw,
+    active_units,
+    oat_c=None,
+    configuration_path=None,
+    acc_v2_engine=None,
+    acc_v2_engine_error=None,
+):
     """Resolve ACC operating point source with mandatory legacy fallback."""
     result, _temperature_power_factor = _resolve_acc_operating_point_for_solver(
-        project_input, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c, configuration_path
+        project_input,
+        acc_curve,
+        load_ratio,
+        cooling_load_kw,
+        active_units,
+        oat_c,
+        configuration_path,
+        acc_v2_engine=acc_v2_engine,
+        acc_v2_engine_error=acc_v2_engine_error,
     )
     return result
 
-def _resolve_acc_operating_point_for_solver(project_input, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=None, configuration_path=None):
+def _resolve_acc_operating_point_for_solver(
+    project_input,
+    acc_curve,
+    load_ratio,
+    cooling_load_kw,
+    active_units,
+    oat_c=None,
+    configuration_path=None,
+    acc_v2_engine=None,
+    acc_v2_engine_error=None,
+):
     from acc_v2_engine import ACCV2ProductionResult, ENGINE_VERSION, is_acc_v2_enabled
 
     legacy_power, legacy_cop, legacy_source, legacy_ambient, legacy_temperature_power_factor = _evaluate_acc_equipment_curve(
@@ -122,6 +150,7 @@ def _resolve_acc_operating_point_for_solver(project_input, acc_curve, load_ratio
         capacity_kW=None,
         power_input_kW=legacy_power,
         cop=legacy_cop,
+        diagnostics=None,
     )
 
     if not is_acc_v2_enabled(project_input):
@@ -130,10 +159,14 @@ def _resolve_acc_operating_point_for_solver(project_input, acc_curve, load_ratio
         configuration_path = _get(project_input, ["acc_v2", "configuration_path"])
     if configuration_path is None or oat_c is None or load_ratio is None:
         return _fallback_acc_v2_result(legacy_result), legacy_temperature_power_factor
+    if acc_v2_engine_error is not None:
+        return _fallback_acc_v2_result(legacy_result, diagnostics=str(acc_v2_engine_error)), legacy_temperature_power_factor
     try:
-        from acc_v2_engine import create_acc_v2_engine
+        engine = acc_v2_engine
+        if engine is None:
+            from acc_v2_engine import create_acc_v2_engine
 
-        engine = create_acc_v2_engine(configuration_path)
+            engine = create_acc_v2_engine(configuration_path)
         point = engine.evaluate_operating_point(ambient_C=oat_c, load_ratio=load_ratio)
         total_power_kw = point.power_input_kW * max(1, int(active_units))
         return ACCV2ProductionResult(
@@ -146,11 +179,12 @@ def _resolve_acc_operating_point_for_solver(project_input, acc_curve, load_ratio
             capacity_kW=point.capacity_kW,
             power_input_kW=total_power_kw,
             cop=point.cop,
+            diagnostics=None,
         ), None
-    except Exception:
-        return _fallback_acc_v2_result(legacy_result), legacy_temperature_power_factor
+    except Exception as exc:
+        return _fallback_acc_v2_result(legacy_result, diagnostics=str(exc)), legacy_temperature_power_factor
 
-def _fallback_acc_v2_result(legacy_result):
+def _fallback_acc_v2_result(legacy_result, diagnostics=None):
     from acc_v2_engine import ACCV2ProductionResult
 
     return ACCV2ProductionResult(
@@ -163,7 +197,27 @@ def _fallback_acc_v2_result(legacy_result):
         capacity_kW=legacy_result.capacity_kW,
         power_input_kW=legacy_result.power_input_kW,
         cop=legacy_result.cop,
+        diagnostics=diagnostics or getattr(legacy_result, "diagnostics", None),
     )
+
+def _acc_direct_mode_diagnostics(input_obj, acc_operating_point=None):
+    diagnostics = getattr(acc_operating_point, "diagnostics", None)
+    if diagnostics:
+        return diagnostics
+    configuration_path = _get(input_obj, ["acc_v2", "configuration_path"]) or input_obj.get("configuration_path")
+    if not configuration_path:
+        return None
+    try:
+        from equipment_curve_reader import read_equipment_solver_curve
+
+        preview = read_equipment_solver_curve(configuration_path, "ACC_2")
+        metadata = getattr(preview, "metadata", {}) or {}
+        diagnostics = metadata.get("diagnostics")
+        if diagnostics:
+            return diagnostics
+    except Exception as exc:
+        return f"ACC workbook diagnostics unavailable: {exc}"
+    return None
 
 # -------------------------
 # 1D interpolation (linear / pchip)
@@ -1938,6 +1992,16 @@ def compute_pue_project(input_obj):
     n = max(len(hourly_it_load), len(dry_bulb))
     dry_cooler_over_capacity_count = 0
     configuration_equipment_engines = {}
+    acc_v2_engine = None
+    acc_v2_engine_error = None
+    acc_v2_configuration_path = _get(input_obj, ["acc_v2", "configuration_path"])
+    try:
+        from acc_v2_engine import create_acc_v2_engine, is_acc_v2_enabled
+
+        if is_acc_v2_enabled(input_obj) and acc_v2_configuration_path is not None:
+            acc_v2_engine = create_acc_v2_engine(acc_v2_configuration_path)
+    except Exception as exc:
+        acc_v2_engine_error = str(exc)
     for i in range(n):
         it_kw = _num(hourly_it_load[i], 0.0) if i < len(hourly_it_load) else 0.0
         oat_c = _num(dry_bulb[i], None)
@@ -2313,7 +2377,14 @@ def compute_pue_project(input_obj):
             cop_source = "default_3.0"
         chiller_kw = total_thermal_load / cop if cop > 0 else 0.3 * total_thermal_load
         acc_operating_point, acc_temperature_power_factor = _resolve_acc_operating_point_for_solver(
-            input_obj, acc_curve, unit_load_ratio, total_thermal_load, library_active_units, oat_c=oat_c
+            input_obj,
+            acc_curve,
+            unit_load_ratio,
+            total_thermal_load,
+            library_active_units,
+            oat_c=oat_c,
+            acc_v2_engine=acc_v2_engine,
+            acc_v2_engine_error=acc_v2_engine_error,
         )
         acc_power_kw = acc_operating_point.power_input_kW
         acc_cop = acc_operating_point.cop
@@ -2325,6 +2396,9 @@ def compute_pue_project(input_obj):
                     "ACC Solver_Curve missing or invalid. Configuration Library direct mode "
                     "requires ACC Solver_Curve data and does not allow ACC legacy fallback."
                 )
+                acc_diagnostics = _acc_direct_mode_diagnostics(input_obj, acc_operating_point)
+                if acc_diagnostics:
+                    error_message = f"{error_message}\n{acc_diagnostics}"
                 validation.setdefault("errors", []).append(error_message)
                 result["validation"] = validation
                 result["error"] = error_message
@@ -2334,6 +2408,9 @@ def compute_pue_project(input_obj):
                     "ACC Solver_Curve missing or invalid. Configuration Library direct mode "
                     "requires ACC load_ratio and/or ambient Solver_Curve power data."
                 )
+                acc_diagnostics = _acc_direct_mode_diagnostics(input_obj, acc_operating_point)
+                if acc_diagnostics:
+                    error_message = f"{error_message}\n{acc_diagnostics}"
                 validation.setdefault("errors", []).append(error_message)
                 result["validation"] = validation
                 result["error"] = error_message
