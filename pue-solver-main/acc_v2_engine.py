@@ -25,6 +25,8 @@ class ACCV2ShadowResult:
     validation_warnings: tuple[str, ...]
     validation_errors: tuple[str, ...]
     engine_version: str = ENGINE_VERSION
+    required_capacity_kW: float | None = None
+    capacity_clamped: bool = False
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,10 @@ class ACCV2ProductionResult:
     power_input_kW: float | None
     cop: float | None
     diagnostics: str | None = None
+    required_capacity_kW: float | None = None
+    power_input_per_unit_kW: float | None = None
+    capacity_clamped: bool = False
+    diagnostic_load_ratio: float | None = None
 
 
 @dataclass
@@ -53,9 +59,21 @@ class ACCV2Engine:
     def acc_preview(self):
         return self.diagnostic.acc_preview
 
-    def evaluate_operating_point(self, ambient_C, load_ratio) -> ACCOperatingPoint:
+    def evaluate_operating_point(
+        self,
+        ambient_C,
+        load_ratio=None,
+        required_capacity_kW=None,
+        nominal_unit_capacity_kW=None,
+    ) -> ACCOperatingPoint:
         """Return one ACC V2 operating point using the read-only lookup layer."""
-        return lookup_acc_curve(self.acc_preview, ambient_C=ambient_C, load_ratio=load_ratio)
+        return lookup_acc_curve(
+            self.acc_preview,
+            ambient_C=ambient_C,
+            load_ratio=load_ratio,
+            required_capacity_kW=required_capacity_kW,
+            nominal_unit_capacity_kW=nominal_unit_capacity_kW,
+        )
 
 
 def create_acc_v2_engine(configuration_path):

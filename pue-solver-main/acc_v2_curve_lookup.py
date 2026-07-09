@@ -15,6 +15,10 @@ class ACCOperatingPoint:
     power_input_kW: float
     unit_efficiency_kW_per_kW: float
     cop: float
+    required_capacity_kW: float | None = None
+    power_input_per_unit_kW: float | None = None
+    capacity_clamped: bool = False
+    diagnostic_load_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -36,18 +40,58 @@ class CHWPumpOperatingPoint:
     source: str = "configuration_library_solver_curve"
 
 
-def lookup_acc_curve(preview, ambient_C, load_ratio):
-    """Return an interpolated ACC operating point from a 2D curve preview."""
+def lookup_acc_curve(preview, ambient_C, load_ratio=None, required_capacity_kW=None, nominal_unit_capacity_kW=None):
+    """Return an interpolated ACC operating point from an ambient/capacity surface."""
     rows = _acc_rows(preview)
+    if required_capacity_kW is None and load_ratio is not None:
+        return _lookup_acc_curve_by_load(rows, ambient_C, load_ratio)
     ambient_values = sorted({row["ambient_C"] for row in rows})
-    load_values = sorted({row["load_ratio"] for row in rows})
-    grid = _acc_grid(rows)
 
+    ambient = _clamp(_to_float(ambient_C, "ambient_C"), ambient_values[0], ambient_values[-1])
+    if required_capacity_kW is None:
+        raise ValueError("ACC V2 capacity lookup requires required_capacity_kW.")
+    required_capacity = _to_float(required_capacity_kW, "required_capacity_kW")
+    diagnostic_load_ratio = _diagnostic_load_ratio(required_capacity, nominal_unit_capacity_kW, load_ratio)
+
+    lower_ambient, upper_ambient = _bounds(ambient_values, ambient)
+
+    lower_point = _lookup_capacity_line(rows, lower_ambient, required_capacity)
+    upper_point = _lookup_capacity_line(rows, upper_ambient, required_capacity)
+    fields = ("capacity_kW", "power_input_kW", "unit_efficiency_kW_per_kW", "load_ratio")
+    interpolated = {
+        field: _linear(lower_ambient, upper_ambient, lower_point[field], upper_point[field], ambient)
+        for field in fields
+    }
+    capacity_clamped = bool(lower_point["capacity_clamped"] or upper_point["capacity_clamped"])
+    used_capacity = interpolated["capacity_kW"]
+    power_input = interpolated["power_input_kW"]
+    cop = interpolated["unit_efficiency_kW_per_kW"]
+    if cop is None and power_input:
+        cop = used_capacity / power_input
+
+    return ACCOperatingPoint(
+        ambient_C=ambient,
+        load_ratio=interpolated["load_ratio"],
+        capacity_kW=used_capacity,
+        power_input_kW=power_input,
+        unit_efficiency_kW_per_kW=cop,
+        cop=cop,
+        required_capacity_kW=required_capacity,
+        power_input_per_unit_kW=power_input,
+        capacity_clamped=capacity_clamped,
+        diagnostic_load_ratio=diagnostic_load_ratio,
+    )
+
+
+def _lookup_acc_curve_by_load(rows, ambient_C, load_ratio):
+    ambient_values = sorted({row["ambient_C"] for row in rows})
+    _validate_load_grid(rows)
+    load_values = sorted({row["load_ratio"] for row in rows})
+    grid = _acc_load_grid(rows)
     ambient = _clamp(_to_float(ambient_C, "ambient_C"), ambient_values[0], ambient_values[-1])
     load = _clamp(_to_float(load_ratio, "load_ratio"), load_values[0], load_values[-1])
     lower_ambient, upper_ambient = _bounds(ambient_values, ambient)
     lower_load, upper_load = _bounds(load_values, load)
-
     corners = {
         (a, l): grid.get((a, l))
         for a in (lower_ambient, upper_ambient)
@@ -56,7 +100,6 @@ def lookup_acc_curve(preview, ambient_C, load_ratio):
     missing = [point for point, row in corners.items() if row is None]
     if missing:
         raise ValueError(f"Missing interpolation neighbors for ACC curve: {missing}")
-
     interpolated = {}
     for field in ("capacity_kW", "power_input_kW", "unit_efficiency_kW_per_kW"):
         lower_line = _linear(
@@ -73,14 +116,7 @@ def lookup_acc_curve(preview, ambient_C, load_ratio):
             corners[(upper_ambient, upper_load)][field],
             load,
         )
-        interpolated[field] = _linear(
-            lower_ambient,
-            upper_ambient,
-            lower_line,
-            upper_line,
-            ambient,
-        )
-
+        interpolated[field] = _linear(lower_ambient, upper_ambient, lower_line, upper_line, ambient)
     return ACCOperatingPoint(
         ambient_C=ambient,
         load_ratio=load,
@@ -88,6 +124,10 @@ def lookup_acc_curve(preview, ambient_C, load_ratio):
         power_input_kW=interpolated["power_input_kW"],
         unit_efficiency_kW_per_kW=interpolated["unit_efficiency_kW_per_kW"],
         cop=interpolated["unit_efficiency_kW_per_kW"],
+        required_capacity_kW=interpolated["capacity_kW"],
+        power_input_per_unit_kW=interpolated["power_input_kW"],
+        capacity_clamped=False,
+        diagnostic_load_ratio=load,
     )
 
 
@@ -115,18 +155,28 @@ def _acc_rows(preview):
         raise ValueError("ACC curve contains no rows.")
     rows = []
     seen = set()
+    seen_load_points = set()
     for index, row in enumerate(raw_rows, start=1):
+        load_value = row.get("load_ratio")
         parsed = {
             "ambient_C": _to_float(row.get("ambient_C"), f"ACC row {index} ambient_C"),
-            "load_ratio": _to_float(row.get("load_ratio"), f"ACC row {index} load_ratio"),
+            "load_ratio": _to_float(load_value, f"ACC row {index} load_ratio") if load_value is not None else None,
             "capacity_kW": _to_float(row.get("capacity_kW"), f"ACC row {index} capacity_kW"),
             "power_input_kW": _to_float(row.get("power_input_kW"), f"ACC row {index} power_input_kW"),
-            "unit_efficiency_kW_per_kW": _to_float(
+            "unit_efficiency_kW_per_kW": _optional_float(
                 row.get("unit_efficiency_kW_per_kW"),
                 f"ACC row {index} unit_efficiency_kW_per_kW",
             ),
         }
-        point = (parsed["ambient_C"], parsed["load_ratio"])
+        if parsed["unit_efficiency_kW_per_kW"] is None:
+            parsed["unit_efficiency_kW_per_kW"] = parsed["capacity_kW"] / parsed["power_input_kW"] if parsed["power_input_kW"] else None
+        if parsed["load_ratio"] is None:
+            parsed["load_ratio"] = parsed["capacity_kW"]
+        point = (parsed["ambient_C"], parsed["capacity_kW"])
+        load_point = (parsed["ambient_C"], parsed["load_ratio"])
+        if row.get("load_ratio") is not None and load_point in seen_load_points:
+            raise ValueError(f"Duplicate ACC lookup grid point: {load_point}")
+        seen_load_points.add(load_point)
         if point in seen:
             raise ValueError(f"Duplicate ACC lookup grid point: {point}")
         seen.add(point)
@@ -136,15 +186,75 @@ def _acc_rows(preview):
 
 
 def _acc_grid(rows):
+    return {(row["ambient_C"], row["capacity_kW"]): row for row in rows}
+
+
+def _acc_load_grid(rows):
     return {(row["ambient_C"], row["load_ratio"]): row for row in rows}
 
 
 def _validate_rectangular_grid(rows):
     ambient_values = sorted({row["ambient_C"] for row in rows})
+    if not ambient_values:
+        raise ValueError("ACC curve contains no rows.")
+
+
+def _validate_load_grid(rows):
+    ambient_values = sorted({row["ambient_C"] for row in rows})
     load_values = sorted({row["load_ratio"] for row in rows})
     expected_count = len(ambient_values) * len(load_values)
     if len(rows) != expected_count:
         raise ValueError("ACC ambient/load grid is inconsistent; not all grid points are present.")
+
+
+def _lookup_capacity_line(rows, ambient, required_capacity):
+    line_rows = sorted((row for row in rows if row["ambient_C"] == ambient), key=lambda row: row["capacity_kW"])
+    if not line_rows:
+        raise ValueError(f"Missing ACC capacity line for ambient_C={ambient}.")
+    capacities = [row["capacity_kW"] for row in line_rows]
+    used_capacity = _clamp(required_capacity, capacities[0], capacities[-1])
+    capacity_clamped = used_capacity != required_capacity
+    lower_capacity, upper_capacity = _bounds(capacities, used_capacity)
+    lower_row = _row_by_capacity(line_rows, lower_capacity)
+    upper_row = _row_by_capacity(line_rows, upper_capacity)
+    if lower_row is None or upper_row is None:
+        raise ValueError(f"Missing interpolation neighbors for ACC capacity curve at ambient_C={ambient}.")
+    return {
+        "capacity_kW": used_capacity,
+        "power_input_kW": _linear(lower_capacity, upper_capacity, lower_row["power_input_kW"], upper_row["power_input_kW"], used_capacity),
+        "unit_efficiency_kW_per_kW": _linear(lower_capacity, upper_capacity, lower_row["unit_efficiency_kW_per_kW"], upper_row["unit_efficiency_kW_per_kW"], used_capacity),
+        "load_ratio": _linear(lower_capacity, upper_capacity, lower_row["load_ratio"], upper_row["load_ratio"], used_capacity),
+        "capacity_clamped": capacity_clamped,
+    }
+
+
+def _row_by_capacity(rows, capacity):
+    for row in rows:
+        if row["capacity_kW"] == capacity:
+            return row
+    return None
+
+
+def _capacity_from_load_ratio(rows, load_ratio):
+    load = _to_float(load_ratio, "load_ratio")
+    load_values = sorted({row["load_ratio"] for row in rows})
+    load = _clamp(load, load_values[0], load_values[-1])
+    capacity_values = sorted({row["capacity_kW"] for row in rows})
+    if len(load_values) == len(capacity_values):
+        lower_load, upper_load = _bounds(load_values, load)
+        lower_capacity = capacity_values[load_values.index(lower_load)]
+        upper_capacity = capacity_values[load_values.index(upper_load)]
+        return _linear(lower_load, upper_load, lower_capacity, upper_capacity, load)
+    return _linear(load_values[0], load_values[-1], capacity_values[0], capacity_values[-1], load)
+
+
+def _diagnostic_load_ratio(required_capacity, nominal_unit_capacity_kW, fallback_load_ratio):
+    nominal = _optional_float(nominal_unit_capacity_kW, "nominal_unit_capacity_kW")
+    if nominal and nominal > 0:
+        return required_capacity / nominal
+    if fallback_load_ratio is not None:
+        return _to_float(fallback_load_ratio, "load_ratio")
+    return None
 
 
 def _lookup_power_curve(preview, load_ratio, equipment_label):
@@ -215,3 +325,9 @@ def _to_float(value, label):
         return float(value)
     except (TypeError, ValueError):
         raise ValueError(f"Invalid numeric value for {label}: {value!r}") from None
+
+
+def _optional_float(value, label):
+    if value is None:
+        return None
+    return _to_float(value, label)

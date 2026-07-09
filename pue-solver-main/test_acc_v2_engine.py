@@ -310,9 +310,10 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertTrue(result.lookup_success)
         self.assertFalse(result.fallback_used)
         self.assertEqual(result.source, "acc_v2")
-        self.assertEqual(result.capacity_kW, 1050)
-        self.assertEqual(result.power_input_kW, 725.0)
-        self.assertAlmostEqual(result.cop, 3.05)
+        self.assertEqual(result.required_capacity_kW, 500)
+        self.assertEqual(result.capacity_kW, 950)
+        self.assertEqual(result.power_input_kW, 550.0)
+        self.assertTrue(result.capacity_clamped)
 
     def test_resolve_acc_operating_point_fallback_when_v2_lookup_fails(self):
         result = resolve_acc_operating_point(
@@ -416,6 +417,82 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertIn("ACC Solver_Curve missing or invalid", result["error"])
         self.assertIn("does not allow ACC legacy fallback", result["error"])
         self.assertEqual(result["hourly_results"], [])
+
+    def test_solver_cooling_load_heat_gains_are_hourly_and_do_not_change_it_energy(self):
+        with TemporaryDirectory() as temp_dir:
+            config = _make_valid_configuration(temp_dir)
+            sample = convert_library_input_to_solver_input(
+                build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+            )
+            sample["acc_v2_enabled"] = True
+            sample["acc_v2"] = {"configuration_path": str(config)}
+            sample["project"]["it_load"]["hourly_it_load_kW"] = [1000, 1000, 1000]
+            sample["weather"]["hourly_data"] = {
+                "hour_index": [5, 12, 13],
+                "dry_bulb_C": [10, 20, 30],
+                "wet_bulb_C": [],
+            }
+            sample["solar_heat_gain_max_kW"] = 100
+            sample["solar_daytime_start_hour"] = 6
+            sample["solar_daytime_end_hour"] = 18
+            sample["other_auxiliary_heat_gain_kW"] = 50
+
+            result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        hourly = result["hourly_results"]
+        self.assertEqual([row["solar_heat_gain_kW"] for row in hourly], [0.0, 25.0, 100.0])
+        self.assertEqual([row["other_auxiliary_heat_gain_kW"] for row in hourly], [50.0, 50.0, 50.0])
+        self.assertEqual([row["cooling_load_kW"] for row in hourly], [1050.0, 1075.0, 1150.0])
+        annual = result["annual_results"]
+        self.assertEqual(annual["annual_IT_energy_kWh"], 3000)
+        self.assertEqual(annual["annual_solar_heat_gain_kWh"], 125)
+        self.assertEqual(annual["annual_other_auxiliary_heat_gain_kWh"], 150)
+        self.assertEqual(annual["annual_cooling_load_kWh"], 3275)
+
+    def test_solver_missing_heat_gain_inputs_preserve_cooling_load_compatibility(self):
+        with TemporaryDirectory() as temp_dir:
+            config = _make_valid_configuration(temp_dir)
+            sample = convert_library_input_to_solver_input(
+                build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+            )
+            sample["acc_v2_enabled"] = True
+            sample["acc_v2"] = {"configuration_path": str(config)}
+            sample["project"]["it_load"]["hourly_it_load_kW"] = [900, 1100]
+            sample["weather"]["hourly_data"] = {
+                "hour_index": [1, 12],
+                "dry_bulb_C": [20, 30],
+                "wet_bulb_C": [],
+            }
+
+            result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        self.assertEqual([row["cooling_load_kW"] for row in result["hourly_results"]], [900.0, 1100.0])
+        self.assertEqual(result["annual_results"]["annual_IT_energy_kWh"], 2000)
+        self.assertEqual(result["annual_results"]["annual_cooling_load_kWh"], 2000)
+
+    def test_solver_acc_capacity_exceeded_increments_clamped_hours(self):
+        with TemporaryDirectory() as temp_dir:
+            config = _make_valid_configuration(temp_dir)
+            sample = convert_library_input_to_solver_input(
+                build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+            )
+            sample["acc_v2_enabled"] = True
+            sample["acc_v2"] = {"configuration_path": str(config)}
+            sample["project"]["active_units"] = 1
+            sample["project"]["it_load"]["hourly_it_load_kW"] = [2000]
+            sample["weather"]["hourly_data"] = {
+                "hour_index": [12],
+                "dry_bulb_C": [20],
+                "wet_bulb_C": [],
+            }
+
+            result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        self.assertTrue(result["hourly_results"][0]["acc_capacity_clamped"])
+        self.assertEqual(result["annual_results"]["acc_capacity_clamped_hours"], 1)
 
     def test_benchmark_path_not_imported_by_engine(self):
         engine_source = Path(__file__).with_name("acc_v2_engine.py").read_text(encoding="utf-8")

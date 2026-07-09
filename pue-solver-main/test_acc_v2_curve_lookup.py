@@ -79,6 +79,37 @@ class ACCV2CurveLookupTest(unittest.TestCase):
         self.assertEqual(point.power_input_kW, 362.5)
         self.assertAlmostEqual(point.cop, 3.05)
 
+    def test_acc_capacity_surface_uses_required_capacity_not_load_ratio(self):
+        preview = self._acc_preview(rows=[
+            {"ambient_C": 20, "capacity_kW": 500, "power_input_kW": 100},
+            {"ambient_C": 20, "capacity_kW": 1000, "power_input_kW": 300},
+            {"ambient_C": 30, "capacity_kW": 500, "power_input_kW": 150},
+            {"ambient_C": 30, "capacity_kW": 1000, "power_input_kW": 450},
+        ])
+
+        point = lookup_acc_curve(
+            preview,
+            ambient_C=25,
+            load_ratio=0.1,
+            required_capacity_kW=750,
+            nominal_unit_capacity_kW=1000,
+        )
+
+        self.assertEqual(point.required_capacity_kW, 750)
+        self.assertAlmostEqual(point.power_input_kW, 250)
+        self.assertAlmostEqual(point.diagnostic_load_ratio, 0.75)
+
+    def test_acc_capacity_surface_clamps_capacity(self):
+        preview = self._acc_preview(rows=[
+            {"ambient_C": 20, "capacity_kW": 500, "power_input_kW": 100},
+            {"ambient_C": 20, "capacity_kW": 1000, "power_input_kW": 300},
+        ])
+
+        point = lookup_acc_curve(preview, ambient_C=20, required_capacity_kW=1200)
+
+        self.assertEqual(point.capacity_kW, 1000)
+        self.assertTrue(point.capacity_clamped)
+
     def test_acc_lower_clamp(self):
         point = lookup_acc_curve(self._acc_preview(), ambient_C=5, load_ratio=0.1)
 

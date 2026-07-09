@@ -998,26 +998,20 @@ function optionalNonNegativeNumber(id) {
     return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function getSolarGainReportInput() {
+function getCoolingLoadHeatGainInput() {
     return {
-        annualKwh: optionalNonNegativeNumber("solarGainAnnualKwh"),
-        peakKw: optionalNonNegativeNumber("solarGainPeakKw")
+        solarHeatGainMaxKw: optionalNonNegativeNumber("solarHeatGainMaxKw") ?? 0,
+        solarDaytimeStartHour: optionalNonNegativeNumber("solarDaytimeStartHour") ?? 6,
+        solarDaytimeEndHour: optionalNonNegativeNumber("solarDaytimeEndHour") ?? 18,
+        otherAuxiliaryHeatGainKw: optionalNonNegativeNumber("otherAuxiliaryHeatGainKw") ?? 0
     };
 }
 
 function updateSolarGainStatus() {
     const status = document.getElementById("statusSolarGain");
     if (!status) return;
-    const solar = getSolarGainReportInput();
-    if (solar.annualKwh === null && solar.peakKw === null) {
-        status.textContent = "报告展示项：不会写入 solver 输入";
-        status.style.color = "#6b7280";
-        return;
-    }
-    const parts = [];
-    if (solar.annualKwh !== null) parts.push(`年得热 ${fmtInteger(solar.annualKwh)} kWh`);
-    if (solar.peakKw !== null) parts.push(`峰值得热 ${fmtNumber(solar.peakKw, 1)} kW`);
-    status.textContent = `${parts.join("，")}；仅用于报告展示`;
+    const heat = getCoolingLoadHeatGainInput();
+    status.textContent = `Solar Heat Gain ${fmtNumber(heat.solarHeatGainMaxKw, 1)} kW；Other Auxiliary Heat Gains ${fmtNumber(heat.otherAuxiliaryHeatGainKw, 1)} kW`;
     status.style.color = "#059669";
 }
 
@@ -1034,20 +1028,21 @@ function refreshRestoredFileStatuses() {
 function renderSolarGainReportPanel() {
     const panel = document.getElementById("solarGainReportPanel");
     if (!panel) return;
-    const solar = getSolarGainReportInput();
-    if (solar.annualKwh === null && solar.peakKw === null) {
+    const heat = getCoolingLoadHeatGainInput();
+    if (!heat.solarHeatGainMaxKw && !heat.otherAuxiliaryHeatGainKw) {
         panel.style.display = "none";
         panel.innerHTML = "";
         return;
     }
     const values = [];
-    if (solar.annualKwh !== null) values.push(`年日照得热量：<b>${fmtInteger(solar.annualKwh)} kWh</b>`);
-    if (solar.peakKw !== null) values.push(`峰值日照得热：<b>${fmtNumber(solar.peakKw, 1)} kW</b>`);
+    values.push(`Solar Heat Gain Max：<b>${fmtNumber(heat.solarHeatGainMaxKw, 1)} kW</b>`);
+    values.push(`Daytime：<b>${fmtNumber(heat.solarDaytimeStartHour, 0)}:00-${fmtNumber(heat.solarDaytimeEndHour, 0)}:00</b>`);
+    values.push(`Other Auxiliary Heat Gains：<b>${fmtNumber(heat.otherAuxiliaryHeatGainKw, 1)} kW</b>`);
     panel.style.display = "block";
     panel.innerHTML =
-        "<b>报告补充：日照得热负荷</b><br>" +
+        "<b>Total Cooling Load Components</b><br>" +
         values.join("；") +
-        "。该项仅作为围护结构/外部热扰动背景说明，未写入 solver 输入，也不参与 PUE、设施能耗、冷源能耗或峰值小时计算。";
+        "。Solar heat gain is included in Total Cooling Load.";
 }
 
 function summarizeNumericArray(values) {
@@ -1277,7 +1272,7 @@ function renderWeatherReportPanel() {
     panel.innerHTML =
         "<b>报告补充：EPW 气象信息</b><br>" +
         items.join("；") +
-        "。这些信息用于解释气候背景和太阳得热风险，当前不参与 PUE 计算。";
+        "。这些信息用于解释气候背景和太阳得热。";
 }
 
 function classifyEquipmentCategory(text, filename = "") {
@@ -1493,8 +1488,10 @@ function collectProjectMemoryPayload() {
             version: document.getElementById("projectVersionInput")?.value || "v1.0"
         },
         report_only_inputs: {
-            solar_gain_annual_kwh: document.getElementById("solarGainAnnualKwh")?.value || "",
-            solar_gain_peak_kw: document.getElementById("solarGainPeakKw")?.value || "",
+            solar_heat_gain_max_kw: document.getElementById("solarHeatGainMaxKw")?.value || "0",
+            solar_daytime_start_hour: document.getElementById("solarDaytimeStartHour")?.value || "6",
+            solar_daytime_end_hour: document.getElementById("solarDaytimeEndHour")?.value || "18",
+            other_auxiliary_heat_gain_kw: document.getElementById("otherAuxiliaryHeatGainKw")?.value || "0",
             aux_fixed_coeff: document.getElementById("auxFixedCoeff")?.value || "0.005",
             dry_cooler_approach_c: document.getElementById("dryCoolerApproachC")?.value || "5"
         },
@@ -1543,8 +1540,10 @@ function restoreProjectMemory(key = "") {
         if (document.getElementById("projectCapacityMwInput")) document.getElementById("projectCapacityMwInput").value = info.capacity_mw || "";
         if (document.getElementById("projectStageInput")) document.getElementById("projectStageInput").value = info.stage || "";
         if (document.getElementById("projectVersionInput")) document.getElementById("projectVersionInput").value = info.version || "v1.0";
-        if (document.getElementById("solarGainAnnualKwh")) document.getElementById("solarGainAnnualKwh").value = report.solar_gain_annual_kwh || "";
-        if (document.getElementById("solarGainPeakKw")) document.getElementById("solarGainPeakKw").value = report.solar_gain_peak_kw || "";
+        if (document.getElementById("solarHeatGainMaxKw")) document.getElementById("solarHeatGainMaxKw").value = report.solar_heat_gain_max_kw || "0";
+        if (document.getElementById("solarDaytimeStartHour")) document.getElementById("solarDaytimeStartHour").value = report.solar_daytime_start_hour || "6";
+        if (document.getElementById("solarDaytimeEndHour")) document.getElementById("solarDaytimeEndHour").value = report.solar_daytime_end_hour || "18";
+        if (document.getElementById("otherAuxiliaryHeatGainKw")) document.getElementById("otherAuxiliaryHeatGainKw").value = report.other_auxiliary_heat_gain_kw || "0";
         if (document.getElementById("auxFixedCoeff")) document.getElementById("auxFixedCoeff").value = report.aux_fixed_coeff || "0.005";
         if (document.getElementById("dryCoolerApproachC")) document.getElementById("dryCoolerApproachC").value = report.dry_cooler_approach_c || "5";
 
@@ -2371,7 +2370,7 @@ function buildHtmlReport(context) {
     const benchmark = output.benchmark_components || {};
     const benchmarkAverage = benchmark.component_average_kW || {};
     const projectInfo = getProjectReportInfo();
-    const solar = getSolarGainReportInput();
+    const heatGains = getCoolingLoadHeatGainInput();
     const weather = standardDataFiles.weather || {};
     const weatherData = weather.data || weather.hourly_data || {};
     const weatherSource = getWeatherSourceMetadata(weather);
@@ -2695,8 +2694,8 @@ function buildHtmlReport(context) {
             ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
         ])}</tbody></table>
     ` : `
-    <p>${isConfigurationLibraryAccV2DirectMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, EPW dry-bulb temperature, Configuration Library Solver_Curve ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses. Annual Calibration is Not applied." : (isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured.")}</p>
-    <div class="note">Project metadata, EPW extended weather information, and user-entered solar heat gain are report-only context in this version. They do not modify solver inputs or calculated PUE.</div>
+    <p>${isConfigurationLibraryAccV2DirectMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines Total Cooling Load, EPW dry-bulb temperature, Configuration Library Solver_Curve ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses. Annual Calibration is Not applied." : (isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured.")}</p>
+    <div class="note">Solar Heat Gain and Other Auxiliary Heat Gains are included in Total Cooling Load for Configuration Library ACC V2 direct runs.</div>
     ${coolingUnitInfo ? `
         <div class="card">
             <h3>${isAccMode ? "ACC Unit Architecture" : "Cooling Unit Architecture"}</h3>
@@ -2757,13 +2756,13 @@ function buildHtmlReport(context) {
 <section>
     <h2>6. Equipment Curve Register</h2>
     ${isAccMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and hourly load ratio." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
+        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and required ACC capacity." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
         <table><tbody>${tableRows([
             ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
             ["ACC Calculation Mode", isAccV2DirectMode ? "True EPW × Solver_Curve" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
             ["Annual Calibration", isAccV2DirectMode ? "Not applied" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
             ["Annual Calibration Factor", isAccV2DirectMode ? "1.0" : "N/A"],
-            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Direct ACC Solver_Curve lookup" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
+            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Ambient plus required capacity Solver_Curve lookup" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
             ["Weather Representation", isAnnualBenchmarkMode ? "Annualized weather factor" : "Hourly weather data"]
         ])}</tbody></table>
     ` : `
@@ -2897,15 +2896,19 @@ function buildHtmlReport(context) {
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on direct hourly ACC Solver_Curve lookup using EPW dry-bulb temperature and hourly load ratio. ACC annual energy is calculated as the sum of hourly ACC power with no external annual adjustment.`
             : (isConfigurationLibraryAccV2DirectMode
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
-            : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. CHW pump, CDU / RTC / MAU equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical distribution losses are calculated from the project IT and MEP efficiency assumptions.`))
+            : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. CHW pump, CDU / RTC / MAU equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical distribution losses are calculated from the project IT and MEP efficiency assumptions.`)))
         : (isConfigurationLibraryAccV2DirectMode
         ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
         : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`)}</p>
     <table><tbody>${tableRows(isBenchmarkMode ? [
-        ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
+        ["Solar Heat Gain Max", reportValue(heatGains.solarHeatGainMaxKw, " kW", 1)],
+        ["Other Auxiliary Heat Gains", reportValue(heatGains.otherAuxiliaryHeatGainKw, " kW", 1)],
+        ["Annual Cooling Load", reportValue(annual.annual_cooling_load_kWh, " kWh", 0)],
         ["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Not applicable in annual-equivalent assessment")]
     ] : [
-        ["Report-only Solar Heat Gain", solar.annualKwh !== null || solar.peakKw !== null ? `${solar.annualKwh !== null ? reportValue(solar.annualKwh, " kWh", 0) : "N/A annual"}; ${solar.peakKw !== null ? reportValue(solar.peakKw, " kW peak", 1) : "N/A peak"}` : "Not provided"],
+        ["Solar Heat Gain Max", reportValue(heatGains.solarHeatGainMaxKw, " kW", 1)],
+        ["Other Auxiliary Heat Gains", reportValue(heatGains.otherAuxiliaryHeatGainKw, " kW", 1)],
+        ["Annual Cooling Load", reportValue(annual.annual_cooling_load_kWh, " kWh", 0)],
         ["Free Cooling Hours", "Not modeled in current solver"],
         ["Mechanical Cooling Hours", "Not modeled in current solver"]
     ])}</tbody></table>
@@ -4473,6 +4476,7 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         ? Number(unitQuantity.standby_units || Math.max(installedUnits - activeUnits, 0))
         : Math.max(installedUnits - activeUnits, 0);
     const designItLoadKw = Number(totalCapacityMw) * 1000;
+    const heatGains = getCoolingLoadHeatGainInput();
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
     const selectedCurves = Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
@@ -4516,6 +4520,12 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             redundancy_strategy: unitQuantity.redundancy === "auto" ? sizing.redundancy : unitQuantity.redundancy,
             unit_quantity: unitQuantity,
             scenario_name: scenarioName,
+            heat_gains: {
+                solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw,
+                solar_daytime_start_hour: heatGains.solarDaytimeStartHour,
+                solar_daytime_end_hour: heatGains.solarDaytimeEndHour,
+                other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw
+            },
             it_load: {
                 design_it_load_kW: designItLoadKw,
                 hourly_it_load_percent: percentages,
@@ -4534,6 +4544,12 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             electrical_path: electricalPath
         },
         electrical_path: electricalPath,
+        heat_gains: {
+            solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw,
+            solar_daytime_start_hour: heatGains.solarDaytimeStartHour,
+            solar_daytime_end_hour: heatGains.solarDaytimeEndHour,
+            other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw
+        },
         selected_curves: selectedCurves
     };
 }
@@ -4602,6 +4618,10 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             data: clone(radiatorRows)
         },
         project,
+        solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0,
+        solar_daytime_start_hour: libraryInput.heat_gains?.solar_daytime_start_hour ?? 6,
+        solar_daytime_end_hour: libraryInput.heat_gains?.solar_daytime_end_hour ?? 18,
+        other_auxiliary_heat_gain_kW: libraryInput.heat_gains?.other_auxiliary_heat_gain_kW ?? 0,
         unit_quantity: clone(libraryInput.unit_quantity),
         weather,
         curve_library: { curves },
@@ -4997,7 +5017,7 @@ function initStandardDataInputs() {
         standardSolverInput = null;
         refreshStandardInputStatus();
     });
-    ["solarGainAnnualKwh", "solarGainPeakKw"].forEach((id) => {
+    ["solarHeatGainMaxKw", "solarDaytimeStartHour", "solarDaytimeEndHour", "otherAuxiliaryHeatGainKw"].forEach((id) => {
         const input = document.getElementById(id);
         if (!input) return;
         input.addEventListener("input", () => {

@@ -45,7 +45,56 @@ def _clamp(x, lo, hi):
     if x > hi: return hi
     return x
 
-def run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path=None):
+def _heat_gain_inputs(input_obj):
+    heat_gains = _get(input_obj, ["project", "heat_gains"], {})
+    if not isinstance(heat_gains, dict):
+        heat_gains = {}
+    solar_max_kw = _num(input_obj.get("solar_heat_gain_max_kW"), None)
+    if solar_max_kw is None:
+        solar_max_kw = _num(heat_gains.get("solar_heat_gain_max_kW"), 0.0)
+    daytime_start = _num(input_obj.get("solar_daytime_start_hour"), None)
+    if daytime_start is None:
+        daytime_start = _num(heat_gains.get("solar_daytime_start_hour"), 6.0)
+    daytime_end = _num(input_obj.get("solar_daytime_end_hour"), None)
+    if daytime_end is None:
+        daytime_end = _num(heat_gains.get("solar_daytime_end_hour"), 18.0)
+    other_aux_kw = _num(input_obj.get("other_auxiliary_heat_gain_kW"), None)
+    if other_aux_kw is None:
+        other_aux_kw = _num(heat_gains.get("other_auxiliary_heat_gain_kW"), 0.0)
+    return {
+        "solar_heat_gain_max_kW": max(0.0, float(solar_max_kw or 0.0)),
+        "solar_daytime_start_hour": _clamp(float(daytime_start), 0.0, 24.0),
+        "solar_daytime_end_hour": _clamp(float(daytime_end), 0.0, 24.0),
+        "other_auxiliary_heat_gain_kW": max(0.0, float(other_aux_kw or 0.0)),
+    }
+
+def _hour_of_day(hour_index, fallback_index):
+    raw = _num(hour_index, fallback_index)
+    return int(raw) % 24
+
+def _is_daytime_hour(hour_of_day, start_hour, end_hour):
+    if start_hour == end_hour:
+        return False
+    if start_hour < end_hour:
+        return start_hour <= hour_of_day < end_hour
+    return hour_of_day >= start_hour or hour_of_day < end_hour
+
+def _solar_heat_gain_kw(ambient_c, annual_min_ambient_c, annual_max_ambient_c, hour_of_day, heat_gain_config):
+    max_kw = heat_gain_config["solar_heat_gain_max_kW"]
+    if max_kw <= 0:
+        return 0.0
+    if not _is_daytime_hour(hour_of_day, heat_gain_config["solar_daytime_start_hour"], heat_gain_config["solar_daytime_end_hour"]):
+        return 0.0
+    if ambient_c is None or annual_min_ambient_c is None or annual_max_ambient_c is None:
+        return 0.0
+    ambient_range = annual_max_ambient_c - annual_min_ambient_c
+    if ambient_range <= 0:
+        normalized = 0.0
+    else:
+        normalized = _clamp((float(ambient_c) - annual_min_ambient_c) / ambient_range, 0.0, 1.0)
+    return _clamp(max_kw * normalized * normalized, 0.0, max_kw)
+
+def run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path=None, required_capacity_kW=None, nominal_unit_capacity_kW=None):
     """Run ACC V2 in isolated shadow mode; never modifies legacy calculations."""
     from acc_v2_engine import ACCV2ShadowResult, ENGINE_VERSION, is_acc_v2_enabled
 
@@ -69,7 +118,12 @@ def run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path=N
         from acc_v2_engine import create_acc_v2_engine
 
         engine = create_acc_v2_engine(configuration_path)
-        point = engine.evaluate_operating_point(ambient_C=ambient_C, load_ratio=load_ratio)
+        point = engine.evaluate_operating_point(
+            ambient_C=ambient_C,
+            load_ratio=load_ratio,
+            required_capacity_kW=required_capacity_kW,
+            nominal_unit_capacity_kW=nominal_unit_capacity_kW,
+        )
         validation = engine.validation_summary
         return ACCV2ShadowResult(
             ambient_C=point.ambient_C,
@@ -81,6 +135,8 @@ def run_acc_v2_shadow(project_input, ambient_C, load_ratio, configuration_path=N
             validation_warnings=tuple(validation.warnings),
             validation_errors=tuple(validation.errors),
             engine_version=ENGINE_VERSION,
+            required_capacity_kW=point.required_capacity_kW,
+            capacity_clamped=point.capacity_clamped,
         )
     except Exception as exc:
         return ACCV2ShadowResult(
@@ -109,6 +165,8 @@ def resolve_acc_operating_point(
     configuration_path=None,
     acc_v2_engine=None,
     acc_v2_engine_error=None,
+    required_capacity_per_unit_kw=None,
+    nominal_unit_capacity_kw=None,
 ):
     """Resolve ACC operating point source with mandatory legacy fallback."""
     result, _temperature_power_factor = _resolve_acc_operating_point_for_solver(
@@ -121,6 +179,8 @@ def resolve_acc_operating_point(
         configuration_path,
         acc_v2_engine=acc_v2_engine,
         acc_v2_engine_error=acc_v2_engine_error,
+        required_capacity_per_unit_kw=required_capacity_per_unit_kw,
+        nominal_unit_capacity_kw=nominal_unit_capacity_kw,
     )
     return result
 
@@ -134,6 +194,8 @@ def _resolve_acc_operating_point_for_solver(
     configuration_path=None,
     acc_v2_engine=None,
     acc_v2_engine_error=None,
+    required_capacity_per_unit_kw=None,
+    nominal_unit_capacity_kw=None,
 ):
     from acc_v2_engine import ACCV2ProductionResult, ENGINE_VERSION, is_acc_v2_enabled
 
@@ -151,13 +213,19 @@ def _resolve_acc_operating_point_for_solver(
         power_input_kW=legacy_power,
         cop=legacy_cop,
         diagnostics=None,
+        required_capacity_kW=required_capacity_per_unit_kw,
+        power_input_per_unit_kW=legacy_power / max(1, int(active_units)) if legacy_power is not None else None,
+        capacity_clamped=False,
+        diagnostic_load_ratio=load_ratio,
     )
 
     if not is_acc_v2_enabled(project_input):
         return legacy_result, legacy_temperature_power_factor
     if configuration_path is None:
         configuration_path = _get(project_input, ["acc_v2", "configuration_path"])
-    if configuration_path is None or oat_c is None or load_ratio is None:
+    if required_capacity_per_unit_kw is None and cooling_load_kw is not None:
+        required_capacity_per_unit_kw = float(cooling_load_kw) / max(1, int(active_units))
+    if configuration_path is None or oat_c is None or required_capacity_per_unit_kw is None:
         return _fallback_acc_v2_result(legacy_result), legacy_temperature_power_factor
     if acc_v2_engine_error is not None:
         return _fallback_acc_v2_result(legacy_result, diagnostics=str(acc_v2_engine_error)), legacy_temperature_power_factor
@@ -167,7 +235,12 @@ def _resolve_acc_operating_point_for_solver(
             from acc_v2_engine import create_acc_v2_engine
 
             engine = create_acc_v2_engine(configuration_path)
-        point = engine.evaluate_operating_point(ambient_C=oat_c, load_ratio=load_ratio)
+        point = engine.evaluate_operating_point(
+            ambient_C=oat_c,
+            load_ratio=load_ratio,
+            required_capacity_kW=required_capacity_per_unit_kw,
+            nominal_unit_capacity_kW=nominal_unit_capacity_kw,
+        )
         total_power_kw = point.power_input_kW * max(1, int(active_units))
         return ACCV2ProductionResult(
             source="acc_v2",
@@ -180,6 +253,10 @@ def _resolve_acc_operating_point_for_solver(
             power_input_kW=total_power_kw,
             cop=point.cop,
             diagnostics=None,
+            required_capacity_kW=point.required_capacity_kW,
+            power_input_per_unit_kW=point.power_input_kW,
+            capacity_clamped=point.capacity_clamped,
+            diagnostic_load_ratio=point.diagnostic_load_ratio,
         ), None
     except Exception as exc:
         return _fallback_acc_v2_result(legacy_result, diagnostics=str(exc)), legacy_temperature_power_factor
@@ -198,6 +275,10 @@ def _fallback_acc_v2_result(legacy_result, diagnostics=None):
         power_input_kW=legacy_result.power_input_kW,
         cop=legacy_result.cop,
         diagnostics=diagnostics or getattr(legacy_result, "diagnostics", None),
+        required_capacity_kW=getattr(legacy_result, "required_capacity_kW", None),
+        power_input_per_unit_kW=getattr(legacy_result, "power_input_per_unit_kW", None),
+        capacity_clamped=getattr(legacy_result, "capacity_clamped", False),
+        diagnostic_load_ratio=getattr(legacy_result, "diagnostic_load_ratio", None),
     )
 
 def _acc_direct_mode_diagnostics(input_obj, acc_operating_point=None):
@@ -1992,6 +2073,11 @@ def compute_pue_project(input_obj):
     n = max(len(hourly_it_load), len(dry_bulb))
     dry_cooler_over_capacity_count = 0
     configuration_equipment_engines = {}
+    heat_gain_config = _heat_gain_inputs(input_obj)
+    dry_values = [_num(value, None) for value in dry_bulb]
+    dry_values = [value for value in dry_values if value is not None]
+    annual_min_ambient_c = min(dry_values) if dry_values else None
+    annual_max_ambient_c = max(dry_values) if dry_values else None
     acc_v2_engine = None
     acc_v2_engine_error = None
     acc_v2_configuration_path = _get(input_obj, ["acc_v2", "configuration_path"])
@@ -2008,10 +2094,20 @@ def compute_pue_project(input_obj):
         wet_c = _num(wet_bulb[i], None) if i < len(wet_bulb) else None
         rh_val = _num(rel_humidity[i], None) if i < len(rel_humidity) else None
         idx = hour_index[i] if i < len(hour_index) else i
+        hour_of_day = _hour_of_day(idx, i)
 
         load_ratio = (it_kw / design_it_load) if design_it_load and design_it_load > 0 else 0.0
         load_ratio = _clamp(load_ratio, 0.0, 1.0)
         project_load_ratio = load_ratio
+        solar_heat_gain_kw = _solar_heat_gain_kw(
+            oat_c,
+            annual_min_ambient_c,
+            annual_max_ambient_c,
+            hour_of_day,
+            heat_gain_config,
+        )
+        other_auxiliary_heat_gain_kw = heat_gain_config["other_auxiliary_heat_gain_kW"]
+        cooling_load_kw = it_kw + solar_heat_gain_kw + other_auxiliary_heat_gain_kw
         cooling_unit_total_capacity_kw = cooling_unit_count * cooling_unit_capacity_kw
         unit_load_ratio_raw = (
             it_kw / cooling_unit_total_capacity_kw
@@ -2019,6 +2115,14 @@ def compute_pue_project(input_obj):
             else 0.0
         )
         unit_load_ratio = _clamp(unit_load_ratio_raw, 0.0, 1.0)
+        acc_active_capacity_kw = library_active_units * cooling_unit_capacity_kw
+        acc_capacity_load_ratio_raw = (
+            cooling_load_kw / acc_active_capacity_kw
+            if acc_active_capacity_kw and acc_active_capacity_kw > 0
+            else 0.0
+        )
+        acc_capacity_load_ratio = _clamp(acc_capacity_load_ratio_raw, 0.0, 1.0)
+        acc_required_capacity_per_unit_kw = cooling_load_kw / max(1, int(library_active_units))
 
         # Direct calculation using curve_lib with simplified assumptions
         # Assume standard electrical chain: UPS + transformers
@@ -2379,17 +2483,22 @@ def compute_pue_project(input_obj):
         acc_operating_point, acc_temperature_power_factor = _resolve_acc_operating_point_for_solver(
             input_obj,
             acc_curve,
-            unit_load_ratio,
-            total_thermal_load,
+            acc_capacity_load_ratio,
+            cooling_load_kw,
             library_active_units,
             oat_c=oat_c,
             acc_v2_engine=acc_v2_engine,
             acc_v2_engine_error=acc_v2_engine_error,
+            required_capacity_per_unit_kw=acc_required_capacity_per_unit_kw,
+            nominal_unit_capacity_kw=cooling_unit_capacity_kw,
         )
         acc_power_kw = acc_operating_point.power_input_kW
         acc_cop = acc_operating_point.cop
         acc_curve_source = acc_operating_point.source
         acc_ambient_c = acc_operating_point.ambient_C
+        acc_power_input_per_unit_kw = getattr(acc_operating_point, "power_input_per_unit_kW", None)
+        acc_capacity_clamped = bool(getattr(acc_operating_point, "capacity_clamped", False))
+        acc_diagnostic_load_ratio = getattr(acc_operating_point, "diagnostic_load_ratio", acc_capacity_load_ratio)
         if configuration_library_direct_mode:
             if getattr(acc_operating_point, "fallback_used", False):
                 error_message = (
@@ -2723,6 +2832,10 @@ def compute_pue_project(input_obj):
             "wet_bulb_C": wet_c,
             "relative_humidity_percent": rh_val,
             "IT_load_kW": it_kw,
+            "it_load_kW": it_kw,
+            "solar_heat_gain_kW": solar_heat_gain_kw,
+            "other_auxiliary_heat_gain_kW": other_auxiliary_heat_gain_kw,
+            "cooling_load_kW": cooling_load_kw,
             "design_it_load_kW": design_it_load,
             "cooling_unit_capacity_kW": cooling_unit_capacity_kw,
             "cooling_unit_count": cooling_unit_count,
@@ -2733,6 +2846,11 @@ def compute_pue_project(input_obj):
             "cooling_power_kW": cooling_kw,
             "chiller_power_kW": chiller_kw,
             "acc_power_kW": acc_power_kw if acc_power_kw is not None else 0.0,
+            "acc_required_capacity_per_unit_kW": acc_required_capacity_per_unit_kw,
+            "acc_power_input_per_unit_kW": acc_power_input_per_unit_kw,
+            "acc_power_input_kW": acc_power_kw if acc_power_kw is not None else 0.0,
+            "acc_capacity_clamped": acc_capacity_clamped,
+            "acc_diagnostic_load_ratio": acc_diagnostic_load_ratio,
             "acc_cop": acc_cop,
             "acc_curve_source": acc_curve_source,
             "acc_ambient_C": acc_ambient_c,
@@ -2816,6 +2934,9 @@ def compute_pue_project(input_obj):
         })
 
     annual_it = sum(item.get("IT_load_kW", 0.0) for item in result["hourly_results"])
+    annual_solar_heat_gain = sum(item.get("solar_heat_gain_kW", 0.0) for item in result["hourly_results"])
+    annual_other_auxiliary_heat_gain = sum(item.get("other_auxiliary_heat_gain_kW", 0.0) for item in result["hourly_results"])
+    annual_cooling_load = sum(item.get("cooling_load_kW", item.get("IT_load_kW", 0.0)) for item in result["hourly_results"])
     annual_facility = sum(item.get("total_facility_power_kW", 0.0) for item in result["hourly_results"])
     annual_cooling = sum(item.get("cooling_power_kW", 0.0) for item in result["hourly_results"])
     annual_chiller = sum(item.get("chiller_power_kW", 0.0) for item in result["hourly_results"])
@@ -2881,6 +3002,7 @@ def compute_pue_project(input_obj):
     ]
     annual_white_space_equipment = sum(item.get("white_space_equipment_power_kW", 0.0) for item in result["hourly_results"])
     annual_acc = sum(item.get("acc_power_kW", 0.0) for item in result["hourly_results"])
+    acc_capacity_clamped_hours = sum(1 for item in result["hourly_results"] if item.get("acc_capacity_clamped"))
     acc_cop_values = [item.get("acc_cop") for item in result["hourly_results"] if item.get("acc_cop") is not None]
     acc_temperature_power_factors = [item.get("acc_temperature_power_factor") for item in result["hourly_results"] if item.get("acc_temperature_power_factor") is not None]
     max_acc_power = max((item.get("acc_power_kW", 0.0) for item in result["hourly_results"]), default=0.0)
@@ -2908,6 +3030,9 @@ def compute_pue_project(input_obj):
         "annual_average_PUE": annual_pue,
         "annual_IT_energy_kWh": annual_it,
         "annual_it_energy_kWh": annual_it,
+        "annual_solar_heat_gain_kWh": annual_solar_heat_gain,
+        "annual_other_auxiliary_heat_gain_kWh": annual_other_auxiliary_heat_gain,
+        "annual_cooling_load_kWh": annual_cooling_load,
         "annual_IT_terminal_energy_kWh": annual_it_terminal,
         "annual_IT_upstream_energy_kWh": annual_it_upstream,
         "annual_MEP_terminal_energy_kWh": annual_mep_terminal,
@@ -2950,6 +3075,7 @@ def compute_pue_project(input_obj):
         "mau_curve_source": mau_curve_sources[0] if mau_curve_sources else "legacy_non_configuration_mode",
         "annual_white_space_equipment_energy_kWh": annual_white_space_equipment,
         "annual_acc_energy_kWh": annual_acc,
+        "acc_capacity_clamped_hours": acc_capacity_clamped_hours,
         "average_acc_cop": sum(acc_cop_values) / len(acc_cop_values) if acc_cop_values else None,
         "min_acc_cop": min(acc_cop_values) if acc_cop_values else None,
         "max_acc_cop": max(acc_cop_values) if acc_cop_values else None,

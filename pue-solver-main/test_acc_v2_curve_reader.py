@@ -31,7 +31,7 @@ class ACCV2CurveReaderTest(unittest.TestCase):
                 {
                     "Solver_Curve": [
                         list(ACC_SOLVER_CURVE_COLUMNS),
-                        [35, 0.8, 1300, 420, 3.095238],
+                        [35, 1300, 420],
                     ]
                 },
             )
@@ -39,10 +39,8 @@ class ACCV2CurveReaderTest(unittest.TestCase):
             rows = read_equipment_solver_curve(workbook, ACC_SOLVER_CURVE_COLUMNS)
 
         self.assertEqual(rows[0]["ambient_C"], 35)
-        self.assertEqual(rows[0]["load_ratio"], 0.8)
         self.assertEqual(rows[0]["capacity_kW"], 1300)
         self.assertEqual(rows[0]["power_input_kW"], 420)
-        self.assertEqual(rows[0]["unit_efficiency_kW_per_kW"], 3.095238)
 
     def test_acc_solver_curve_reader_prints_workbook_diagnostics(self):
         with TemporaryDirectory() as temp_dir:
@@ -52,7 +50,7 @@ class ACCV2CurveReaderTest(unittest.TestCase):
                 {
                     "Solver_Curve": [
                         list(ACC_SOLVER_CURVE_COLUMNS),
-                        [35, 0.8, 1300, 420, 3.095238],
+                        [35, 1300, 420],
                     ],
                     "Information": [["Parameter", "Value"], ["Equipment", "ACC_2"]],
                 },
@@ -72,7 +70,7 @@ class ACCV2CurveReaderTest(unittest.TestCase):
         self.assertIn("ACC Solver_Curve requested sheet name=Solver_Curve", output)
         self.assertIn("ACC Solver_Curve available sheet names=", output)
         self.assertIn("ACC Solver_Curve row count=1", output)
-        self.assertIn("ACC Solver_Curve column count=5", output)
+        self.assertIn("ACC Solver_Curve column count=3", output)
         self.assertIn("ACC Solver_Curve first five rows=", output)
 
     def test_acc_cop_is_derived_if_missing(self):
@@ -168,7 +166,7 @@ class ACCV2CurveReaderTest(unittest.TestCase):
         self.assertFalse(validation["required_columns_present"])
         self.assertEqual(validation["missing_columns"], ["ambient_C"])
 
-    def test_duplicate_acc_ambient_and_load_ratio_produces_warning(self):
+    def test_duplicate_acc_ambient_and_capacity_produces_warning(self):
         with TemporaryDirectory() as temp_dir:
             config = _make_configuration(
                 temp_dir,
@@ -186,9 +184,7 @@ class ACCV2CurveReaderTest(unittest.TestCase):
 
             preview = read_acc_v2_equipment_curves(config)
 
-        self.assertTrue(
-            any("duplicate ambient_C/load_ratio" in warning for warning in preview.warnings)
-        )
+        self.assertTrue(any("duplicate ambient_C/capacity_kW" in warning for warning in preview.warnings))
 
     def test_find_equipment_workbook_resolves_required_equipment(self):
         with TemporaryDirectory() as temp_dir:

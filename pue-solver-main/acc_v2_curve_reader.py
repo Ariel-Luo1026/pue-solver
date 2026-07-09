@@ -26,10 +26,8 @@ ACC_OPTIONAL_SHEETS = (
 
 ACC_SOLVER_CURVE_COLUMNS = (
     "ambient_C",
-    "load_ratio",
     "capacity_kW",
     "power_input_kW",
-    "unit_efficiency_kW_per_kW",
 )
 ACC_DERIVABLE_COP_COLUMNS = ("capacity_kW", "power_input_kW")
 RTC_SOLVER_CURVE_COLUMNS = ("load_ratio", "power_kW")
@@ -268,9 +266,9 @@ def _acc_curve_warnings(rows):
         ambient = row.get("ambient_C")
         if ambient is None:
             warnings.append(f"Row {row_index}: ambient_C is missing.")
-        point = (ambient, row.get("load_ratio"))
+        point = (ambient, row.get("capacity_kW"))
         if point in seen_points:
-            warnings.append(f"Row {row_index}: duplicate ambient_C/load_ratio point {point}.")
+            warnings.append(f"Row {row_index}: duplicate ambient_C/capacity_kW point {point}.")
         seen_points.add(point)
     return warnings
 

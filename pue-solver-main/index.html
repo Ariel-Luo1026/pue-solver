@@ -603,19 +603,27 @@
                 <div id="statusFans" class="hint">未加载</div>
             </div>
             <div class="fileSlot">
-                <div class="panelTitle">9. 日照得热负荷（报告展示）</div>
-                <div class="hint">仅用于报告说明，不参与 PUE 计算</div>
+                <div class="panelTitle">9. Solar Heat Gain</div>
+                <div class="hint">Solar heat gain is included in Total Cooling Load.</div>
                 <div class="compactFields">
                     <label class="muted">
-                        年得热 kWh
-                        <input id="solarGainAnnualKwh" type="number" min="0" step="1" placeholder="可选" />
+                        Solar Heat Gain Max (kW)
+                        <input id="solarHeatGainMaxKw" type="number" min="0" step="0.1" value="0" />
                     </label>
                     <label class="muted">
-                        峰值得热 kW
-                        <input id="solarGainPeakKw" type="number" min="0" step="0.1" placeholder="可选" />
+                        Daytime Start Hour
+                        <input id="solarDaytimeStartHour" type="number" min="0" max="24" step="1" value="6" />
+                    </label>
+                    <label class="muted">
+                        Daytime End Hour
+                        <input id="solarDaytimeEndHour" type="number" min="0" max="24" step="1" value="18" />
+                    </label>
+                    <label class="muted">
+                        Other Auxiliary Heat Gains (kW)
+                        <input id="otherAuxiliaryHeatGainKw" type="number" min="0" step="0.1" value="0" />
                     </label>
                 </div>
-                <div id="statusSolarGain" class="hint">报告展示项：不会写入 solver 输入</div>
+                <div id="statusSolarGain" class="hint">Solar Heat Gain 0.0 kW；Other Auxiliary Heat Gains 0.0 kW</div>
             </div>
         </div>
         <div class="toolbar" style="margin-top:12px;">
