@@ -381,6 +381,33 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertIn(text, report_block)
         self.assertNotIn("Annual Calibrated", report_block)
 
+    def test_acc_cooling_load_report_polish_labels(self):
+        report_block = self._function_source("buildHtmlReport")
+        for text in (
+            "Required Cooling Capacity / Installed Cooling Unit Capacity",
+            "ACC Power Lookup Basis",
+            "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit",
+            "Cooling Load Components",
+            "Annual IT Load",
+            "Annual Solar Heat Gain",
+            "Annual Other Auxiliary Heat Gains",
+            "Annual Cooling Load",
+            "Input Assumptions",
+            "Minimum ACC COP",
+            "Maximum ACC COP",
+            "Maximum ACC Power",
+            "ACC Capacity Clamped Hours",
+            "The ACC model directly evaluates hourly equipment performance from manufacturer Solver_Curve data.",
+        ):
+            self.assertIn(text, report_block)
+        for forbidden in (
+            "IT Load / Total Cooling Unit Capacity",
+            "Ambient plus required capacity Solver_Curve lookup",
+            "report-only decomposition",
+            "solar heat gain impact on cooling load",
+        ):
+            self.assertNotIn(forbidden, report_block)
+
     def test_configuration_library_summary_discloses_no_acc_calibration(self):
         summary_block = self._function_source("renderConfigurationLibrarySummary")
         principle_block = self._function_source("showProjectVisualization")

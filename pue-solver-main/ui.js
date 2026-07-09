@@ -1749,7 +1749,7 @@ function renderCoolingUnitArchitecturePanel(outputObj) {
         ["Architecture", architecture],
         ["Dispatch Strategy", "All units running"],
         ["Load Sharing", "Equal load sharing"],
-        ["Unit Load Ratio", "IT Load / Total Cooling Unit Capacity"],
+        ["Unit Load Ratio", "Required Cooling Capacity / Installed Cooling Unit Capacity"],
         ["Current Unit Load Ratio", ratioPercentText(info.unitLoadRatio)]
     ];
     body.innerHTML = rows.map(([label, value]) => `
@@ -2403,6 +2403,16 @@ function buildHtmlReport(context) {
         ? Number(annual.max_hourly_PUE)
         : null;
     const generated = new Date().toISOString();
+    const hasAnnualField = (key) => annual[key] !== null && annual[key] !== undefined;
+    const accPerformanceRows = [
+        ["average_acc_cop", "Average ACC COP", "", 3],
+        ["min_acc_cop", "Minimum ACC COP", "", 3],
+        ["max_acc_cop", "Maximum ACC COP", "", 3],
+        ["max_acc_power_kW", "Maximum ACC Power", " kW", 1],
+        ["acc_capacity_clamped_hours", "ACC Capacity Clamped Hours", " h", 0]
+    ]
+        .filter(([key]) => hasAnnualField(key))
+        .map(([key, label, suffix, digits]) => [label, reportValue(annual[key], suffix, digits)]);
     const energyRows = (isAccMode ? [
         ["IT Energy", annual.annual_IT_energy_kWh],
         ["ACC Energy", annual.annual_acc_energy_kWh],
@@ -2699,14 +2709,15 @@ function buildHtmlReport(context) {
     ${coolingUnitInfo ? `
         <div class="card">
             <h3>${isAccMode ? "ACC Unit Architecture" : "Cooling Unit Architecture"}</h3>
-            <p>${isAccMode ? `The model uses <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} ACC units` : "N/A")}</b>. Dynamic mode evaluates ACC operation hour by hour.` : `The model assumes <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} cooling units (total cooling capacity = ${mwTextFromKw(coolingUnitInfo.totalCapacityKw)})` : "N/A")}</b>. All chiller and dry cooler units are assumed to run throughout the year with equal load sharing. Unit load ratio is calculated as IT Load divided by total cooling unit capacity. N+1 or staged dispatch control is not included in this version.`}</p>
+            <p>${isAccMode ? `The model uses <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} ACC units` : "N/A")}</b>. Dynamic mode evaluates ACC operation hour by hour from ambient dry-bulb temperature and required cooling capacity per ACC unit.` : `The model assumes <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} cooling units (total cooling capacity = ${mwTextFromKw(coolingUnitInfo.totalCapacityKw)})` : "N/A")}</b>. All chiller and dry cooler units are assumed to run throughout the year with equal load sharing. Unit load ratio is calculated as required cooling capacity divided by installed cooling unit capacity. N+1 or staged dispatch control is not included in this version.`}</p>
             <table><tbody>${tableRows([
                 [isAccMode ? "ACC Unit Capacity" : "Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.capacityKw))],
                 [isAccMode ? "ACC Unit Count" : "Cooling Unit Count", coolingUnitInfo.count !== null ? esc(fmtInteger(coolingUnitInfo.count)) : "N/A"],
                 [isAccMode ? "Total ACC Capacity" : "Total Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.totalCapacityKw))],
                 ["Dispatch Strategy", "All units running"],
                 ["Load Sharing", "Equal load sharing across all cooling units"],
-                ["Unit Load Ratio", "<code>IT Load / Total Cooling Unit Capacity</code>"],
+                ["Unit Load Ratio", "<code>Required Cooling Capacity / Installed Cooling Unit Capacity</code>"],
+                ...(isAccMode ? [["ACC Power Lookup Basis", "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit"]] : []),
                 ["N+1 / Staged Dispatch", "Not included"]
             ])}</tbody></table>
         </div>
@@ -2722,7 +2733,7 @@ function buildHtmlReport(context) {
         ["Cooling Power", "<code>P_cooling = P_chiller + P_dry_cooler</code> plus pump/fan terms reported separately where available"],
         ["Chiller COP", "<code>COP = Q_cooling / P_compressor</code>"],
         ["Dry Cooler Approach", "<code>T_LWT = T_ambient + Approach</code> when no explicit leaving-water curve is supplied"],
-        ["Not Currently Modeled", "Cooling mode classification, free-cooling hours, solar heat gain impact on cooling load"]
+        ["Not Currently Modeled", "Cooling mode classification and free-cooling hours"]
     ])}</tbody></table>`}
     `}
 </section>
@@ -2756,13 +2767,13 @@ function buildHtmlReport(context) {
 <section>
     <h2>6. Equipment Curve Register</h2>
     ${isAccMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and required ACC capacity." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
+        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and required cooling capacity per ACC unit." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
         <table><tbody>${tableRows([
             ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
             ["ACC Calculation Mode", isAccV2DirectMode ? "True EPW × Solver_Curve" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
             ["Annual Calibration", isAccV2DirectMode ? "Not applied" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
             ["Annual Calibration Factor", isAccV2DirectMode ? "1.0" : "N/A"],
-            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Ambient plus required capacity Solver_Curve lookup" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
+            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
             ["Weather Representation", isAnnualBenchmarkMode ? "Annualized weather factor" : "Hourly weather data"]
         ])}</tbody></table>
     ` : `
@@ -2802,7 +2813,8 @@ function buildHtmlReport(context) {
         ["Annual Indoor Equipment Energy", reportValue(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
         ["Annual Engine Radiator Energy", reportValue(annual.annual_engine_radiator_energy_kWh, " kWh", 0)],
         ["Annual IT Electrical Distribution Loss", reportValue(annual.annual_it_electrical_loss_kWh, " kWh", 0)],
-        ["Annual MEP Electrical Distribution Loss", reportValue(annual.annual_mep_electrical_loss_kWh, " kWh", 0)]
+        ["Annual MEP Electrical Distribution Loss", reportValue(annual.annual_mep_electrical_loss_kWh, " kWh", 0)],
+        ...accPerformanceRows
     ])}</tbody></table>
     ` : `
     <table><tbody>${tableRows([
@@ -2812,8 +2824,7 @@ function buildHtmlReport(context) {
         ["Annual Chiller + Dry Cooler Energy", reportValue(annual.annual_chiller_plus_dry_cooler_energy_kWh, " kWh", 0)],
         ["Annual Chiller Energy", reportValue(annual.annual_chiller_energy_kWh, " kWh", 0)],
         ["Annual ACC Energy", reportValue(annual.annual_acc_energy_kWh, " kWh", 0)],
-        ["Average ACC COP", reportValue(annual.average_acc_cop, "", 3)],
-        ["Max ACC Power", reportValue(annual.max_acc_power_kW, " kW", 1)],
+        ...accPerformanceRows,
         ["ACC Curve Source", esc(annual.acc_curve_source || "N/A")],
         ["Annual Engine Output", reportValue(annual.annual_engine_output_kWh, " kWh", 0)],
         ["Annual Engine Fuel Input", reportValue(annual.annual_engine_fuel_input_kWh, " kWh", 0)],
@@ -2874,12 +2885,12 @@ function buildHtmlReport(context) {
             ] : [
                 ["Base IT PUE", "1.000"],
                 ["Cooling System pPUE", "<code>annual_total_cooling_system_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Cooling System Includes", "Chiller + Dry Cooler + CHW Pump + MAU"],
+                ["Cooling System Includes", "ACC + CHW Pump + Indoor Equipment + Engine Radiator"],
                 ["Electrical Distribution Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
                 ["Auxiliary pPUE", "<code>annual_auxiliary_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
             ])}</tbody></table>
-            <div class="note">This section is a report-only decomposition of the existing annual results. It does not recalculate or overwrite <code>annual_average_PUE</code>.</div>
+            <div class="note">This section summarizes annual result components without overwriting <code>annual_average_PUE</code>.</div>
         </div>
     </div>
     ${resultChartCards.length ? `<div class="grid">${resultChartCards.map(([title, chart]) => `
@@ -2900,15 +2911,21 @@ function buildHtmlReport(context) {
         : (isConfigurationLibraryAccV2DirectMode
         ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
         : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`)}</p>
-    <table><tbody>${tableRows(isBenchmarkMode ? [
+    <h3>Cooling Load Components</h3>
+    <table><tbody>${tableRows([
+        ["Annual IT Load", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
+        ["Annual Solar Heat Gain", reportValue(annual.annual_solar_heat_gain_kWh, " kWh", 0)],
+        ["Annual Other Auxiliary Heat Gains", reportValue(annual.annual_other_auxiliary_heat_gain_kWh, " kWh", 0)],
+        ["Annual Cooling Load", reportValue(annual.annual_cooling_load_kWh, " kWh", 0)]
+    ])}</tbody></table>
+    <h3>Input Assumptions</h3>
+    <table><tbody>${tableRows([
         ["Solar Heat Gain Max", reportValue(heatGains.solarHeatGainMaxKw, " kW", 1)],
-        ["Other Auxiliary Heat Gains", reportValue(heatGains.otherAuxiliaryHeatGainKw, " kW", 1)],
-        ["Annual Cooling Load", reportValue(annual.annual_cooling_load_kWh, " kWh", 0)],
+        ["Other Auxiliary Heat Gains", reportValue(heatGains.otherAuxiliaryHeatGainKw, " kW", 1)]
+    ])}</tbody></table>
+    <table><tbody>${tableRows(isBenchmarkMode ? [
         ["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Not applicable in annual-equivalent assessment")]
     ] : [
-        ["Solar Heat Gain Max", reportValue(heatGains.solarHeatGainMaxKw, " kW", 1)],
-        ["Other Auxiliary Heat Gains", reportValue(heatGains.otherAuxiliaryHeatGainKw, " kW", 1)],
-        ["Annual Cooling Load", reportValue(annual.annual_cooling_load_kWh, " kWh", 0)],
         ["Free Cooling Hours", "Not modeled in current solver"],
         ["Mechanical Cooling Hours", "Not modeled in current solver"]
     ])}</tbody></table>
@@ -2916,7 +2933,7 @@ function buildHtmlReport(context) {
 
 <section>
     <h2>9. Conclusion</h2>
-    <p>This report provides a transparent annual PUE assessment based on the currently loaded input datasets and solver outputs. Values that are not produced by the solver are explicitly marked as contextual or not modeled.</p>
+    <p>This report provides a transparent annual PUE assessment based on the currently loaded input datasets and solver outputs. The ACC model directly evaluates hourly equipment performance from manufacturer Solver_Curve data. Values that are not produced by the solver are explicitly marked as contextual or not modeled.</p>
 </section>
 </main>
 </body>
