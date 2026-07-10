@@ -317,6 +317,7 @@ def build_library_bound_input(configuration, scenarios, equipment, it_profile, t
         unit_counts = {
             "required_units": None, "installed_units": None,
             "normal_active_units": None, "failure_active_units": None,
+            "indoor_active_units": None,
             "redundancy": "N+1",
             "required_units_formula": "ceil(total_it_capacity_mw / cooling_unit_capacity_mw)",
             "installed_units_formula": "required_units + 1",
@@ -358,6 +359,7 @@ def calculate_unit_requirements(total_it_capacity_mw, cooling_unit_capacity_mw):
         "installed_units": installed_units,
         "normal_active_units": installed_units,
         "failure_active_units": required_units,
+        "indoor_active_units": installed_units,
         "redundancy": "N+1",
     }
 
@@ -493,6 +495,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "required_units": sizing["required_units"],
             "installed_units": sizing["installed_units"],
             "active_units": active_units,
+            "indoor_active_units": sizing["normal_active_units"],
             "redundancy_strategy": "N+1",
             "scenario_name": scenario["scenario"],
             "it_load": {

@@ -581,6 +581,58 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertEqual(hour["chw_pump_load_ratio_basis"], "unit_load_ratio")
         self.assertAlmostEqual(hour["pump_load_ratio"], hour["unit_load_ratio"])
 
+    def test_solver_failure_keeps_indoor_equipment_on_normal_unit_count(self):
+        config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
+        normal = convert_library_input_to_solver_input(
+            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        )
+        failure = convert_library_input_to_solver_input(
+            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Failure")
+        )
+        for sample in (normal, failure):
+            sample["project"]["it_load"]["hourly_it_load_kW"] = [3960]
+            sample["weather"]["hourly_data"] = {
+                "hour_index": [12],
+                "dry_bulb_C": [25],
+                "wet_bulb_C": [],
+            }
+            sample["acc_v2_enabled"] = True
+            sample["acc_v2"] = {"configuration_path": str(config)}
+
+        normal_result = compute_pue_project(normal)
+        failure_result = compute_pue_project(failure)
+
+        self.assertNotIn("error", normal_result)
+        self.assertNotIn("error", failure_result)
+        normal_hour = normal_result["hourly_results"][0]
+        failure_hour = failure_result["hourly_results"][0]
+        self.assertEqual(normal["project"]["active_units"], 4)
+        self.assertEqual(failure["project"]["active_units"], 3)
+        self.assertEqual(normal_hour["indoor_active_units"], 4)
+        self.assertEqual(failure_hour["indoor_active_units"], 4)
+        self.assertEqual(failure_hour["indoor_equipment_load_ratio_basis"], "it_project_load_ratio")
+        self.assertEqual(failure_hour["indoor_equipment_unit_count_basis"], "normal_indoor_active_units")
+        self.assertAlmostEqual(normal_hour["project_load_ratio"], failure_hour["project_load_ratio"])
+        self.assertAlmostEqual(normal_hour["cdu_power_kW"], failure_hour["cdu_power_kW"])
+        self.assertAlmostEqual(normal_hour["rtc_power_kW"], failure_hour["rtc_power_kW"])
+        self.assertAlmostEqual(normal_hour["mau_power_kW"], failure_hour["mau_power_kW"])
+        self.assertAlmostEqual(
+            failure_result["annual_results"]["annual_cdu_energy_kWh"],
+            normal_result["annual_results"]["annual_cdu_energy_kWh"],
+        )
+        self.assertAlmostEqual(
+            failure_result["annual_results"]["annual_rtc_energy_kWh"],
+            normal_result["annual_results"]["annual_rtc_energy_kWh"],
+        )
+        self.assertAlmostEqual(
+            failure_result["annual_results"]["annual_mau_energy_kWh"],
+            normal_result["annual_results"]["annual_mau_energy_kWh"],
+        )
+        self.assertAlmostEqual(normal_hour["acc_required_capacity_per_unit_kW"], 3960 / 4)
+        self.assertAlmostEqual(failure_hour["acc_required_capacity_per_unit_kW"], 3960 / 3)
+        self.assertAlmostEqual(failure_hour["pump_load_ratio"], (3960 / 3) / 1616)
+        self.assertEqual(failure["project"]["active_units"], failure["equipment"]["cooling"]["cooling_unit_count"])
+
     def test_benchmark_path_not_imported_by_engine(self):
         engine_source = Path(__file__).with_name("acc_v2_engine.py").read_text(encoding="utf-8")
         tree = ast.parse(engine_source)

@@ -48,6 +48,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertEqual(sizing["installed_units"], 4)
         self.assertEqual(sizing["normal_active_units"], 4)
         self.assertEqual(sizing["failure_active_units"], 3)
+        self.assertEqual(sizing["indoor_active_units"], 4)
         self.assertEqual(sizing["redundancy"], "N+1")
 
     def test_it_load_profile_has_8760_hours(self):
@@ -182,6 +183,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertEqual(project["required_units"], 3)
         self.assertEqual(project["installed_units"], 4)
         self.assertEqual(project["active_units"], 4)
+        self.assertEqual(project["indoor_active_units"], 4)
         self.assertEqual(project["redundancy_strategy"], "N+1")
         self.assertEqual(project["scenario_name"], "Normal")
         self.assertEqual(len(project["it_load"]["hourly_it_load_kW"]), 8760)
@@ -199,6 +201,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertEqual(project["required_units"], 3)
         self.assertEqual(project["installed_units"], 4)
         self.assertEqual(project["active_units"], 3)
+        self.assertEqual(project["indoor_active_units"], 4)
         self.assertEqual(project["scenario_name"], "Failure")
         self.assertEqual(solver_input["selected_curves"]["ENGINE_2"]["sheet_name"], "Solver_Curve_Failure")
 

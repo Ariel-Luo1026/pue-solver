@@ -1932,6 +1932,8 @@ def compute_pue_project(input_obj):
     cooling_unit_count = max(1, int(ceil(float(cooling_unit_count))))
     library_active_units = _num(project.get("active_units"), cooling_unit_count)
     library_active_units = max(1, int(ceil(float(library_active_units))))
+    indoor_active_units = _num(project.get("indoor_active_units"), library_active_units)
+    indoor_active_units = max(1, int(ceil(float(indoor_active_units))))
     library_fixed_power = _get(input_obj, ["equipment", "library_fixed_power"], {})
     if not isinstance(library_fixed_power, dict) or not library_fixed_power:
         library_fixed_power = _get(input_obj, ["library_context", "auxiliary_equipment"], {})
@@ -2656,13 +2658,13 @@ def compute_pue_project(input_obj):
                         label,
                     )
                     if label == "cdu":
-                        cdu_power_kw = power_per_unit * library_active_units
+                        cdu_power_kw = power_per_unit * indoor_active_units
                         cdu_curve_source = "configuration_library_solver_curve"
                     elif label == "rtc":
-                        rtc_power_kw = power_per_unit * library_active_units
+                        rtc_power_kw = power_per_unit * indoor_active_units
                         rtc_curve_source = "configuration_library_solver_curve"
                     else:
-                        mau_power_kw = power_per_unit * library_active_units
+                        mau_power_kw = power_per_unit * indoor_active_units
                         mau_curve_source = "configuration_library_solver_curve"
                 except Exception as exc:
                     error_message = (
@@ -2675,9 +2677,9 @@ def compute_pue_project(input_obj):
                     result["error"] = error_message
                     return result
         else:
-            cdu_power_kw = _library_fixed_power_per_unit(cdu_binding, project_load_ratio) * library_active_units
-            rtc_power_kw = _library_fixed_power_per_unit(rtc_binding, project_load_ratio) * library_active_units
-            mau_power_kw = _library_fixed_power_per_unit(mau_binding, project_load_ratio) * library_active_units
+            cdu_power_kw = _library_fixed_power_per_unit(cdu_binding, project_load_ratio) * indoor_active_units
+            rtc_power_kw = _library_fixed_power_per_unit(rtc_binding, project_load_ratio) * indoor_active_units
+            mau_power_kw = _library_fixed_power_per_unit(mau_binding, project_load_ratio) * indoor_active_units
         white_space_equipment_power_kw = cdu_power_kw + rtc_power_kw + mau_power_kw
         if configuration_library_direct_mode:
             airflow_kw = mau_power_kw
@@ -2958,6 +2960,9 @@ def compute_pue_project(input_obj):
             "rtc_curve_source": rtc_curve_source,
             "mau_power_kW": mau_power_kw,
             "mau_curve_source": mau_curve_source,
+            "indoor_active_units": indoor_active_units,
+            "indoor_equipment_load_ratio_basis": "it_project_load_ratio",
+            "indoor_equipment_unit_count_basis": "normal_indoor_active_units",
             "white_space_equipment_power_kW": white_space_equipment_power_kw,
             "engine_output_kW": engine_output_kw,
             "engine_power_kW": engine_output_kw,

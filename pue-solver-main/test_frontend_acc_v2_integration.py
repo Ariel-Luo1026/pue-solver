@@ -117,7 +117,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "unit_quantity.py",
         ):
             self.assertIn(f'"{module_name}"', self.ui)
-        self.assertLess(ensure_block.index("DIRECT_MODE_PYTHON_MODULES"), ensure_block.index('fetch("./solver.py")'))
+        self.assertLess(ensure_block.index("DIRECT_MODE_PYTHON_MODULES"), ensure_block.index('fetch("./solver.py", { cache: "no-store" })'))
         self.assertLess(ensure_block.index("await loadPythonModuleIntoPyodide(moduleName)"), ensure_block.index("await pyodide.runPythonAsync(pyText)"))
 
     def test_frontend_result_area_reports_acc_engine_used(self):

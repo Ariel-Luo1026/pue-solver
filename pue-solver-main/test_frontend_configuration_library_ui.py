@@ -34,6 +34,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("unit_quantity: unitQuantity", self.ui)
         self.assertIn("running_units: activeUnits", self.ui)
         self.assertIn("standby_units: standbyUnits", self.ui)
+        self.assertIn("indoor_active_units: indoorActiveUnits", self.ui)
 
     def test_auto_mode_remains_default(self):
         self.assertIn('<option value="auto" selected>Auto</option>', self.index)
@@ -115,6 +116,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn('console.time("loadPyodide")', ensure_block)
         self.assertIn('console.time("fetch/write module loop")', ensure_block)
         self.assertIn('console.time("solver.py runPythonAsync")', ensure_block)
+        self.assertIn('fetch("./solver.py", { cache: "no-store" })', ensure_block)
         self.assertIn('console.time("benchmark runPythonAsync")', ensure_block)
         self.assertIn("window.pyodideReady = true", ensure_block)
 
@@ -160,6 +162,19 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
         self.assertIn("library_fixed_power: clone(libraryInput.equipment.auxiliary)", adapter_block)
         self.assertIn("auxiliary_equipment: clone(libraryInput.equipment.auxiliary)", adapter_block)
+        self.assertIn("indoor_active_units: project.indoor_active_units", adapter_block)
+
+    def test_frontend_carries_normal_indoor_unit_count_for_library_direct_input(self):
+        sizing_block = self._function_source("calculateFrontendUnitRequirements")
+        self.assertIn("indoorActiveUnits: requiredUnits + 1", sizing_block)
+
+        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        self.assertIn("const indoorActiveUnits = unitQuantity.mode === \"manual\"", builder_block)
+        self.assertIn("indoor_active_units: indoorActiveUnits", builder_block)
+        self.assertLess(builder_block.index("const indoorActiveUnits"), builder_block.index("project: {"))
+
+        report_block = self._function_source("buildHtmlReport")
+        self.assertIn("Indoor IT-side equipment uses normal indoor unit count and IT-load-based operation.", report_block)
 
     def test_configuration_library_aliases_do_not_warn_as_tentative(self):
         diagnostics_block = self.ui[

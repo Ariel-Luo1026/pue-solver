@@ -236,7 +236,7 @@ async function ensurePyodideReady() {
             if (!pyodideSolverLoaded) {
                 console.time("solver.py runPythonAsync");
                 try {
-                    const pyText = await fetch("./solver.py").then(r => r.text());
+                    const pyText = await fetch("./solver.py", { cache: "no-store" }).then(r => r.text());
                     await pyodide.runPythonAsync(pyText);
                     pyodideSolverLoaded = true;
                 } finally {
@@ -644,6 +644,7 @@ function calculateFrontendUnitRequirements(totalItCapacityMw, coolingUnitCapacit
         installedUnits: requiredUnits + 1,
         normalActiveUnits: requiredUnits + 1,
         failureActiveUnits: requiredUnits,
+        indoorActiveUnits: requiredUnits + 1,
         redundancy: "N+1"
     };
 }
@@ -2688,7 +2689,7 @@ function buildHtmlReport(context) {
         <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isAccV2DirectMode ? "The assessment uses Configuration Library-driven ACC simulation using True EPW × Solver_Curve calculation. EPW dry-bulb temperature and hourly load ratio determine hourly ACC power. Annual Calibration is Not applied." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
         <div class="card">
             <h3>ACC Unit Architecture</h3>
-            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isAccV2DirectMode ? "ACC operation follows direct Configuration Library Solver_Curve lookup for every hour." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
+            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isAccV2DirectMode ? "ACC operation follows direct Configuration Library Solver_Curve lookup for every hour. Indoor IT-side equipment uses normal indoor unit count and IT-load-based operation." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
             <table><tbody>${tableRows([
                 ["ACC Unit Capacity", `${reportValue(context.input?.cooling_unit_capacity_mw, " MW", 1)}`],
                 ["Active ACC Units", esc(output.project?.active_units ?? "N/A")],
@@ -4489,6 +4490,9 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     const installedUnits = unitQuantity.mode === "manual"
         ? Number(unitQuantity.installed_units || activeUnits || 0)
         : sizing.installedUnits;
+    const indoorActiveUnits = unitQuantity.mode === "manual"
+        ? installedUnits
+        : sizing.indoorActiveUnits;
     const standbyUnits = unitQuantity.mode === "manual"
         ? Number(unitQuantity.standby_units || Math.max(installedUnits - activeUnits, 0))
         : Math.max(installedUnits - activeUnits, 0);
@@ -4532,6 +4536,7 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             required_units: sizing.requiredUnits,
             installed_units: installedUnits,
             active_units: activeUnits,
+            indoor_active_units: indoorActiveUnits,
             running_units: activeUnits,
             standby_units: standbyUnits,
             redundancy_strategy: unitQuantity.redundancy === "auto" ? sizing.redundancy : unitQuantity.redundancy,
@@ -4661,6 +4666,7 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             required_units: project.required_units,
             installed_units: project.installed_units,
             active_units: project.active_units,
+            indoor_active_units: project.indoor_active_units,
             selected_curves: clone(libraryInput.selected_curves),
             engine_output_reference: clone(libraryInput.equipment.cooling.engine),
             engine_radiator: clone(libraryInput.equipment.cooling.engine_radiator),

@@ -74,6 +74,7 @@ def convert_library_input_to_solver_input(library_input):
         raise ValueError("library_input is missing project.it_load.hourly_it_load_kW")
     hours = len(hourly_it)
     active_units = int(project_source.get("active_units") or 1)
+    indoor_active_units = int(project_source.get("indoor_active_units") or project_source.get("installed_units") or active_units)
     capacity_kw = float(project_source.get("cooling_unit_capacity_kW") or 0.0)
 
     weather = deepcopy(library_input.get("weather")) if isinstance(library_input.get("weather"), dict) else None
@@ -116,6 +117,7 @@ def convert_library_input_to_solver_input(library_input):
     project["cooling_unit_count"] = active_units
     project["installed_units"] = project_source.get("installed_units")
     project["active_units"] = active_units
+    project["indoor_active_units"] = indoor_active_units
 
     library_context = {
         "configuration_name": library_input.get("configuration_library", {}).get("configuration_name"),
@@ -128,6 +130,7 @@ def convert_library_input_to_solver_input(library_input):
         "required_units": project_source.get("required_units"),
         "installed_units": project_source.get("installed_units"),
         "active_units": active_units,
+        "indoor_active_units": indoor_active_units,
         "selected_curves": deepcopy(library_input.get("selected_curves", {})),
         "engine_output_reference": deepcopy(library_input.get("equipment", {}).get("cooling", {}).get("engine")),
         "engine_radiator": deepcopy(library_input.get("equipment", {}).get("cooling", {}).get("engine_radiator")),
