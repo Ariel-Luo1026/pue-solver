@@ -494,7 +494,7 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertTrue(result["hourly_results"][0]["acc_capacity_clamped"])
         self.assertEqual(result["annual_results"]["acc_capacity_clamped_hours"], 1)
 
-    def test_solver_acc_v2_chw_pump_ratio_uses_cooling_load_over_acc_max_capacity(self):
+    def test_solver_acc_v2_chw_pump_ratio_uses_cooling_load_over_design_required_capacity(self):
         with TemporaryDirectory() as temp_dir:
             config = _make_configuration(
                 temp_dir,
@@ -551,16 +551,20 @@ class ACCV2EngineTest(unittest.TestCase):
         hour = result["hourly_results"][1]
         expected_cooling_load = 3960 + 4.065 + 71
         expected_required_per_unit = expected_cooling_load / 4
-        expected_pump_load_ratio = expected_required_per_unit / 1616
+        expected_reference_capacity = (4400 + 4.065 + 71) / 4
+        expected_pump_load_ratio = expected_required_per_unit / expected_reference_capacity
         old_nominal_basis = expected_required_per_unit / 1500
+        old_acc_max_basis = expected_required_per_unit / 1616
         old_unit_load_ratio = 3960 / (4 * 1500)
         self.assertAlmostEqual(hour["cooling_load_kW"], expected_cooling_load)
         self.assertAlmostEqual(hour["acc_required_capacity_per_unit_kW"], expected_required_per_unit)
         self.assertAlmostEqual(hour["pump_load_ratio"], expected_pump_load_ratio)
         self.assertAlmostEqual(hour["pump_power_details"][0]["load_ratio"], expected_pump_load_ratio)
-        self.assertEqual(hour["chw_pump_load_ratio_basis"], "cooling_load_per_acc_unit_over_acc_max_capacity")
-        self.assertEqual(hour["chw_pump_reference_capacity_kW"], 1616)
+        self.assertEqual(hour["chw_pump_load_ratio_basis"], "design_required_capacity_per_acc_unit")
+        self.assertAlmostEqual(hour["chw_pump_reference_capacity_kW"], expected_reference_capacity)
+        self.assertAlmostEqual(hour["peak_design_required_capacity_per_acc_unit_kW"], expected_reference_capacity)
         self.assertNotAlmostEqual(hour["pump_load_ratio"], old_nominal_basis)
+        self.assertNotAlmostEqual(hour["pump_load_ratio"], old_acc_max_basis)
         self.assertNotAlmostEqual(hour["pump_load_ratio"], old_unit_load_ratio)
 
     def test_solver_non_acc_v2_chw_pump_ratio_keeps_unit_load_ratio_basis(self):
@@ -671,9 +675,14 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertAlmostEqual(peak["peak_design_project_load_ratio"], 1.0)
         self.assertEqual(peak["peak_design_indoor_active_units"], 4)
         self.assertAlmostEqual(
+            peak["peak_design_required_capacity_per_acc_unit_kW"],
+            peak["peak_design_cooling_load_kW"] / sample["project"]["active_units"],
+        )
+        self.assertAlmostEqual(
             peak["peak_design_ACC_required_capacity_per_unit_kW"],
             peak["peak_design_cooling_load_kW"] / sample["project"]["active_units"],
         )
+        self.assertAlmostEqual(peak["peak_design_CHW_pump_load_ratio"], 1.0)
         self.assertAlmostEqual(peak["peak_design_other_electrical_auxiliary_power_kW"], 18.0)
         self.assertAlmostEqual(peak["peak_design_terminal_fan_power_kW"], 0.0)
         expected_total = (
@@ -726,6 +735,8 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertNotIn("error", failure_result)
         normal_hour = normal_result["hourly_results"][0]
         failure_hour = failure_result["hourly_results"][0]
+        normal_peak = normal_result["peak_results"]
+        failure_peak = failure_result["peak_results"]
         self.assertEqual(normal["project"]["active_units"], 4)
         self.assertEqual(failure["project"]["active_units"], 3)
         self.assertEqual(normal_hour["indoor_active_units"], 4)
@@ -768,7 +779,20 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertEqual(failure_result["annual_results"]["annual_terminal_fan_energy_kWh"], 0.0)
         self.assertAlmostEqual(normal_hour["acc_required_capacity_per_unit_kW"], 3960 / 4)
         self.assertAlmostEqual(failure_hour["acc_required_capacity_per_unit_kW"], 3960 / 3)
-        self.assertAlmostEqual(failure_hour["pump_load_ratio"], (3960 / 3) / 1616)
+        self.assertAlmostEqual(
+            normal_hour["pump_load_ratio"],
+            normal_hour["acc_required_capacity_per_unit_kW"] / (4400 / 4),
+        )
+        self.assertAlmostEqual(
+            failure_hour["pump_load_ratio"],
+            failure_hour["acc_required_capacity_per_unit_kW"] / (4400 / 3),
+        )
+        self.assertEqual(failure_hour["chw_pump_load_ratio_basis"], "design_required_capacity_per_acc_unit")
+        self.assertAlmostEqual(failure_hour["peak_design_required_capacity_per_acc_unit_kW"], 4400 / 3)
+        self.assertAlmostEqual(normal_peak["peak_design_CHW_pump_load_ratio"], 1.0)
+        self.assertAlmostEqual(failure_peak["peak_design_CHW_pump_load_ratio"], 1.0)
+        self.assertAlmostEqual(normal_peak["peak_design_required_capacity_per_acc_unit_kW"], 4400 / 4)
+        self.assertAlmostEqual(failure_peak["peak_design_required_capacity_per_acc_unit_kW"], 4400 / 3)
         self.assertEqual(failure["project"]["active_units"], failure["equipment"]["cooling"]["cooling_unit_count"])
 
     def test_legacy_terminal_fan_power_is_unchanged(self):

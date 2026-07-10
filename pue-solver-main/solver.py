@@ -2117,13 +2117,23 @@ def compute_pue_project(input_obj):
             acc_v2_engine = create_acc_v2_engine(acc_v2_configuration_path)
     except Exception as exc:
         acc_v2_engine_error = str(exc)
-    acc_max_capacity_kw = _max_acc_capacity_kw(acc_curve)
+    peak_design_cooling_load_kw = (
+        float(design_it_load or 0.0)
+        + heat_gain_config["solar_heat_gain_max_kW"]
+        + heat_gain_config["other_auxiliary_heat_gain_kW"]
+    )
+    peak_design_required_capacity_per_acc_unit_kw = (
+        peak_design_cooling_load_kw / max(1, int(library_active_units))
+        if peak_design_cooling_load_kw > 0
+        else None
+    )
     acc_v2_pump_capacity_warning = None
     if configuration_library_direct_mode and acc_v2_direct_mode_enabled and not (
-        acc_max_capacity_kw is not None and acc_max_capacity_kw > 0
+        peak_design_required_capacity_per_acc_unit_kw is not None
+        and peak_design_required_capacity_per_acc_unit_kw > 0
     ):
         acc_v2_pump_capacity_warning = (
-            "ACC Solver_Curve capacity_kW maximum unavailable; "
+            "Peak design required capacity per ACC unit unavailable; "
             "CHW Pump load ratio fell back to existing unit_load_ratio basis."
         )
         validation.setdefault("warnings", []).append(acc_v2_pump_capacity_warning)
@@ -2190,10 +2200,17 @@ def compute_pue_project(input_obj):
         chw_pump_reference_capacity_kw = None
         chw_pump_load_ratio_warning = None
         if configuration_library_direct_mode and acc_v2_direct_mode_enabled:
-            if acc_max_capacity_kw is not None and acc_max_capacity_kw > 0:
-                pump_load_ratio = _clamp(acc_required_capacity_per_unit_kw / acc_max_capacity_kw, 0.0, 1.0)
-                chw_pump_load_ratio_basis = "cooling_load_per_acc_unit_over_acc_max_capacity"
-                chw_pump_reference_capacity_kw = acc_max_capacity_kw
+            if (
+                peak_design_required_capacity_per_acc_unit_kw is not None
+                and peak_design_required_capacity_per_acc_unit_kw > 0
+            ):
+                pump_load_ratio = _clamp(
+                    acc_required_capacity_per_unit_kw / peak_design_required_capacity_per_acc_unit_kw,
+                    0.0,
+                    1.0,
+                )
+                chw_pump_load_ratio_basis = "design_required_capacity_per_acc_unit"
+                chw_pump_reference_capacity_kw = peak_design_required_capacity_per_acc_unit_kw
             else:
                 chw_pump_load_ratio_warning = acc_v2_pump_capacity_warning
         chw_pump_power_per_unit_kw = 0.0
@@ -2942,6 +2959,7 @@ def compute_pue_project(input_obj):
             "pump_load_ratio": pump_load_ratio,
             "chw_pump_load_ratio_basis": chw_pump_load_ratio_basis,
             "chw_pump_reference_capacity_kW": chw_pump_reference_capacity_kw,
+            "peak_design_required_capacity_per_acc_unit_kW": peak_design_required_capacity_per_acc_unit_kw,
             "chw_pump_load_ratio_warning": chw_pump_load_ratio_warning,
             "chw_pump_power_per_unit_kW": chw_pump_power_per_unit_kw,
             "cw_pump_power_per_unit_kW": cw_pump_power_per_unit_kw,
@@ -3267,6 +3285,7 @@ def compute_pue_project(input_obj):
                     "peak_design_ACC_required_capacity_per_unit_kW": peak_design_hour.get("acc_required_capacity_per_unit_kW"),
                     "peak_design_CHW_pump_load_ratio": peak_design_hour.get("pump_load_ratio"),
                     "peak_design_CHW_pump_reference_capacity_kW": peak_design_hour.get("chw_pump_reference_capacity_kW"),
+                    "peak_design_required_capacity_per_acc_unit_kW": peak_design_hour.get("peak_design_required_capacity_per_acc_unit_kW"),
                     "peak_design_indoor_active_units": peak_design_hour.get("indoor_active_units"),
                     "peak_design_project_load_ratio": peak_design_hour.get("project_load_ratio"),
                     "peak_design_mep_terminal_load_kW": peak_design_hour.get("mep_terminal_load_kW"),
