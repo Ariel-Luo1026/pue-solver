@@ -639,6 +639,68 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertGreater(manual_hour["total_facility_power_kW"] - base_hour["total_facility_power_kW"], 18.0)
         self.assertGreater(manual_hour["electrical_loss_kW"], base_hour["electrical_loss_kW"])
 
+    def test_configuration_library_acc_v2_peak_pue_uses_peak_design_point(self):
+        config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
+        sample = convert_library_input_to_solver_input(
+            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        )
+        sample["project"]["it_load"]["hourly_it_load_kW"] = [4400, 2200]
+        sample["weather"]["hourly_data"] = {
+            "hour_index": [7, 23],
+            "dry_bulb_C": [20, 40],
+            "wet_bulb_C": [],
+        }
+        sample["solar_heat_gain_max_kW"] = 4.065
+        sample["solar_daytime_start_hour"] = 6
+        sample["solar_daytime_end_hour"] = 18
+        sample["other_auxiliary_heat_gain_kW"] = 71
+        sample["project"].setdefault("auxiliary_loads", {})["other_electrical_auxiliary_power_kW"] = 18
+        sample["acc_v2_enabled"] = True
+        sample["acc_v2"] = {"configuration_path": str(config)}
+
+        result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        annual = result["annual_results"]
+        peak = result["peak_results"]
+        self.assertEqual(peak["peak_PUE_definition"], "peak_design")
+        self.assertAlmostEqual(peak["peak_design_it_load_kW"], 4400)
+        self.assertEqual(peak["peak_design_hour_index"], 23)
+        self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 40)
+        self.assertAlmostEqual(peak["peak_design_cooling_load_kW"], 4400 + 4.065 + 71)
+        self.assertAlmostEqual(peak["peak_design_project_load_ratio"], 1.0)
+        self.assertEqual(peak["peak_design_indoor_active_units"], 4)
+        self.assertAlmostEqual(
+            peak["peak_design_ACC_required_capacity_per_unit_kW"],
+            peak["peak_design_cooling_load_kW"] / sample["project"]["active_units"],
+        )
+        self.assertAlmostEqual(peak["peak_design_other_electrical_auxiliary_power_kW"], 18.0)
+        self.assertAlmostEqual(peak["peak_design_terminal_fan_power_kW"], 0.0)
+        expected_total = (
+            peak["peak_design_it_load_kW"]
+            + peak["peak_design_ACC_power_kW"]
+            + peak["peak_design_CHW_pump_power_kW"]
+            + peak["peak_design_CDU_power_kW"]
+            + peak["peak_design_RTC_power_kW"]
+            + peak["peak_design_MAU_power_kW"]
+            + peak["peak_design_engine_radiator_power_kW"]
+            + peak["peak_design_other_electrical_auxiliary_power_kW"]
+            + peak["peak_design_electrical_loss_kW"]
+        )
+        self.assertAlmostEqual(peak["peak_design_total_facility_power_kW"], expected_total)
+        self.assertAlmostEqual(
+            peak["peak_design_facility_electrical_demand_kW"],
+            peak["peak_design_total_facility_power_kW"],
+        )
+        self.assertAlmostEqual(
+            peak["max_hourly_facility_electrical_demand_kW"],
+            peak["max_hourly_total_facility_power_kW"],
+        )
+        self.assertAlmostEqual(peak["peak_PUE"], peak["peak_design_total_facility_power_kW"] / 4400)
+        self.assertEqual(peak["max_hourly_PUE"], annual["max_hourly_PUE"])
+        self.assertIn("max_hourly_PUE_hour_index", peak)
+        self.assertNotAlmostEqual(peak["peak_PUE"], peak["max_hourly_PUE"])
+
     def test_solver_failure_keeps_indoor_equipment_on_normal_unit_count(self):
         config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
         normal = convert_library_input_to_solver_input(

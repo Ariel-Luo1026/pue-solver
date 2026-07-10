@@ -439,6 +439,21 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertIn("Not applied", block)
             self.assertNotIn("Annual Calibrated", block)
 
+    def test_configuration_library_acc_v2_report_labels_peak_design_separately(self):
+        report_block = self._function_source("buildHtmlReport")
+        visualization_block = self._function_source("showProjectVisualization")
+        for block in (report_block, visualization_block):
+            self.assertIn("Peak Design PUE", block)
+            self.assertIn("Max Hourly PUE", block)
+            self.assertIn("Facility Electrical Demand", block)
+            self.assertNotIn("Peak Design Engine Output", block)
+            self.assertNotIn("Max Hourly Engine Output", block)
+        self.assertIn("peak_design_cooling_load_kW", report_block)
+        self.assertIn("peak_design_outdoor_dry_bulb_C", report_block)
+        self.assertIn("peak_design_facility_electrical_demand_kW", visualization_block)
+        self.assertIn("max_hourly_facility_electrical_demand_kW", visualization_block)
+        self.assertIn("Peak PUE Basis: Peak Design PUE", visualization_block)
+
     def test_benchmark_report_labels_remain_separate(self):
         report_block = self._function_source("buildHtmlReport")
         self.assertIn("ACC Annual Weather Factor", report_block)

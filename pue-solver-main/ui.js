@@ -2407,6 +2407,14 @@ function buildHtmlReport(context) {
     const peakHourlyPue = !isAnnualBenchmarkMode && Number.isFinite(Number(annual.max_hourly_PUE))
         ? Number(annual.max_hourly_PUE)
         : null;
+    const peakDesignPue = !isAnnualBenchmarkMode && Number.isFinite(Number(peak.peak_PUE))
+        ? Number(peak.peak_PUE)
+        : null;
+    const peakDesignDemandKw = peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW ?? peak.peak_total_facility_power_kW;
+    const maxHourlyDemandKw = peak.max_hourly_facility_electrical_demand_kW ?? peak.max_hourly_total_facility_power_kW;
+    const peakPueMetricHtml = isConfigurationLibraryAccV2DirectMode
+        ? `<div class="metric"><div class="label">Peak Design PUE</div><div class="value">${reportValue(peakDesignPue, "", 3)}</div>${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`
+        : `<div class="metric"><div class="label">Peak Hourly PUE</div><div class="value">${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}</div>${isAnnualBenchmarkMode ? `<div class="subtitle">Annual-equivalent assessment uses average equipment values.</div>` : ""}${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`;
     const generated = new Date().toISOString();
     const hasAnnualField = (key) => annual[key] !== null && annual[key] !== undefined;
     const accPerformanceRows = [
@@ -2612,8 +2620,10 @@ function buildHtmlReport(context) {
     ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
     <div class="meta">
         <div class="metric"><div class="label">Annual Average PUE</div><div class="value">${reportValue(annual.annual_average_PUE, "", 3)}</div></div>
-        <div class="metric"><div class="label">Peak Hourly PUE</div><div class="value">${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}</div>${isAnnualBenchmarkMode ? `<div class="subtitle">Annual-equivalent assessment uses average equipment values.</div>` : ""}${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>
-        <div class="metric"><div class="label">Peak Facility Power</div><div class="value">${reportValue(peak.peak_total_facility_power_kW, " kW", 0)}</div></div>
+        ${peakPueMetricHtml}
+        ${isConfigurationLibraryAccV2DirectMode ? `<div class="metric"><div class="label">Max Hourly PUE</div><div class="value">${reportValue(peakHourlyPue, "", 3)}</div></div>` : ""}
+        <div class="metric"><div class="label">${isConfigurationLibraryAccV2DirectMode ? "Peak Design Facility Electrical Demand" : "Peak Facility Power"}</div><div class="value">${reportValue(isConfigurationLibraryAccV2DirectMode ? peakDesignDemandKw : peak.peak_total_facility_power_kW, " kW", 0)}</div></div>
+        ${isConfigurationLibraryAccV2DirectMode ? `<div class="metric"><div class="label">Max Hourly Facility Electrical Demand</div><div class="value">${reportValue(maxHourlyDemandKw, " kW", 0)}</div></div>` : ""}
         <div class="metric"><div class="label">IT Energy</div><div class="value">${reportValue((annual.annual_IT_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
         <div class="metric"><div class="label">Facility Energy</div><div class="value">${reportValue((annual.annual_facility_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
     </div>
@@ -2646,6 +2656,14 @@ function buildHtmlReport(context) {
         ["Project Stage", esc(projectInfo.stage || "N/A")],
         ["Minimum Hourly PUE", reportValue(annual.min_hourly_PUE, "", 3)],
         ["Maximum Hourly PUE", reportValue(annual.max_hourly_PUE, "", 3)],
+        ...(isConfigurationLibraryAccV2DirectMode ? [
+            ["Peak Design PUE", reportValue(peak.peak_PUE, "", 3)],
+            ["Peak Design Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
+            ["Max Hourly Facility Electrical Demand", reportValue(maxHourlyDemandKw, " kW", 0)],
+            ["Peak Design Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)],
+            ["Peak Design IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
+            ["Peak Design Cooling Load", reportValue(peak.peak_design_cooling_load_kW, " kW", 1)]
+        ] : []),
         ["Peak Facility Hour", esc(peak.peak_hour_index ?? "N/A")]
     ])}</tbody></table>
 </section>
@@ -5131,10 +5149,14 @@ function showProjectVisualization(outObj) {
               `<div style="margin:6px 0;">Annual Calibration: Not applied</div>` +
               `<div style="margin:6px 0 8px 0;">Annual Calibration Factor: 1.0</div>`
             : "";
+        const peakDisclosure = isDirectAccV2
+            ? `<div style="margin:6px 0 8px 0;">Peak PUE Basis: Peak Design PUE at annual maximum dry bulb, 100% design IT load, maximum solar heat gain, and configured other heat gain.</div>`
+            : "";
         principle.innerHTML =
             "<b>计算原理</b><br>" +
             `<div style="margin:6px 0 8px 0;">ACC Engine Used: ${esc(accEngineUsed)}</div>` +
             accDisclosure +
+            peakDisclosure +
             "全年模式调用 <code>compute_pue_project(dc)</code>。每小时读取 <code>project.it_load.hourly_it_load_kW</code> 与 <code>weather.hourly_data.dry_bulb_C</code>，" +
             "由电气效率曲线估算 UPS/变压器损耗，由 <code>chiller_COP_H_vs_load</code> COP 曲面估算冷水机功率，并按小时计算 " +
             "<code>PUE = total_facility_power_kW / IT_load_kW</code>。年度 PUE 使用全年设施能耗除以全年 IT 能耗。";
@@ -5143,11 +5165,14 @@ function showProjectVisualization(outObj) {
     setText("summaryPueLabel", "年度平均 PUE");
     setText("summaryItLabel", "IT 年能耗 (kWh)");
     setText("summaryFacilityLabel", "设施总能耗 (kWh)");
-    setText("summaryPeakLabel", "峰值设施功率 (kW)");
+    const isDirectAccV2Summary = isConfigurationLibraryAccV2DirectResult(outObj);
+    const peakDesignDemandKw = peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW ?? peak.peak_total_facility_power_kW;
+    const maxHourlyDemandKw = peak.max_hourly_facility_electrical_demand_kW ?? peak.max_hourly_total_facility_power_kW;
+    setText("summaryPeakLabel", isDirectAccV2Summary ? "峰值设计设施电气需求 (kW)" : "峰值设施功率 (kW)");
     setText("annualPueValue", fmtNumber(annual.annual_average_PUE, 3));
     setText("annualItEnergy", fmtInteger(annual.annual_IT_energy_kWh));
     setText("annualFacilityEnergy", fmtInteger(annual.annual_facility_energy_kWh));
-    setText("peakFacilityPower", `${fmtInteger(peak.peak_total_facility_power_kW)} kW`);
+    setText("peakFacilityPower", `${fmtInteger(isDirectAccV2Summary ? peakDesignDemandKw : peak.peak_total_facility_power_kW)} kW`);
     renderProjectInfoReportPanel();
     renderSolarGainReportPanel();
     renderWeatherReportPanel();
@@ -5339,14 +5364,20 @@ function showProjectVisualization(outObj) {
 
     const peakDetails = document.getElementById("peakHourDetails");
     if (peakDetails) {
+        const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
         const cards = [
-            ["Peak Facility Hour", peak.peak_hour_index],
-            ["Max PUE Hour", peak.peak_PUE_hour_index],
-            ["Peak PUE", fmtNumber(peak.peak_PUE, 3)],
+            [isDirectAccV2 ? "Peak Design Hour" : "Peak Facility Hour", peak.peak_hour_index],
+            [isDirectAccV2 ? "Max Hourly PUE Hour" : "Max PUE Hour", peak.max_hourly_PUE_hour_index ?? peak.peak_PUE_hour_index],
+            [isDirectAccV2 ? "Peak Design PUE" : "Peak PUE", fmtNumber(peak.peak_PUE, 3)],
+            ...(isDirectAccV2 ? [["Max Hourly PUE", fmtNumber(peak.max_hourly_PUE, 3)]] : []),
+            ...(isDirectAccV2 ? [
+                ["Peak Design Facility Electrical Demand", `${fmtInteger(peakDesignDemandKw)} kW`],
+                ["Max Hourly Facility Electrical Demand", `${fmtInteger(maxHourlyDemandKw)} kW`]
+            ] : []),
             ["Dry Bulb", `${fmtNumber(peak.peak_outdoor_dry_bulb_C, 1)} deg C`],
             ["Wet Bulb", `${fmtNumber(peak.peak_outdoor_wet_bulb_C, 1)} deg C`],
             ["IT Load", `${fmtInteger(peak.peak_IT_load_kW)} kW`],
-            ["Facility Power", `${fmtInteger(peak.peak_total_facility_power_kW)} kW`]
+            ...(isDirectAccV2 ? [] : [["Facility Power", `${fmtInteger(peak.peak_total_facility_power_kW)} kW`]])
         ];
         peakDetails.innerHTML = cards.map(([label, value]) => `
             <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">
@@ -5882,7 +5913,7 @@ json.dumps(out, indent=2)
                 `Annual PUE=${fmtNumber(annual.annual_average_PUE, 3)}\n` +
                 `Annual IT energy=${fmtInteger(annual.annual_IT_energy_kWh)} kWh\n` +
                 `Annual facility energy=${fmtInteger(annual.annual_facility_energy_kWh)} kWh\n` +
-                `Peak hour=${peak.peak_hour_index}, facility power=${fmtInteger(peak.peak_total_facility_power_kW)} kW`
+                `Peak design hour=${peak.peak_design_hour_index ?? peak.peak_hour_index}, facility electrical demand=${fmtInteger(peak.peak_design_facility_electrical_demand_kW ?? peak.peak_total_facility_power_kW)} kW`
             );
         } else {
             clearRuntimeErrorDetails();

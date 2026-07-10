@@ -66,6 +66,7 @@ def _heat_gain_inputs(input_obj):
         "solar_daytime_start_hour": _clamp(float(daytime_start), 0.0, 24.0),
         "solar_daytime_end_hour": _clamp(float(daytime_end), 0.0, 24.0),
         "other_auxiliary_heat_gain_kW": max(0.0, float(other_aux_kw or 0.0)),
+        "_force_solar_heat_gain_max": bool(input_obj.get("_force_solar_heat_gain_max")),
     }
 
 def _hour_of_day(hour_index, fallback_index):
@@ -83,6 +84,8 @@ def _solar_heat_gain_kw(ambient_c, annual_min_ambient_c, annual_max_ambient_c, h
     max_kw = heat_gain_config["solar_heat_gain_max_kW"]
     if max_kw <= 0:
         return 0.0
+    if heat_gain_config.get("_force_solar_heat_gain_max"):
+        return max_kw
     if not _is_daytime_hour(hour_of_day, heat_gain_config["solar_daytime_start_hour"], heat_gain_config["solar_daytime_end_hour"]):
         return 0.0
     if ambient_c is None or annual_min_ambient_c is None or annual_max_ambient_c is None:
@@ -2102,7 +2105,7 @@ def compute_pue_project(input_obj):
     dry_values = [value for value in dry_values if value is not None]
     annual_min_ambient_c = min(dry_values) if dry_values else None
     annual_max_ambient_c = max(dry_values) if dry_values else None
-    acc_v2_engine = None
+    acc_v2_engine = input_obj.get("_acc_v2_engine_override")
     acc_v2_engine_error = None
     acc_v2_direct_mode_enabled = False
     acc_v2_configuration_path = _get(input_obj, ["acc_v2", "configuration_path"])
@@ -2110,7 +2113,7 @@ def compute_pue_project(input_obj):
         from acc_v2_engine import create_acc_v2_engine, is_acc_v2_enabled
 
         acc_v2_direct_mode_enabled = is_acc_v2_enabled(input_obj)
-        if acc_v2_direct_mode_enabled and acc_v2_configuration_path is not None:
+        if acc_v2_engine is None and acc_v2_direct_mode_enabled and acc_v2_configuration_path is not None:
             acc_v2_engine = create_acc_v2_engine(acc_v2_configuration_path)
     except Exception as exc:
         acc_v2_engine_error = str(exc)
@@ -3174,8 +3177,112 @@ def compute_pue_project(input_obj):
         "peak_outdoor_wet_bulb_C": peak_facility.get("wet_bulb_C"),
         "peak_IT_load_kW": peak_facility.get("IT_load_kW"),
         "peak_total_facility_power_kW": peak_facility.get("total_facility_power_kW"),
-        "peak_facility_hour_PUE": peak_facility.get("hourly_PUE")
+        "peak_facility_hour_PUE": peak_facility.get("hourly_PUE"),
+        "max_hourly_PUE": peak_pue.get("hourly_PUE"),
+        "max_hourly_PUE_hour_index": peak_pue.get("hour_index"),
+        "max_hourly_PUE_outdoor_dry_bulb_C": peak_pue.get("dry_bulb_C"),
+        "max_hourly_PUE_IT_load_kW": peak_pue.get("IT_load_kW"),
+        "max_hourly_total_facility_power_kW": peak_pue.get("total_facility_power_kW"),
+        "max_hourly_facility_electrical_demand_kW": peak_pue.get("total_facility_power_kW")
     }
+    design_it_load_source = _num(it_load.get("design_it_load_kW"), None)
+    if design_it_load_source is None or design_it_load_source <= 0:
+        design_it_load_source = _num(project.get("design_it_load_kW"), None)
+    should_calculate_peak_design = (
+        configuration_library_direct_mode
+        and acc_v2_direct_mode_enabled
+        and not input_obj.get("_skip_peak_design_pue")
+    )
+    if should_calculate_peak_design:
+        if design_it_load_source is None or design_it_load_source <= 0:
+            validation.setdefault("warnings", []).append(
+                "Peak Design PUE was not calculated because design_it_load_kW is missing; peak_PUE retains max hourly PUE."
+            )
+        elif annual_max_ambient_c is None:
+            validation.setdefault("warnings", []).append(
+                "Peak Design PUE was not calculated because annual maximum dry-bulb temperature is unavailable; peak_PUE retains max hourly PUE."
+            )
+        else:
+            max_dry_pos = max(
+                range(len(dry_bulb)),
+                key=lambda j: _num(dry_bulb[j], -1.0e30),
+            )
+            peak_design_hour_index = hour_index[max_dry_pos] if max_dry_pos < len(hour_index) else max_dry_pos
+            peak_design_input = deepcopy(input_obj)
+            peak_design_project = peak_design_input.setdefault("project", {})
+            peak_design_it_load = peak_design_project.setdefault("it_load", {})
+            peak_design_it_load["design_it_load_kW"] = float(design_it_load_source)
+            peak_design_it_load["hourly_it_load_kW"] = [float(design_it_load_source)]
+            peak_design_it_load["hourly_it_load_percent"] = [100.0]
+            peak_design_project["design_it_load_kW"] = float(design_it_load_source)
+            peak_design_weather = peak_design_input.setdefault("weather", {}).setdefault("hourly_data", {})
+            peak_design_weather["hour_index"] = [peak_design_hour_index]
+            peak_design_weather["dry_bulb_C"] = [float(annual_max_ambient_c)]
+            peak_design_weather["wet_bulb_C"] = [
+                _num(wet_bulb[max_dry_pos], None)
+            ] if max_dry_pos < len(wet_bulb) else []
+            peak_design_weather["relative_humidity_percent"] = [
+                _num(rel_humidity[max_dry_pos], None)
+            ] if max_dry_pos < len(rel_humidity) else []
+            peak_design_input["_skip_peak_design_pue"] = True
+            peak_design_input["_force_solar_heat_gain_max"] = True
+            if acc_v2_engine is not None:
+                peak_design_input["_acc_v2_engine_override"] = acc_v2_engine
+            try:
+                peak_design_result = compute_pue_project(peak_design_input)
+                peak_design_hour = (
+                    peak_design_result.get("hourly_results", [None])[0]
+                    if isinstance(peak_design_result.get("hourly_results"), list)
+                    and peak_design_result.get("hourly_results")
+                    else None
+                )
+                if not isinstance(peak_design_hour, dict):
+                    raise ValueError(peak_design_result.get("error") or "Peak design evaluation produced no hourly row.")
+                peak_design_total_facility = peak_design_hour.get("total_facility_power_kW")
+                peak_design_pue = (
+                    peak_design_total_facility / float(design_it_load_source)
+                    if peak_design_total_facility is not None and design_it_load_source > 0
+                    else peak_design_hour.get("hourly_PUE")
+                )
+                result["peak_results"].update({
+                    "peak_PUE": peak_design_pue,
+                    "peak_PUE_definition": "peak_design",
+                    "peak_PUE_hour_index": peak_design_hour_index,
+                    "peak_PUE_outdoor_dry_bulb_C": annual_max_ambient_c,
+                    "peak_PUE_IT_load_kW": float(design_it_load_source),
+                    "peak_design_total_facility_power_kW": peak_design_total_facility,
+                    "peak_design_facility_electrical_demand_kW": peak_design_total_facility,
+                    "peak_design_it_load_kW": float(design_it_load_source),
+                    "peak_design_cooling_load_kW": peak_design_hour.get("cooling_load_kW"),
+                    "peak_design_outdoor_dry_bulb_C": annual_max_ambient_c,
+                    "peak_design_hour_index": peak_design_hour_index,
+                    "peak_design_ACC_power_kW": peak_design_hour.get("acc_power_kW"),
+                    "peak_design_CHW_pump_power_kW": peak_design_hour.get("pump_power_kW"),
+                    "peak_design_CDU_power_kW": peak_design_hour.get("cdu_power_kW"),
+                    "peak_design_RTC_power_kW": peak_design_hour.get("rtc_power_kW"),
+                    "peak_design_MAU_power_kW": peak_design_hour.get("mau_power_kW"),
+                    "peak_design_engine_radiator_power_kW": peak_design_hour.get("engine_radiator_power_kW"),
+                    "peak_design_other_electrical_auxiliary_power_kW": peak_design_hour.get("auxiliary_power_kW"),
+                    "peak_design_electrical_loss_kW": peak_design_hour.get("electrical_loss_kW"),
+                    "peak_design_ACC_required_capacity_per_unit_kW": peak_design_hour.get("acc_required_capacity_per_unit_kW"),
+                    "peak_design_CHW_pump_load_ratio": peak_design_hour.get("pump_load_ratio"),
+                    "peak_design_CHW_pump_reference_capacity_kW": peak_design_hour.get("chw_pump_reference_capacity_kW"),
+                    "peak_design_indoor_active_units": peak_design_hour.get("indoor_active_units"),
+                    "peak_design_project_load_ratio": peak_design_hour.get("project_load_ratio"),
+                    "peak_design_mep_terminal_load_kW": peak_design_hour.get("mep_terminal_load_kW"),
+                    "peak_design_it_electrical_loss_kW": peak_design_hour.get("it_electrical_loss_kW"),
+                    "peak_design_mep_electrical_loss_kW": peak_design_hour.get("mep_electrical_loss_kW"),
+                    "peak_design_terminal_fan_power_kW": peak_design_hour.get("terminal_fan_power_kW"),
+                    "peak_total_facility_power_kW": peak_design_total_facility,
+                    "peak_hour_index": peak_design_hour_index,
+                    "peak_outdoor_dry_bulb_C": annual_max_ambient_c,
+                    "peak_outdoor_wet_bulb_C": peak_design_hour.get("wet_bulb_C"),
+                    "peak_IT_load_kW": float(design_it_load_source),
+                })
+            except Exception as exc:
+                validation.setdefault("warnings", []).append(
+                    f"Peak Design PUE evaluation failed; peak_PUE retains max hourly PUE. Reason: {exc}"
+                )
     validation["checks"]["PUE_greater_than_1_check"] = annual_pue is None or annual_pue > 1.0
     if isinstance(weather.get("design_peak_hour_method"), str) and weather.get("design_peak_hour_method").lower() == "highest_dry_bulb_hour":
         max_dry = max(range(len(dry_bulb)), key=lambda j: _num(dry_bulb[j], -1.0)) if len(dry_bulb) > 0 else None
