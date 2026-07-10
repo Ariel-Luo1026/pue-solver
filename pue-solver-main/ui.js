@@ -2614,8 +2614,8 @@ function buildHtmlReport(context) {
 <section>
     <h2>1. Executive Summary</h2>
     ${isBenchmarkMode ? `<p>This assessment evaluates the annual operating performance of the JUNO data center using an hourly weather-driven simulation with the project-specific ACC cooling architecture.</p>` : ""}
-    ${isAccV2DirectMode ? `<div class="note"><b>ACC V2 direct mode:</b> Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` : ""}
-    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>ACC Calculation Mode:</b> True EPW × Solver_Curve<br><b>Annual Calibration:</b> Not applied<br><b>Annual Calibration Factor:</b> 1.0</div>` : ""}
+    ${isAccV2DirectMode ? `<div class="note"><b>ACC V2 Direct Mode</b><br>Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` : ""}
+    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Simulation Method</b><br>True EPW × Solver_Curve<br><b>Simulation Basis</b><br>8760-hour Annual Dynamic Simulation</div>` : ""}
     ${hasExperimentalPeakWarning ? `<div class="note" style="background:#F5F5F5;border-left-color:#7A7A7A;color:#222222;"><b>Warning:</b> Direct hourly ACC power exceeds scenario peak ACC power by more than 10%. Peak Hourly PUE should be reviewed against design intent.</div>` : ""}
     ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
     <div class="meta">
@@ -2644,9 +2644,9 @@ function buildHtmlReport(context) {
                 ["ACC Curve Source", esc(annual.acc_curve_source || benchmark.acc_curve_source || "N/A")],
                 ["External Annual Adjustment Applied", annual.acc_annual_calibration_applied === false ? "No" : "N/A"]
             ] : (isConfigurationLibraryAccV2DirectMode ? [
-                ["ACC Calculation Mode", "True EPW × Solver_Curve"],
-                ["Annual Calibration", "Not applied"],
-                ["Annual Calibration Factor", "1.0"],
+                ["ACC V2 Direct Mode", "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup."],
+                ["Simulation Method", "True EPW × Solver_Curve"],
+                ["Simulation Basis", "8760-hour Annual Dynamic Simulation"],
                 ["ACC Curve Source", esc(annual.acc_curve_source || "N/A")]
             ] : [["ACC Annual Weather Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)]])),
             ["IT Efficiency", percentText(benchmark.it_efficiency, 4)],
@@ -2708,7 +2708,7 @@ function buildHtmlReport(context) {
 <section>
     <h2>4. Methodology</h2>
     ${isBenchmarkMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isAccV2DirectMode ? "The assessment uses Configuration Library-driven ACC simulation using True EPW × Solver_Curve calculation. EPW dry-bulb temperature and hourly load ratio determine hourly ACC power. Annual Calibration is Not applied." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
+        <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isAccV2DirectMode ? "The assessment uses Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup. The simulation method is True EPW × Solver_Curve and the simulation basis is an 8760-hour Annual Dynamic Simulation." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
         <div class="card">
             <h3>ACC Unit Architecture</h3>
             <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isAccV2DirectMode ? "ACC operation follows direct Configuration Library Solver_Curve lookup for every hour. Indoor IT-side equipment uses normal indoor unit count and IT-load-based operation." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
@@ -2727,7 +2727,7 @@ function buildHtmlReport(context) {
             ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
         ])}</tbody></table>
     ` : `
-    <p>${isConfigurationLibraryAccV2DirectMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines Total Cooling Load, EPW dry-bulb temperature, Configuration Library Solver_Curve ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses. Annual Calibration is Not applied." : (isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured.")}</p>
+    <p>${isConfigurationLibraryAccV2DirectMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines Total Cooling Load, EPW dry-bulb temperature, Configuration Library Solver_Curve ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses in an 8760-hour Annual Dynamic Simulation." : (isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured.")}</p>
     <div class="note">Solar Heat Gain and Other Auxiliary Heat Gains are included in Total Cooling Load for Configuration Library ACC V2 direct runs.</div>
     ${coolingUnitInfo ? `
         <div class="card">
@@ -2793,9 +2793,8 @@ function buildHtmlReport(context) {
         <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and required cooling capacity per ACC unit." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
         <table><tbody>${tableRows([
             ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
-            ["ACC Calculation Mode", isAccV2DirectMode ? "True EPW × Solver_Curve" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
-            ["Annual Calibration", isAccV2DirectMode ? "Not applied" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
-            ["Annual Calibration Factor", isAccV2DirectMode ? "1.0" : "N/A"],
+            ["Simulation Method", isAccV2DirectMode ? "True EPW × Solver_Curve" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
+            ["Simulation Basis", isAccV2DirectMode ? "8760-hour Annual Dynamic Simulation" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
             ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
             ["Weather Representation", isAnnualBenchmarkMode ? "Annualized weather factor" : "Hourly weather data"]
         ])}</tbody></table>
@@ -2929,10 +2928,10 @@ function buildHtmlReport(context) {
             : (isExperimentalHourlyMode
             ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on direct hourly ACC Solver_Curve lookup using EPW dry-bulb temperature and hourly load ratio. ACC annual energy is calculated as the sum of hourly ACC power with no external annual adjustment.`
             : (isConfigurationLibraryAccV2DirectMode
-            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
+            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation with an 8760-hour Annual Dynamic Simulation basis.`
             : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. CHW pump, CDU / RTC / MAU equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical distribution losses are calculated from the project IT and MEP efficiency assumptions.`)))
         : (isConfigurationLibraryAccV2DirectMode
-        ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation. Annual Calibration is Not applied and the Annual Calibration Factor is 1.0.`
+        ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation with an 8760-hour Annual Dynamic Simulation basis.`
         : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`)}</p>
     <h3>Cooling Load Components</h3>
     <table><tbody>${tableRows([
@@ -4792,9 +4791,9 @@ function renderConfigurationLibrarySummary(data) {
         ["Active units for selected scenario", activeUnits ?? "Enter Total IT Capacity"],
         ["Redundancy", unitQuantity?.redundancy || "Auto"],
         ...(directAccV2Disclosure ? [
-            ["ACC Calculation Mode", "True EPW × Solver_Curve"],
-            ["Annual Calibration", "Not applied"],
-            ["Annual Calibration Factor", "1.0"]
+            ["ACC V2 Direct Mode", "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup."],
+            ["Simulation Method", "True EPW × Solver_Curve"],
+            ["Simulation Basis", "8760-hour Annual Dynamic Simulation"]
         ] : []),
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
         ["Electrical IT / MEP efficiency", electricalPath
@@ -5145,9 +5144,9 @@ function showProjectVisualization(outObj) {
         const accEngineUsed = getAccEngineUsedLabel(outObj);
         const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
         const accDisclosure = isDirectAccV2
-            ? `<div style="margin:6px 0;">ACC Calculation Mode: True EPW × Solver_Curve</div>` +
-              `<div style="margin:6px 0;">Annual Calibration: Not applied</div>` +
-              `<div style="margin:6px 0 8px 0;">Annual Calibration Factor: 1.0</div>`
+            ? `<div style="margin:6px 0;">ACC V2 Direct Mode: Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` +
+              `<div style="margin:6px 0;">Simulation Method: True EPW × Solver_Curve</div>` +
+              `<div style="margin:6px 0 8px 0;">Simulation Basis: 8760-hour Annual Dynamic Simulation</div>`
             : "";
         const peakDisclosure = isDirectAccV2
             ? `<div style="margin:6px 0 8px 0;">Peak PUE Basis: Peak Design PUE at annual maximum dry bulb, 100% design IT load, maximum solar heat gain, and configured other heat gain.</div>`

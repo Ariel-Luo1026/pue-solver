@@ -138,8 +138,14 @@ class ConfigurationDirectModeAuditTest(unittest.TestCase):
         )
         for phrase in forbidden_visible_phrases:
             self.assertNotIn(phrase, visible_text)
-        self.assertIn("Annual Calibration", visible_source)
-        self.assertIn("Not applied", visible_source)
+        self.assertIn("ACC V2 Direct Mode", visible_source)
+        self.assertIn("Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.", visible_source)
+        self.assertIn("Simulation Method", visible_source)
+        self.assertIn("True EPW × Solver_Curve", visible_source)
+        self.assertIn("Simulation Basis", visible_source)
+        self.assertIn("8760-hour Annual Dynamic Simulation", visible_source)
+        self.assertNotIn("Annual Calibration", visible_source)
+        self.assertNotIn("Annual Calibration Factor", visible_source)
         self.assertNotIn("Annual Calibrated", visible_source)
 
     def test_audit_serialized_output_has_no_forbidden_terms(self):

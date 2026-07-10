@@ -391,14 +391,16 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         report_block = self._function_source("buildHtmlReport")
         for text in (
             "isConfigurationLibraryAccV2DirectMode",
-            "ACC Calculation Mode",
+            "ACC V2 Direct Mode",
+            "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.",
+            "Simulation Method",
             "True EPW × Solver_Curve",
-            "Annual Calibration",
-            "Not applied",
-            "Annual Calibration Factor",
-            "1.0",
+            "Simulation Basis",
+            "8760-hour Annual Dynamic Simulation",
         ):
             self.assertIn(text, report_block)
+        self.assertNotIn("Annual Calibration", report_block)
+        self.assertNotIn("Annual Calibration Factor", report_block)
         self.assertNotIn("Annual Calibrated", report_block)
 
     def test_acc_cooling_load_report_polish_labels(self):
@@ -433,10 +435,14 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         principle_block = self._function_source("showProjectVisualization")
         for block in (summary_block, principle_block):
             self.assertIn("isConfigurationLibraryAccV2DirectResult", block)
-            self.assertIn("ACC Calculation Mode", block)
+            self.assertIn("ACC V2 Direct Mode", block)
+            self.assertIn("Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.", block)
+            self.assertIn("Simulation Method", block)
             self.assertIn("True EPW × Solver_Curve", block)
-            self.assertIn("Annual Calibration", block)
-            self.assertIn("Not applied", block)
+            self.assertIn("Simulation Basis", block)
+            self.assertIn("8760-hour Annual Dynamic Simulation", block)
+            self.assertNotIn("Annual Calibration", block)
+            self.assertNotIn("Annual Calibration Factor", block)
             self.assertNotIn("Annual Calibrated", block)
 
     def test_configuration_library_acc_v2_report_labels_peak_design_separately(self):
