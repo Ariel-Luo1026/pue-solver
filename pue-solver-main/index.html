@@ -603,8 +603,8 @@
                 <div id="statusFans" class="hint">未加载</div>
             </div>
             <div class="fileSlot">
-                <div class="panelTitle">9. Solar Heat Gain</div>
-                <div class="hint">Solar heat gain is included in Total Cooling Load.</div>
+                <div class="panelTitle">9. Heat Gains / Auxiliary</div>
+                <div class="hint">Solar heat gain and other auxiliary heat gains are included in Total Cooling Load.</div>
                 <div class="compactFields">
                     <label class="muted">
                         Solar Heat Gain Max (kW)
@@ -622,8 +622,12 @@
                         Other Auxiliary Heat Gains (kW)
                         <input id="otherAuxiliaryHeatGainKw" type="number" min="0" step="0.1" value="0" />
                     </label>
+                    <label class="muted" title="Direct electrical loads not represented by dedicated equipment models. Examples include PLC, control cabinets, instrumentation, network equipment, and miscellaneous electrical loads. This value contributes directly to Facility Energy and PUE.">
+                        Other Electrical Auxiliary Power (kW)
+                        <input id="otherElectricalAuxiliaryPowerKw" type="number" min="0" step="0.1" value="0" />
+                    </label>
                 </div>
-                <div id="statusSolarGain" class="hint">Solar Heat Gain 0.0 kW；Other Auxiliary Heat Gains 0.0 kW</div>
+                <div id="statusSolarGain" class="hint">Solar Heat Gain 0.0 kW；Other Auxiliary Heat Gains 0.0 kW；Other Electrical Auxiliary Power 0.0 kW</div>
             </div>
         </div>
         <div class="toolbar" style="margin-top:12px;">

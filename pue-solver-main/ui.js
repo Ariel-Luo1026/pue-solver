@@ -1004,7 +1004,8 @@ function getCoolingLoadHeatGainInput() {
         solarHeatGainMaxKw: optionalNonNegativeNumber("solarHeatGainMaxKw") ?? 0,
         solarDaytimeStartHour: optionalNonNegativeNumber("solarDaytimeStartHour") ?? 6,
         solarDaytimeEndHour: optionalNonNegativeNumber("solarDaytimeEndHour") ?? 18,
-        otherAuxiliaryHeatGainKw: optionalNonNegativeNumber("otherAuxiliaryHeatGainKw") ?? 0
+        otherAuxiliaryHeatGainKw: optionalNonNegativeNumber("otherAuxiliaryHeatGainKw") ?? 0,
+        otherElectricalAuxiliaryPowerKw: optionalNonNegativeNumber("otherElectricalAuxiliaryPowerKw") ?? 0
     };
 }
 
@@ -1012,7 +1013,7 @@ function updateSolarGainStatus() {
     const status = document.getElementById("statusSolarGain");
     if (!status) return;
     const heat = getCoolingLoadHeatGainInput();
-    status.textContent = `Solar Heat Gain ${fmtNumber(heat.solarHeatGainMaxKw, 1)} kW；Other Auxiliary Heat Gains ${fmtNumber(heat.otherAuxiliaryHeatGainKw, 1)} kW`;
+    status.textContent = `Solar Heat Gain ${fmtNumber(heat.solarHeatGainMaxKw, 1)} kW；Other Auxiliary Heat Gains ${fmtNumber(heat.otherAuxiliaryHeatGainKw, 1)} kW；Other Electrical Auxiliary Power ${fmtNumber(heat.otherElectricalAuxiliaryPowerKw, 1)} kW`;
     status.style.color = "#059669";
 }
 
@@ -1030,7 +1031,7 @@ function renderSolarGainReportPanel() {
     const panel = document.getElementById("solarGainReportPanel");
     if (!panel) return;
     const heat = getCoolingLoadHeatGainInput();
-    if (!heat.solarHeatGainMaxKw && !heat.otherAuxiliaryHeatGainKw) {
+    if (!heat.solarHeatGainMaxKw && !heat.otherAuxiliaryHeatGainKw && !heat.otherElectricalAuxiliaryPowerKw) {
         panel.style.display = "none";
         panel.innerHTML = "";
         return;
@@ -1039,11 +1040,12 @@ function renderSolarGainReportPanel() {
     values.push(`Solar Heat Gain Max：<b>${fmtNumber(heat.solarHeatGainMaxKw, 1)} kW</b>`);
     values.push(`Daytime：<b>${fmtNumber(heat.solarDaytimeStartHour, 0)}:00-${fmtNumber(heat.solarDaytimeEndHour, 0)}:00</b>`);
     values.push(`Other Auxiliary Heat Gains：<b>${fmtNumber(heat.otherAuxiliaryHeatGainKw, 1)} kW</b>`);
+    values.push(`Other Electrical Auxiliary Power：<b>${fmtNumber(heat.otherElectricalAuxiliaryPowerKw, 1)} kW</b>`);
     panel.style.display = "block";
     panel.innerHTML =
-        "<b>Total Cooling Load Components</b><br>" +
+        "<b>Heat Gains / Auxiliary</b><br>" +
         values.join("；") +
-        "。Solar heat gain is included in Total Cooling Load.";
+        "。Solar and other auxiliary heat gains are included in Total Cooling Load; other electrical auxiliary power contributes directly to Facility Energy and PUE.";
 }
 
 function summarizeNumericArray(values) {
@@ -1493,6 +1495,7 @@ function collectProjectMemoryPayload() {
             solar_daytime_start_hour: document.getElementById("solarDaytimeStartHour")?.value || "6",
             solar_daytime_end_hour: document.getElementById("solarDaytimeEndHour")?.value || "18",
             other_auxiliary_heat_gain_kw: document.getElementById("otherAuxiliaryHeatGainKw")?.value || "0",
+            other_electrical_auxiliary_power_kw: document.getElementById("otherElectricalAuxiliaryPowerKw")?.value || "0",
             aux_fixed_coeff: document.getElementById("auxFixedCoeff")?.value || "0.005",
             dry_cooler_approach_c: document.getElementById("dryCoolerApproachC")?.value || "5"
         },
@@ -1545,6 +1548,7 @@ function restoreProjectMemory(key = "") {
         if (document.getElementById("solarDaytimeStartHour")) document.getElementById("solarDaytimeStartHour").value = report.solar_daytime_start_hour || "6";
         if (document.getElementById("solarDaytimeEndHour")) document.getElementById("solarDaytimeEndHour").value = report.solar_daytime_end_hour || "18";
         if (document.getElementById("otherAuxiliaryHeatGainKw")) document.getElementById("otherAuxiliaryHeatGainKw").value = report.other_auxiliary_heat_gain_kw || "0";
+        if (document.getElementById("otherElectricalAuxiliaryPowerKw")) document.getElementById("otherElectricalAuxiliaryPowerKw").value = report.other_electrical_auxiliary_power_kw || "0";
         if (document.getElementById("auxFixedCoeff")) document.getElementById("auxFixedCoeff").value = report.aux_fixed_coeff || "0.005";
         if (document.getElementById("dryCoolerApproachC")) document.getElementById("dryCoolerApproachC").value = report.dry_cooler_approach_c || "5";
 
@@ -1646,7 +1650,7 @@ function buildPueContributionSummary(annual = {}) {
     const drivers = [
         { key: "cooling", label: "Cooling System", ppue: ppue(annual.annual_total_cooling_system_energy_kWh) },
         { key: "electrical", label: "Electrical Distribution Loss", ppue: ppue(annual.annual_electrical_loss_kWh) },
-        { key: "auxiliary", label: "Auxiliary", ppue: ppue(annual.annual_auxiliary_energy_kWh) }
+        { key: "auxiliary", label: "Other Electrical Auxiliary Power", ppue: ppue(annual.annual_auxiliary_energy_kWh) }
     ];
     const rankedDrivers = drivers
         .filter(driver => Number.isFinite(Number(driver.ppue)))
@@ -1689,7 +1693,7 @@ function renderPueContributionSummaryPanel(annual) {
     const rows = [
         ["Cooling System pPUE", signedPpueText(summary.coolingPPUE)],
         ["Electrical Distribution Loss pPUE", signedPpueText(summary.electricalPPUE)],
-        ["Auxiliary pPUE", signedPpueText(summary.auxiliaryPPUE)],
+        ["Other Electrical Auxiliary pPUE", signedPpueText(summary.auxiliaryPPUE)],
         ["Largest PUE Driver", summary.largestDriver ? summary.largestDriver.label : "N/A"],
         ["Cooling Share of Non-IT Overhead", percentText(summary.coolingShare)]
     ];
@@ -2422,7 +2426,7 @@ function buildHtmlReport(context) {
         ["Engine Radiator Energy", annual.annual_engine_radiator_energy_kWh],
         ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh],
         ...(Number(annual.annual_terminal_fan_energy_kWh) > 0 ? [["MAU Energy", annual.annual_terminal_fan_energy_kWh]] : []),
-        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]] : [])
+        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [["Other Electrical Auxiliary Energy", annual.annual_auxiliary_energy_kWh]] : [])
     ] : [
         ["IT Energy", annual.annual_IT_energy_kWh],
         [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
@@ -2431,7 +2435,7 @@ function buildHtmlReport(context) {
         ["MAU Energy", annual.annual_terminal_fan_energy_kWh],
         ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh],
         ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh],
-        ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
+        ["Other Electrical Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
     ]).filter(([, value]) => Number(value) > 0);
     const energyChart = svgBarChart(energyRows.map(([label, value]) => {
         const shortLabel = label.replace(" Energy", "").replace("Electrical ", "Elec ");
@@ -2455,7 +2459,7 @@ function buildHtmlReport(context) {
         { label: "Indoor Equipment pPUE", value: pueContribution(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh), css: "", signed: true },
         { label: "Engine Radiator pPUE", value: pueContribution(annual.annual_engine_radiator_energy_kWh), css: "", signed: true },
         { label: "Electrical Distribution Loss pPUE", value: pueContribution(annual.annual_electrical_loss_kWh), css: "", signed: true },
-        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [{ label: "Auxiliary pPUE", value: pueContribution(annual.annual_auxiliary_energy_kWh), css: "", signed: true }] : []),
+        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [{ label: "Other Electrical Auxiliary pPUE", value: pueContribution(annual.annual_auxiliary_energy_kWh), css: "", signed: true }] : []),
         { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
     ] : [
         { label: "IT Base", value: 1, css: "base", signed: false },
@@ -2465,7 +2469,7 @@ function buildHtmlReport(context) {
         { label: "├─ Pump", value: pueContribution(annual.annual_pump_energy_kWh), css: "child", signed: true },
         { label: "MAU", value: pueContribution(annual.annual_terminal_fan_energy_kWh), css: "child", signed: true },
         { label: "Electrical Distribution Loss pPUE", value: contributionSummary.electricalPPUE, css: "", signed: true },
-        { label: "Auxiliary pPUE", value: contributionSummary.auxiliaryPPUE, css: "", signed: true },
+        { label: "Other Electrical Auxiliary pPUE", value: contributionSummary.auxiliaryPPUE, css: "", signed: true },
         { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
     ];
     const benchmarkComponentRows = isBenchmarkMode ? [
@@ -2842,7 +2846,7 @@ function buildHtmlReport(context) {
         ["Annual MAU Energy", reportValue(annual.annual_mau_energy_kWh, " kWh", 0)],
         ["Annual White Space Equipment Energy", reportValue(annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
         ["Annual Electrical Distribution Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
-        ["Annual Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
+        ["Annual Other Electrical Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
     ])}</tbody></table>
     `}
     <div class="grid">
@@ -2866,7 +2870,7 @@ function buildHtmlReport(context) {
             ` : `
                 <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
                 <p>Electrical losses contribute <b>${esc(percentText(contributionSummary.electricalShare))}</b> of the non-IT PUE overhead.</p>
-                <p>Auxiliary loads contribute <b>${esc(percentText(contributionSummary.auxiliaryShare))}</b> of the non-IT PUE overhead.</p>
+                <p>Other electrical auxiliary loads contribute <b>${esc(percentText(contributionSummary.auxiliaryShare))}</b> of the non-IT PUE overhead.</p>
             `}
             <table><tbody>${tableRows([
                 ["Non-IT PUE Overhead", contributionSummary.nonItPue > 0 ? reportValue(contributionSummary.nonItPue, "", 3) : "N/A"],
@@ -2888,7 +2892,7 @@ function buildHtmlReport(context) {
                 ["Cooling System pPUE", "<code>annual_total_cooling_system_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Cooling System Includes", "ACC + CHW Pump + Indoor Equipment + Engine Radiator"],
                 ["Electrical Distribution Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
-                ["Auxiliary pPUE", "<code>annual_auxiliary_energy_kWh / annual_IT_energy_kWh</code>"],
+                ["Other Electrical Auxiliary pPUE", "<code>annual_auxiliary_energy_kWh / annual_IT_energy_kWh</code>"],
                 ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
             ])}</tbody></table>
             <div class="note">This section summarizes annual result components without overwriting <code>annual_average_PUE</code>.</div>
@@ -4548,6 +4552,9 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
                 solar_daytime_end_hour: heatGains.solarDaytimeEndHour,
                 other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw
             },
+            auxiliary_loads: {
+                other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw
+            },
             it_load: {
                 design_it_load_kW: designItLoadKw,
                 hourly_it_load_percent: percentages,
@@ -4572,6 +4579,7 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             solar_daytime_end_hour: heatGains.solarDaytimeEndHour,
             other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw
         },
+        other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
         selected_curves: selectedCurves
     };
 }
@@ -4582,6 +4590,9 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
     const hourlyIt = project.it_load.hourly_it_load_kW;
     const hours = hourlyIt.length;
     const activeUnits = Number(project.active_units);
+    project.auxiliary_loads = project.auxiliary_loads && typeof project.auxiliary_loads === "object" ? project.auxiliary_loads : {};
+    project.auxiliary_loads.other_electrical_auxiliary_power_kW =
+        project.auxiliary_loads.other_electrical_auxiliary_power_kW ?? libraryInput.other_electrical_auxiliary_power_kW ?? 0;
     project.it_load.cooling_unit_capacity_kW = project.cooling_unit_capacity_kW;
     project.it_load.cooling_unit_count = activeUnits;
     project.cooling_unit_count = activeUnits;
@@ -5040,7 +5051,7 @@ function initStandardDataInputs() {
         standardSolverInput = null;
         refreshStandardInputStatus();
     });
-    ["solarHeatGainMaxKw", "solarDaytimeStartHour", "solarDaytimeEndHour", "otherAuxiliaryHeatGainKw"].forEach((id) => {
+    ["solarHeatGainMaxKw", "solarDaytimeStartHour", "solarDaytimeEndHour", "otherAuxiliaryHeatGainKw", "otherElectricalAuxiliaryPowerKw"].forEach((id) => {
         const input = document.getElementById(id);
         if (!input) return;
         input.addEventListener("input", () => {
@@ -5201,7 +5212,7 @@ function showProjectVisualization(outObj) {
         ["MAU Energy", annual.annual_terminal_fan_energy_kWh, "#0f766e"],
         ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh, "#ec4899"],
         ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh, "#f59e0b"],
-        ["Auxiliary Energy", annual.annual_auxiliary_energy_kWh, "#7c3aed"]
+        ["Other Electrical Auxiliary Energy", annual.annual_auxiliary_energy_kWh, "#7c3aed"]
     ].filter(([, value]) => Number(value) > 0);
 
     createChart("energyBreakdownChart", {

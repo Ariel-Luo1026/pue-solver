@@ -89,14 +89,14 @@ class ConfigurationDirectModeAuditTest(unittest.TestCase):
         self.assertFalse(audit.passed)
         self.assertFalse(audit.energy_consistency["annual_mau_energy_kWh"]["passed"])
 
-    def test_audit_checks_compatibility_aliases(self):
+    def test_audit_rejects_terminal_fan_mau_double_count(self):
         result = deepcopy(self.result)
         result["hourly_results"][0]["terminal_fan_power_kW"] = result["hourly_results"][0]["mau_power_kW"] + 1.0
 
         audit = audit_direct_mode_result(result)
 
         self.assertFalse(audit.passed)
-        self.assertTrue(any("terminal_fan_power_kW does not mirror" in error for error in audit.errors))
+        self.assertTrue(any("terminal_fan_power_kW duplicates mau_power_kW" in error for error in audit.errors))
 
     def test_missing_or_invalid_equipment_controlled_failures(self):
         cases = {

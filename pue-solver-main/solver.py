@@ -1899,6 +1899,12 @@ def compute_pue_project(input_obj):
     if aux_coeff is None:
         aux_coeff = 0.005
     aux_coeff = _clamp(float(aux_coeff), 0.0, 1.0)
+    other_electrical_auxiliary_power_kw = _num(aux_cfg.get("other_electrical_auxiliary_power_kW"), None)
+    if other_electrical_auxiliary_power_kw is None:
+        other_electrical_auxiliary_power_kw = _num(aux_cfg.get("other_electrical_auxiliary_power_kw"), None)
+    if other_electrical_auxiliary_power_kw is None:
+        other_electrical_auxiliary_power_kw = 0.0
+    other_electrical_auxiliary_power_kw = max(0.0, float(other_electrical_auxiliary_power_kw))
 
     # Optional terminal-to-upstream electrical path efficiencies. When absent,
     # retain the legacy UPS/transformer curve loss calculation unchanged.
@@ -2317,6 +2323,7 @@ def compute_pue_project(input_obj):
         fan_curve_value = None
         fan_curve_load_value = load_ratio
         fan_power_source = "configuration_library_solver_curve" if configuration_library_direct_mode else ("disabled" if not fans_enabled else "curve_missing")
+        terminal_fan_excluded_due_to_mau_curve = False
         if not configuration_library_direct_mode and fans_enabled and fan_curve_ref:
             raw_curve = curve_lib.get("raw_curves", {}).get(fan_curve_ref, {}) if isinstance(curve_lib, dict) else {}
             if isinstance(raw_curve, dict) and str(raw_curve.get("type", "")).lower() == "1d_lookup_table":
@@ -2367,7 +2374,12 @@ def compute_pue_project(input_obj):
                     else:
                         airflow_kw = max(0.0, fan_value * rated_fan_kw)
                         fan_power_source = f"{fan_power_source}_power_factor_times_rated"
-        aux_kw = aux_coeff * it_kw
+        if configuration_library_direct_mode:
+            aux_kw = other_electrical_auxiliary_power_kw
+            auxiliary_power_source = "manual_input"
+        else:
+            aux_kw = aux_coeff * it_kw
+            auxiliary_power_source = "coefficient"
         other_kw = 0.0
 
         dry_cooler_kw = 0.0
@@ -2682,9 +2694,10 @@ def compute_pue_project(input_obj):
             mau_power_kw = _library_fixed_power_per_unit(mau_binding, project_load_ratio) * indoor_active_units
         white_space_equipment_power_kw = cdu_power_kw + rtc_power_kw + mau_power_kw
         if configuration_library_direct_mode:
-            airflow_kw = mau_power_kw
-            fan_curve_value = mau_power_kw
-            fan_power_source = "configuration_library_solver_curve"
+            airflow_kw = 0.0
+            fan_curve_value = 0.0
+            fan_power_source = "configuration_library_mau_curve_excluded_to_avoid_duplicate"
+            terminal_fan_excluded_due_to_mau_curve = mau_power_kw > 0.0
         engine_curve_type = None
         engine_radiator_curve_type = None
         if configuration_library_direct_mode:
@@ -2943,6 +2956,7 @@ def compute_pue_project(input_obj):
             "terminal_fan_load_ratio": fan_curve_load_value,
             "terminal_fan_curve_value": fan_curve_value,
             "terminal_fan_power_source": fan_power_source,
+            "terminal_fan_excluded_due_to_mau_curve": terminal_fan_excluded_due_to_mau_curve,
             "electrical_loss_kW": power_dist_loss,
             "it_terminal_load_kW": it_terminal_load_kw,
             "it_upstream_power_kW": it_upstream_power_kw,
@@ -2975,6 +2989,7 @@ def compute_pue_project(input_obj):
             "engine_radiator_curve_source": engine_radiator_curve_source,
             "engine_radiator_curve_type": engine_radiator_curve_type,
             "auxiliary_power_kW": aux_kw + other_kw,
+            "auxiliary_power_source": auxiliary_power_source,
             "total_facility_power_kW": total_facility_power,
             "hourly_PUE": pue
         })
@@ -3064,6 +3079,11 @@ def compute_pue_project(input_obj):
     engine_radiator_sources = [item.get("engine_radiator_curve_source") for item in result["hourly_results"] if item.get("engine_radiator_curve_source") not in (None, "not_applied")]
     engine_radiator_curve_types = [item.get("engine_radiator_curve_type") for item in result["hourly_results"] if item.get("engine_radiator_curve_type") not in (None, "not_applied")]
     annual_aux = sum(item.get("auxiliary_power_kW", 0.0) for item in result["hourly_results"])
+    auxiliary_power_sources = [
+        item.get("auxiliary_power_source")
+        for item in result["hourly_results"]
+        if item.get("auxiliary_power_source") not in (None, "not_applied")
+    ]
     annual_pue = annual_facility / annual_it_terminal if annual_it_terminal > 0 else None
     hourly_pues = [item.get("hourly_PUE") for item in result["hourly_results"] if item.get("hourly_PUE") is not None]
     peak_facility = max(result["hourly_results"], key=lambda x: x.get("total_facility_power_kW", 0.0))
@@ -3140,6 +3160,7 @@ def compute_pue_project(input_obj):
         "engine_radiator_curve_source": engine_radiator_sources[0] if engine_radiator_sources else "not_applied",
         "engine_radiator_curve_type": engine_radiator_curve_types[0] if engine_radiator_curve_types else None,
         "annual_auxiliary_energy_kWh": annual_aux,
+        "auxiliary_power_source": auxiliary_power_sources[0] if auxiliary_power_sources else None,
         "min_hourly_PUE": min(hourly_pues) if hourly_pues else None,
         "max_hourly_PUE": max(hourly_pues) if hourly_pues else None
     }

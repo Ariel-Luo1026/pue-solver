@@ -211,7 +211,10 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             'id="solarDaytimeStartHour"',
             'id="solarDaytimeEndHour"',
             'id="otherAuxiliaryHeatGainKw"',
-            "Solar heat gain is included in Total Cooling Load.",
+            'id="otherElectricalAuxiliaryPowerKw"',
+            "Other Electrical Auxiliary Power (kW)",
+            "Direct electrical loads not represented by dedicated equipment models.",
+            "Solar heat gain and other auxiliary heat gains are included in Total Cooling Load.",
         ):
             self.assertIn(text, self.index)
         for legacy in ("solarGainAnnualKwh", "solarGainPeakKw", "Report-only Solar Heat Gain"):
@@ -221,10 +224,12 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("const heatGains = getCoolingLoadHeatGainInput()", builder_block)
         self.assertIn("solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw", builder_block)
         self.assertIn("other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw", builder_block)
+        self.assertIn("other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw", builder_block)
 
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
         self.assertIn("solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0", adapter_block)
         self.assertIn("other_auxiliary_heat_gain_kW: libraryInput.heat_gains?.other_auxiliary_heat_gain_kW ?? 0", adapter_block)
+        self.assertIn("project.auxiliary_loads.other_electrical_auxiliary_power_kW", adapter_block)
 
     def test_configuration_library_workbooks_sync_to_pyodide_as_binary_files(self):
         self.assertIn('const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library"', self.ui)

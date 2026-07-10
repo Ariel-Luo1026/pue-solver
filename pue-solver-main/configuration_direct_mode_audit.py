@@ -149,10 +149,10 @@ def audit_direct_mode_result(result, tolerance=1e-4):
         if mau_power is None:
             errors.append(f"hour {index}: mau_power_kW missing.")
             continue
-        if terminal_fan_power is not None and abs(terminal_fan_power - mau_power) > tolerance:
-            errors.append(f"hour {index}: terminal_fan_power_kW does not mirror mau_power_kW.")
-        if airflow_power is not None and abs(airflow_power - mau_power) > tolerance:
-            errors.append(f"hour {index}: airflow_power_kW does not mirror mau_power_kW.")
+        if terminal_fan_power is not None and abs(terminal_fan_power) > tolerance:
+            errors.append(f"hour {index}: terminal_fan_power_kW duplicates mau_power_kW; expected 0 when MAU curve is counted in white_space_equipment_power_kW.")
+        if airflow_power is not None and abs(airflow_power) > tolerance:
+            errors.append(f"hour {index}: airflow_power_kW duplicates mau_power_kW; expected 0 when MAU curve is counted in white_space_equipment_power_kW.")
         direct_power = (
             _num(row.get("cdu_power_kW"), 0.0)
             + _num(row.get("rtc_power_kW"), 0.0)

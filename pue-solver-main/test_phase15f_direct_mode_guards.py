@@ -36,13 +36,16 @@ class Phase15FDirectModeGuardTest(unittest.TestCase):
             self.assertEqual(hour[key], source)
             self.assertEqual(annual[key], source)
 
-    def test_direct_mode_compatibility_fields_alias_mau(self):
+    def test_direct_mode_terminal_fan_does_not_duplicate_mau(self):
         hour = self.output["hourly_results"][0]
         annual = self.output["annual_results"]
 
-        self.assertEqual(hour["terminal_fan_power_kW"], hour["mau_power_kW"])
-        self.assertEqual(hour["airflow_power_kW"], hour["mau_power_kW"])
-        self.assertEqual(annual["annual_terminal_fan_energy_kWh"], annual["annual_mau_energy_kWh"])
+        self.assertGreater(hour["mau_power_kW"], 0.0)
+        self.assertEqual(hour["terminal_fan_power_kW"], 0.0)
+        self.assertEqual(hour["airflow_power_kW"], 0.0)
+        self.assertTrue(hour["terminal_fan_excluded_due_to_mau_curve"])
+        self.assertEqual(annual["annual_terminal_fan_energy_kWh"], 0.0)
+        self.assertGreater(annual["annual_mau_energy_kWh"], 0.0)
         direct_equipment_power = (
             hour["cdu_power_kW"]
             + hour["rtc_power_kW"]
