@@ -494,6 +494,93 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertTrue(result["hourly_results"][0]["acc_capacity_clamped"])
         self.assertEqual(result["annual_results"]["acc_capacity_clamped_hours"], 1)
 
+    def test_solver_acc_v2_chw_pump_ratio_uses_cooling_load_over_acc_max_capacity(self):
+        with TemporaryDirectory() as temp_dir:
+            config = _make_configuration(
+                temp_dir,
+                {
+                    "ACC_2": [
+                        ["ambient_C", "load_ratio", "capacity_kW", "power_input_kW"],
+                        [10, 0.5, 800, 200],
+                        [10, 1.0, 1616, 400],
+                        [30, 0.5, 800, 250],
+                        [30, 1.0, 1616, 500],
+                    ],
+                    "RTC_1&2": [["load_ratio", "power_kW"], [0.5, 10], [1.0, 20]],
+                    "CDU_2": [["load_ratio", "power_kW"], [0.5, 13], [1.0, 13]],
+                    "CHW_PUMP_2": [["load_ratio", "power_kW"], [0.0, 0], [1.0, 100]],
+                },
+            )
+            sample = convert_library_input_to_solver_input(
+                build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+            )
+            acc_rows = [
+                {"ambient_C": 10, "load_ratio": 0.5, "capacity_kW": 800, "power_input_kW": 200},
+                {"ambient_C": 10, "load_ratio": 1.0, "capacity_kW": 1616, "power_input_kW": 400},
+                {"ambient_C": 30, "load_ratio": 0.5, "capacity_kW": 800, "power_input_kW": 250},
+                {"ambient_C": 30, "load_ratio": 1.0, "capacity_kW": 1616, "power_input_kW": 500},
+            ]
+            sample["acc_curve"]["data"] = copy.deepcopy(acc_rows)
+            sample["library_context"]["acc_curve"]["data"] = copy.deepcopy(acc_rows)
+            pump_curve = {
+                "type": "1d_lookup_table",
+                "x_axis": "load_ratio",
+                "output": "power_kW",
+                "interpolation": "linear",
+                "data": [{"load_ratio": 0.0, "power_kW": 0}, {"load_ratio": 1.0, "power_kW": 100}],
+                "curve_id": "CHW_PUMP_2_power_vs_load",
+            }
+            sample["curve_library"]["curves"]["CHW_PUMP_2_power_vs_load"] = copy.deepcopy(pump_curve)
+            sample["project"]["active_units"] = 4
+            sample["project"]["it_load"]["hourly_it_load_kW"] = [3960, 3960]
+            sample["weather"]["hourly_data"] = {
+                "hour_index": [5, 12],
+                "dry_bulb_C": [10, 30],
+                "wet_bulb_C": [],
+            }
+            sample["solar_heat_gain_max_kW"] = 4.065
+            sample["solar_daytime_start_hour"] = 6
+            sample["solar_daytime_end_hour"] = 18
+            sample["other_auxiliary_heat_gain_kW"] = 71
+            sample["acc_v2_enabled"] = True
+            sample["acc_v2"] = {"configuration_path": str(config)}
+
+            result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        hour = result["hourly_results"][1]
+        expected_cooling_load = 3960 + 4.065 + 71
+        expected_required_per_unit = expected_cooling_load / 4
+        expected_pump_load_ratio = expected_required_per_unit / 1616
+        old_nominal_basis = expected_required_per_unit / 1500
+        old_unit_load_ratio = 3960 / (4 * 1500)
+        self.assertAlmostEqual(hour["cooling_load_kW"], expected_cooling_load)
+        self.assertAlmostEqual(hour["acc_required_capacity_per_unit_kW"], expected_required_per_unit)
+        self.assertAlmostEqual(hour["pump_load_ratio"], expected_pump_load_ratio)
+        self.assertAlmostEqual(hour["pump_power_details"][0]["load_ratio"], expected_pump_load_ratio)
+        self.assertEqual(hour["chw_pump_load_ratio_basis"], "cooling_load_per_acc_unit_over_acc_max_capacity")
+        self.assertEqual(hour["chw_pump_reference_capacity_kW"], 1616)
+        self.assertNotAlmostEqual(hour["pump_load_ratio"], old_nominal_basis)
+        self.assertNotAlmostEqual(hour["pump_load_ratio"], old_unit_load_ratio)
+
+    def test_solver_non_acc_v2_chw_pump_ratio_keeps_unit_load_ratio_basis(self):
+        sample = convert_library_input_to_solver_input(
+            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        )
+        sample["project"]["it_load"]["hourly_it_load_kW"] = [900]
+        sample["weather"]["hourly_data"] = {
+            "hour_index": [12],
+            "dry_bulb_C": [25],
+            "wet_bulb_C": [],
+        }
+
+        result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        hour = result["hourly_results"][0]
+        self.assertEqual(hour["chw_pump_load_ratio_basis"], "unit_load_ratio")
+        self.assertAlmostEqual(hour["pump_load_ratio"], hour["unit_load_ratio"])
+
     def test_benchmark_path_not_imported_by_engine(self):
         engine_source = Path(__file__).with_name("acc_v2_engine.py").read_text(encoding="utf-8")
         tree = ast.parse(engine_source)

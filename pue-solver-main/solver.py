@@ -1842,6 +1842,22 @@ def _evaluate_engine_radiator_curve(radiator_curve, load_ratio, active_units, en
     return per_unit_power * max(1, int(active_units)), f"{equipment_id}:{source_sheet}:{power_field}"
 
 
+def _max_acc_capacity_kw(acc_curve):
+    """Return the maximum ACC capacity_kW available in a loaded ACC Solver_Curve."""
+    if not isinstance(acc_curve, dict):
+        return None
+    capacities = []
+    for row in acc_curve.get("data", []) if isinstance(acc_curve.get("data"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        capacity = _num(row.get("capacity_kW"), None)
+        if capacity is None:
+            capacity = _num(row.get("capacity_kw"), None)
+        if capacity is not None and capacity > 0:
+            capacities.append(float(capacity))
+    return max(capacities) if capacities else None
+
+
 def compute_pue_project(input_obj):
     """
     input_obj: dict in the project schema
@@ -2080,14 +2096,26 @@ def compute_pue_project(input_obj):
     annual_max_ambient_c = max(dry_values) if dry_values else None
     acc_v2_engine = None
     acc_v2_engine_error = None
+    acc_v2_direct_mode_enabled = False
     acc_v2_configuration_path = _get(input_obj, ["acc_v2", "configuration_path"])
     try:
         from acc_v2_engine import create_acc_v2_engine, is_acc_v2_enabled
 
-        if is_acc_v2_enabled(input_obj) and acc_v2_configuration_path is not None:
+        acc_v2_direct_mode_enabled = is_acc_v2_enabled(input_obj)
+        if acc_v2_direct_mode_enabled and acc_v2_configuration_path is not None:
             acc_v2_engine = create_acc_v2_engine(acc_v2_configuration_path)
     except Exception as exc:
         acc_v2_engine_error = str(exc)
+    acc_max_capacity_kw = _max_acc_capacity_kw(acc_curve)
+    acc_v2_pump_capacity_warning = None
+    if configuration_library_direct_mode and acc_v2_direct_mode_enabled and not (
+        acc_max_capacity_kw is not None and acc_max_capacity_kw > 0
+    ):
+        acc_v2_pump_capacity_warning = (
+            "ACC Solver_Curve capacity_kW maximum unavailable; "
+            "CHW Pump load ratio fell back to existing unit_load_ratio basis."
+        )
+        validation.setdefault("warnings", []).append(acc_v2_pump_capacity_warning)
     for i in range(n):
         it_kw = _num(hourly_it_load[i], 0.0) if i < len(hourly_it_load) else 0.0
         oat_c = _num(dry_bulb[i], None)
@@ -2147,6 +2175,16 @@ def compute_pue_project(input_obj):
         # Simplified variable loads (pumps, fans, etc.)
         pumps_kw = 0.01 * it_kw  # 1% of IT load
         pump_load_ratio = unit_load_ratio
+        chw_pump_load_ratio_basis = "unit_load_ratio"
+        chw_pump_reference_capacity_kw = None
+        chw_pump_load_ratio_warning = None
+        if configuration_library_direct_mode and acc_v2_direct_mode_enabled:
+            if acc_max_capacity_kw is not None and acc_max_capacity_kw > 0:
+                pump_load_ratio = _clamp(acc_required_capacity_per_unit_kw / acc_max_capacity_kw, 0.0, 1.0)
+                chw_pump_load_ratio_basis = "cooling_load_per_acc_unit_over_acc_max_capacity"
+                chw_pump_reference_capacity_kw = acc_max_capacity_kw
+            else:
+                chw_pump_load_ratio_warning = acc_v2_pump_capacity_warning
         chw_pump_power_per_unit_kw = 0.0
         cw_pump_power_per_unit_kw = 0.0
         pump_power_per_unit_kw = 0.0
@@ -2884,6 +2922,9 @@ def compute_pue_project(input_obj):
             "cop_surface_x_max": cop_surface_x_max,
             "cop_source": cop_source,
             "pump_load_ratio": pump_load_ratio,
+            "chw_pump_load_ratio_basis": chw_pump_load_ratio_basis,
+            "chw_pump_reference_capacity_kW": chw_pump_reference_capacity_kw,
+            "chw_pump_load_ratio_warning": chw_pump_load_ratio_warning,
             "chw_pump_power_per_unit_kW": chw_pump_power_per_unit_kw,
             "cw_pump_power_per_unit_kW": cw_pump_power_per_unit_kw,
             "pump_power_per_unit_kW": pump_power_per_unit_kw,
