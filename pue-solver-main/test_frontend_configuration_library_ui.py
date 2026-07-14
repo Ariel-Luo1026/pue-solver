@@ -452,13 +452,41 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertIn("Peak Design PUE", block)
             self.assertIn("Max Hourly PUE", block)
             self.assertIn("Facility Electrical Demand", block)
+            self.assertIn("Peak Design Condition", block)
             self.assertNotIn("Peak Design Engine Output", block)
             self.assertNotIn("Max Hourly Engine Output", block)
         self.assertIn("peak_design_cooling_load_kW", report_block)
         self.assertIn("peak_design_outdoor_dry_bulb_C", report_block)
+        self.assertIn("ASHRAE 20-year Extreme Annual Design Condition", report_block)
+        self.assertIn("Annual Simulation Basis", report_block)
+        self.assertIn("Weather Source: EPW Weather File", report_block)
         self.assertIn("peak_design_facility_electrical_demand_kW", visualization_block)
         self.assertIn("max_hourly_facility_electrical_demand_kW", visualization_block)
-        self.assertIn("Peak PUE Basis: Peak Design PUE", visualization_block)
+        self.assertIn("ASHRAE 20-year Extreme Annual Design Condition", visualization_block)
+
+    def test_peak_design_weather_controls_feed_library_input(self):
+        for text in (
+            "Peak Design Weather",
+            "Automatic ASHRAE 20-year Extreme Design Condition",
+            "Manual Override",
+            'id="manualPeakDesignDryBulbC"',
+            "Design Outdoor Dry Bulb",
+        ):
+            self.assertIn(text, self.index)
+
+        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        for text in (
+            "const peakDesignWeather = getPeakDesignWeatherInput()",
+            "peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource",
+            "peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC",
+            "latitude: projectInfo.latitude",
+            "longitude: projectInfo.longitude",
+        ):
+            self.assertIn(text, builder_block)
+
+        adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
+        self.assertIn("peak_design_weather_source: libraryInput.peak_design_weather_source", adapter_block)
+        self.assertIn("peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C", adapter_block)
 
     def test_benchmark_report_labels_remain_separate(self):
         report_block = self._function_source("buildHtmlReport")

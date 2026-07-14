@@ -654,6 +654,8 @@ class ACCV2EngineTest(unittest.TestCase):
             "dry_bulb_C": [20, 40],
             "wet_bulb_C": [],
         }
+        annual_only_sample = copy.deepcopy(sample)
+        annual_only_sample["_skip_peak_design_pue"] = True
         sample["solar_heat_gain_max_kW"] = 4.065
         sample["solar_daytime_start_hour"] = 6
         sample["solar_daytime_end_hour"] = 18
@@ -661,16 +663,36 @@ class ACCV2EngineTest(unittest.TestCase):
         sample["project"].setdefault("auxiliary_loads", {})["other_electrical_auxiliary_power_kW"] = 18
         sample["acc_v2_enabled"] = True
         sample["acc_v2"] = {"configuration_path": str(config)}
+        annual_only_sample.update({
+            "solar_heat_gain_max_kW": sample["solar_heat_gain_max_kW"],
+            "solar_daytime_start_hour": sample["solar_daytime_start_hour"],
+            "solar_daytime_end_hour": sample["solar_daytime_end_hour"],
+            "other_auxiliary_heat_gain_kW": sample["other_auxiliary_heat_gain_kW"],
+            "acc_v2_enabled": True,
+            "acc_v2": {"configuration_path": str(config)},
+        })
+        annual_only_sample["project"].setdefault("auxiliary_loads", {})["other_electrical_auxiliary_power_kW"] = 18
 
         result = compute_pue_project(sample)
+        annual_only_result = compute_pue_project(annual_only_sample)
 
         self.assertNotIn("error", result)
         annual = result["annual_results"]
+        self.assertAlmostEqual(
+            annual["annual_average_PUE"],
+            annual_only_result["annual_results"]["annual_average_PUE"],
+        )
         peak = result["peak_results"]
         self.assertEqual(peak["peak_PUE_definition"], "peak_design")
         self.assertAlmostEqual(peak["peak_design_it_load_kW"], 4400)
-        self.assertEqual(peak["peak_design_hour_index"], 23)
-        self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 40)
+        self.assertIsNone(peak["peak_design_hour_index"])
+        self.assertEqual(peak["peak_design_weather_source"], "ASHRAE_20_year_extreme")
+        self.assertEqual(peak["peak_design_weather_station"], "WINSTON FIELD, TX, USA")
+        self.assertEqual(
+            peak["peak_design_temperature_basis"],
+            "ASHRAE n=20 year Extreme Annual Design Condition",
+        )
+        self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 44.0)
         self.assertAlmostEqual(peak["peak_design_cooling_load_kW"], 4400 + 4.065 + 71)
         self.assertAlmostEqual(peak["peak_design_project_load_ratio"], 1.0)
         self.assertEqual(peak["peak_design_indoor_active_units"], 4)
@@ -709,6 +731,30 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertEqual(peak["max_hourly_PUE"], annual["max_hourly_PUE"])
         self.assertIn("max_hourly_PUE_hour_index", peak)
         self.assertNotAlmostEqual(peak["peak_PUE"], peak["max_hourly_PUE"])
+
+    def test_configuration_library_acc_v2_peak_pue_supports_manual_design_condition(self):
+        config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
+        sample = convert_library_input_to_solver_input(
+            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        )
+        sample["project"]["it_load"]["hourly_it_load_kW"] = [4400]
+        sample["weather"]["hourly_data"] = {
+            "hour_index": [7],
+            "dry_bulb_C": [20],
+            "wet_bulb_C": [],
+        }
+        sample["peak_design_weather_source"] = "manual"
+        sample["peak_design_outdoor_dry_bulb_C"] = 45.0
+        sample["acc_v2_enabled"] = True
+        sample["acc_v2"] = {"configuration_path": str(config)}
+
+        result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        peak = result["peak_results"]
+        self.assertEqual(peak["peak_design_weather_source"], "User Defined Design Condition")
+        self.assertEqual(peak["peak_design_weather_station"], "User Defined")
+        self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 45.0)
 
     def test_solver_failure_keeps_indoor_equipment_on_normal_unit_count(self):
         config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"

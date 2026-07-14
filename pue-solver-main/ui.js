@@ -163,6 +163,7 @@ const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
 const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "equipment_registry.py",
     "topology_registry.py",
+    "ashrae_design_conditions.py",
     "configuration_library_scanner.py",
     "configuration_library_loader.py",
     "equipment_curve_reader.py",
@@ -999,6 +1000,13 @@ function optionalNonNegativeNumber(id) {
     return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function optionalFiniteNumber(id) {
+    const el = document.getElementById(id);
+    if (!el || el.value === "") return null;
+    const value = Number(el.value);
+    return Number.isFinite(value) ? value : null;
+}
+
 function getCoolingLoadHeatGainInput() {
     return {
         solarHeatGainMaxKw: optionalNonNegativeNumber("solarHeatGainMaxKw") ?? 0,
@@ -1007,6 +1015,41 @@ function getCoolingLoadHeatGainInput() {
         otherAuxiliaryHeatGainKw: optionalNonNegativeNumber("otherAuxiliaryHeatGainKw") ?? 0,
         otherElectricalAuxiliaryPowerKw: optionalNonNegativeNumber("otherElectricalAuxiliaryPowerKw") ?? 0
     };
+}
+
+function getPeakDesignWeatherInput() {
+    const manualSelected = document.getElementById("peakDesignWeatherManual")?.checked === true;
+    const manualDryBulb = optionalFiniteNumber("manualPeakDesignDryBulbC");
+    return {
+        peakDesignWeatherSource: manualSelected ? "manual" : "ashrae_auto",
+        peakDesignOutdoorDryBulbC: manualSelected ? manualDryBulb : null
+    };
+}
+
+function updatePeakDesignWeatherStatus(peakResults = null) {
+    const status = document.getElementById("peakDesignWeatherStatus");
+    const autoSummary = document.getElementById("peakDesignWeatherAutoSummary");
+    const input = getPeakDesignWeatherInput();
+    const source = peakResults?.peak_design_weather_source;
+    const station = peakResults?.peak_design_weather_station;
+    const dryBulb = peakResults?.peak_design_outdoor_dry_bulb_C;
+    if (autoSummary) {
+        autoSummary.textContent = station && Number.isFinite(Number(dryBulb))
+            ? `Weather Station: ${station}; Extreme DB Maximum: ${fmtNumber(Number(dryBulb), 1)} deg C`
+            : "Weather Station: pending ASHRAE lookup; Extreme DB Maximum: pending";
+    }
+    if (!status) return;
+    if (input.peakDesignWeatherSource === "manual") {
+        status.textContent = Number.isFinite(Number(input.peakDesignOutdoorDryBulbC))
+            ? `Peak Design Condition: User Defined Design Condition, ${fmtNumber(Number(input.peakDesignOutdoorDryBulbC), 1)} deg C.`
+            : "Peak Design Condition: Manual override selected. Enter Design Outdoor Dry Bulb.";
+        status.style.color = Number.isFinite(Number(input.peakDesignOutdoorDryBulbC)) ? "#059669" : "#b45309";
+        return;
+    }
+    status.textContent = station
+        ? `Peak Design Condition: ${source || "ASHRAE_20_year_extreme"} / ${station} / ${fmtNumber(Number(dryBulb), 1)} deg C.`
+        : "Peak Design Condition: Automatic ASHRAE 20-year Extreme Design Condition.";
+    status.style.color = "#059669";
 }
 
 function updateSolarGainStatus() {
@@ -1479,6 +1522,7 @@ function setProjectMemoryStatus(text, tone = "info") {
 
 function collectProjectMemoryPayload() {
     const coolingSelection = getCoolingSystemSelection();
+    const peakWeather = getPeakDesignWeatherInput();
     return {
         saved_at: new Date().toISOString(),
         project_info: {
@@ -1496,6 +1540,8 @@ function collectProjectMemoryPayload() {
             solar_daytime_end_hour: document.getElementById("solarDaytimeEndHour")?.value || "18",
             other_auxiliary_heat_gain_kw: document.getElementById("otherAuxiliaryHeatGainKw")?.value || "0",
             other_electrical_auxiliary_power_kw: document.getElementById("otherElectricalAuxiliaryPowerKw")?.value || "0",
+            peak_design_weather_source: peakWeather.peakDesignWeatherSource,
+            manual_peak_design_dry_bulb_c: document.getElementById("manualPeakDesignDryBulbC")?.value || "",
             aux_fixed_coeff: document.getElementById("auxFixedCoeff")?.value || "0.005",
             dry_cooler_approach_c: document.getElementById("dryCoolerApproachC")?.value || "5"
         },
@@ -1549,6 +1595,10 @@ function restoreProjectMemory(key = "") {
         if (document.getElementById("solarDaytimeEndHour")) document.getElementById("solarDaytimeEndHour").value = report.solar_daytime_end_hour || "18";
         if (document.getElementById("otherAuxiliaryHeatGainKw")) document.getElementById("otherAuxiliaryHeatGainKw").value = report.other_auxiliary_heat_gain_kw || "0";
         if (document.getElementById("otherElectricalAuxiliaryPowerKw")) document.getElementById("otherElectricalAuxiliaryPowerKw").value = report.other_electrical_auxiliary_power_kw || "0";
+        const restoredPeakSource = report.peak_design_weather_source === "manual" ? "manual" : "ashrae_auto";
+        if (document.getElementById("peakDesignWeatherAuto")) document.getElementById("peakDesignWeatherAuto").checked = restoredPeakSource !== "manual";
+        if (document.getElementById("peakDesignWeatherManual")) document.getElementById("peakDesignWeatherManual").checked = restoredPeakSource === "manual";
+        if (document.getElementById("manualPeakDesignDryBulbC")) document.getElementById("manualPeakDesignDryBulbC").value = report.manual_peak_design_dry_bulb_c || "";
         if (document.getElementById("auxFixedCoeff")) document.getElementById("auxFixedCoeff").value = report.aux_fixed_coeff || "0.005";
         if (document.getElementById("dryCoolerApproachC")) document.getElementById("dryCoolerApproachC").value = report.dry_cooler_approach_c || "5";
 
@@ -1577,6 +1627,7 @@ function restoreProjectMemory(key = "") {
         refreshStandardInputStatus();
         updateProjectInfoStatus();
         updateSolarGainStatus();
+        updatePeakDesignWeatherStatus();
         renderProjectInfoReportPanel();
         renderSolarGainReportPanel();
         renderWeatherReportPanel();
@@ -2412,6 +2463,12 @@ function buildHtmlReport(context) {
         : null;
     const peakDesignDemandKw = peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW ?? peak.peak_total_facility_power_kW;
     const maxHourlyDemandKw = peak.max_hourly_facility_electrical_demand_kW ?? peak.max_hourly_total_facility_power_kW;
+    const peakDesignWeatherSource = peak.peak_design_weather_source || "ASHRAE_20_year_extreme";
+    const peakDesignWeatherStation = peak.peak_design_weather_station || "N/A";
+    const peakDesignTemperatureBasis = peak.peak_design_temperature_basis || "ASHRAE n=20 year Extreme Annual Design Condition";
+    const peakDesignDisplaySource = peakDesignWeatherSource === "User Defined Design Condition"
+        ? "User Defined Design Condition"
+        : "ASHRAE 20-year Extreme Annual Design Condition";
     const peakPueMetricHtml = isConfigurationLibraryAccV2DirectMode
         ? `<div class="metric"><div class="label">Peak Design PUE</div><div class="value">${reportValue(peakDesignPue, "", 3)}</div>${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`
         : `<div class="metric"><div class="label">Peak Hourly PUE</div><div class="value">${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}</div>${isAnnualBenchmarkMode ? `<div class="subtitle">Annual-equivalent assessment uses average equipment values.</div>` : ""}${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`;
@@ -2616,6 +2673,7 @@ function buildHtmlReport(context) {
     ${isBenchmarkMode ? `<p>This assessment evaluates the annual operating performance of the JUNO data center using an hourly weather-driven simulation with the project-specific ACC cooling architecture.</p>` : ""}
     ${isAccV2DirectMode ? `<div class="note"><b>ACC V2 Direct Mode</b><br>Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` : ""}
     ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Simulation Method</b><br>True EPW × Solver_Curve<br><b>Simulation Basis</b><br>8760-hour Annual Dynamic Simulation</div>` : ""}
+    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Peak Design Condition</b><br>Outdoor Dry Bulb: ${reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)}<br>Source: ${esc(peakDesignDisplaySource)}<br>Weather Station: ${esc(peakDesignWeatherStation)}</div>` : ""}
     ${hasExperimentalPeakWarning ? `<div class="note" style="background:#F5F5F5;border-left-color:#7A7A7A;color:#222222;"><b>Warning:</b> Direct hourly ACC power exceeds scenario peak ACC power by more than 10%. Peak Hourly PUE should be reviewed against design intent.</div>` : ""}
     ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
     <div class="meta">
@@ -2660,11 +2718,14 @@ function buildHtmlReport(context) {
             ["Peak Design PUE", reportValue(peak.peak_PUE, "", 3)],
             ["Peak Design Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
             ["Max Hourly Facility Electrical Demand", reportValue(maxHourlyDemandKw, " kW", 0)],
+            ["Peak Design Condition", esc(peakDesignDisplaySource)],
+            ["Peak Design Weather Station", esc(peakDesignWeatherStation)],
+            ["Peak Design Weather Source", esc(peakDesignWeatherSource)],
             ["Peak Design Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)],
             ["Peak Design IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
             ["Peak Design Cooling Load", reportValue(peak.peak_design_cooling_load_kW, " kW", 1)]
         ] : []),
-        ["Peak Facility Hour", esc(peak.peak_hour_index ?? "N/A")]
+        ...(isConfigurationLibraryAccV2DirectMode ? [] : [["Peak Facility Hour", esc(peak.peak_hour_index ?? "N/A")]])
     ])}</tbody></table>
 </section>
 
@@ -2673,6 +2734,7 @@ function buildHtmlReport(context) {
     ${isAnnualBenchmarkMode ? `<div class="note">For this annual-equivalent assessment, the weather profile is represented through an annual weather factor rather than direct hourly dispatch.</div>` : ""}
     ${isExcelReplicatedHourlyMode ? `<div class="note">Hourly dry-bulb temperature is evaluated using the project-specific ACC hourly performance model.</div>` : ""}
     ${isExperimentalHourlyMode ? `<div class="note">Hourly outdoor dry-bulb temperature and hourly load ratio are applied directly to the ACC Solver_Curve.</div>` : ""}
+    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Annual Simulation Basis</b><br>Weather Source: EPW Weather File<br>Simulation Method: True EPW × Solver_Curve<br>Simulation Basis: 8760-hour Annual Dynamic Simulation</div>` : ""}
     <div class="grid">
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
             ["Project Location", esc(weatherSource.project_location || projectInfo.location || "N/A")],
@@ -2685,6 +2747,14 @@ function buildHtmlReport(context) {
             ["Location", esc(weatherSource.location || "N/A")],
             ["Weather Hours", esc(weatherSource.weather_hours ?? "N/A")]
         ])}</tbody></table></div>
+        ${isConfigurationLibraryAccV2DirectMode ? `<div class="card"><h3>Peak Design Condition</h3><table><tbody>${tableRows([
+            ["Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " °C", 1)],
+            ["Source", esc(peakDesignDisplaySource)],
+            ["Weather Station", esc(peakDesignWeatherStation)],
+            ["IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
+            ["Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
+            ["Peak Design PUE", reportValue(peak.peak_PUE, "", 3)]
+        ])}</tbody></table></div>` : ""}
     </div>
 </section>
 
@@ -4500,7 +4570,8 @@ function maxHourlyResultField(hourlyRows, fieldNames) {
 }
 
 function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) {
-    const totalCapacityMw = getProjectReportInfo().capacityMw;
+    const projectInfo = getProjectReportInfo();
+    const totalCapacityMw = projectInfo.capacityMw;
     if (!(Number(totalCapacityMw) > 0)) return null;
     const scenarioName = scenarioNameOverride || (document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal");
     const sizing = calculateFrontendUnitRequirements(totalCapacityMw, data.cooling_unit_capacity_mw);
@@ -4519,6 +4590,7 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         : Math.max(installedUnits - activeUnits, 0);
     const designItLoadKw = Number(totalCapacityMw) * 1000;
     const heatGains = getCoolingLoadHeatGainInput();
+    const peakDesignWeather = getPeakDesignWeatherInput();
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
     const selectedCurves = Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
@@ -4552,6 +4624,17 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             name: data.configuration_name,
             calculation_mode: "project_8760",
             project_mode: true,
+            latitude: projectInfo.latitude,
+            longitude: projectInfo.longitude,
+            peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
+            peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
+            location: {
+                name: projectInfo.location,
+                latitude: projectInfo.latitude,
+                longitude: projectInfo.longitude,
+                peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
+                peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC
+            },
             design_it_load_kW: designItLoadKw,
             cooling_unit_capacity_kW: data.cooling_unit_capacity_mw * 1000,
             required_units: sizing.requiredUnits,
@@ -4596,6 +4679,8 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             solar_daytime_end_hour: heatGains.solarDaytimeEndHour,
             other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw
         },
+        peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
+        peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
         other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
         selected_curves: selectedCurves
     };
@@ -4668,6 +4753,8 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             data: clone(radiatorRows)
         },
         project,
+        peak_design_weather_source: libraryInput.peak_design_weather_source ?? project.peak_design_weather_source ?? "ashrae_auto",
+        peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C ?? project.peak_design_outdoor_dry_bulb_C ?? null,
         solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0,
         solar_daytime_start_hour: libraryInput.heat_gains?.solar_daytime_start_hour ?? 6,
         solar_daytime_end_hour: libraryInput.heat_gains?.solar_daytime_end_hour ?? 18,
@@ -4771,6 +4858,7 @@ function renderConfigurationLibrarySummary(data) {
     const itSample = standardized?.project?.it_load?.hourly_it_load_kW?.slice(0, 3) || [];
     const electricalPath = standardized?.electrical_path;
     const annualElectrical = data.last_solver_output?.annual_results || {};
+    const peakResults = data.last_solver_output?.peak_results || {};
     const hourlyElectrical = Array.isArray(data.last_solver_output?.hourly_results) ? data.last_solver_output.hourly_results : [];
     const directAccV2Disclosure = isConfigurationLibraryAccV2DirectResult(data.last_solver_output || {}, data.standardized_solver_input || null);
     const resultValue = (value, formatter) => value != null ? formatter(value) : "Not available";
@@ -4793,7 +4881,10 @@ function renderConfigurationLibrarySummary(data) {
         ...(directAccV2Disclosure ? [
             ["ACC V2 Direct Mode", "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup."],
             ["Simulation Method", "True EPW × Solver_Curve"],
-            ["Simulation Basis", "8760-hour Annual Dynamic Simulation"]
+            ["Simulation Basis", "8760-hour Annual Dynamic Simulation"],
+            ["Peak Design Condition", peakResults.peak_design_temperature_basis || "ASHRAE n=20 year Extreme Annual Design Condition"],
+            ["Peak Design Weather Station", peakResults.peak_design_weather_station || "Not available"],
+            ["Peak Design Outdoor Dry Bulb", peakResults.peak_design_outdoor_dry_bulb_C != null ? `${fmtNumber(peakResults.peak_design_outdoor_dry_bulb_C, 1)} deg C` : "Not available"]
         ] : []),
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
         ["Electrical IT / MEP efficiency", electricalPath
@@ -5076,6 +5167,17 @@ function initStandardDataInputs() {
             renderSolarGainReportPanel();
         });
     });
+    ["peakDesignWeatherAuto", "peakDesignWeatherManual", "manualPeakDesignDryBulbC"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        ["input", "change"].forEach(eventName => input.addEventListener(eventName, () => {
+            updatePeakDesignWeatherStatus();
+            if (configurationLibraryData) {
+                configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+                renderConfigurationLibrarySummary(configurationLibraryData);
+            }
+        }));
+    });
     ["projectNameInput", "projectLocationInput", "projectLatitudeInput", "projectLongitudeInput", "projectCapacityMwInput", "projectStageInput", "projectVersionInput"].forEach((id) => {
         const input = document.getElementById(id);
         if (!input) return;
@@ -5123,6 +5225,7 @@ function initStandardDataInputs() {
     updateProjectMemorySelect();
     updateProjectInfoStatus();
     updateSolarGainStatus();
+    updatePeakDesignWeatherStatus();
     refreshStandardInputStatus();
 }
 
@@ -5149,7 +5252,7 @@ function showProjectVisualization(outObj) {
               `<div style="margin:6px 0 8px 0;">Simulation Basis: 8760-hour Annual Dynamic Simulation</div>`
             : "";
         const peakDisclosure = isDirectAccV2
-            ? `<div style="margin:6px 0 8px 0;">Peak PUE Basis: Peak Design PUE at annual maximum dry bulb, 100% design IT load, maximum solar heat gain, and configured other heat gain.</div>`
+            ? `<div style="margin:6px 0 8px 0;">Peak PUE Basis: Peak Design PUE at ASHRAE 20-year Extreme Annual Design Condition, 100% design IT load, maximum solar heat gain, and configured other heat gain.</div>`
             : "";
         principle.innerHTML =
             "<b>计算原理</b><br>" +
@@ -5365,7 +5468,10 @@ function showProjectVisualization(outObj) {
     if (peakDetails) {
         const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
         const cards = [
-            [isDirectAccV2 ? "Peak Design Hour" : "Peak Facility Hour", peak.peak_hour_index],
+            ...(isDirectAccV2 ? [
+                ["Peak Design Condition", peak.peak_design_temperature_basis || "ASHRAE n=20 year Extreme Annual Design Condition"],
+                ["Peak Design Weather Station", peak.peak_design_weather_station || "N/A"]
+            ] : [["Peak Facility Hour", peak.peak_hour_index]]),
             [isDirectAccV2 ? "Max Hourly PUE Hour" : "Max PUE Hour", peak.max_hourly_PUE_hour_index ?? peak.peak_PUE_hour_index],
             [isDirectAccV2 ? "Peak Design PUE" : "Peak PUE", fmtNumber(peak.peak_PUE, 3)],
             ...(isDirectAccV2 ? [["Max Hourly PUE", fmtNumber(peak.max_hourly_PUE, 3)]] : []),
@@ -5373,7 +5479,7 @@ function showProjectVisualization(outObj) {
                 ["Peak Design Facility Electrical Demand", `${fmtInteger(peakDesignDemandKw)} kW`],
                 ["Max Hourly Facility Electrical Demand", `${fmtInteger(maxHourlyDemandKw)} kW`]
             ] : []),
-            ["Dry Bulb", `${fmtNumber(peak.peak_outdoor_dry_bulb_C, 1)} deg C`],
+            [isDirectAccV2 ? "Outdoor Dry Bulb" : "Dry Bulb", `${fmtNumber(peak.peak_outdoor_dry_bulb_C, 1)} deg C`],
             ["Wet Bulb", `${fmtNumber(peak.peak_outdoor_wet_bulb_C, 1)} deg C`],
             ["IT Load", `${fmtInteger(peak.peak_IT_load_kW)} kW`],
             ...(isDirectAccV2 ? [] : [["Facility Power", `${fmtInteger(peak.peak_total_facility_power_kW)} kW`]])
@@ -5897,6 +6003,7 @@ json.dumps(out, indent=2)
             if (btnExportJson) btnExportJson.disabled = false;
             const annual = outObj.annual_results || {};
             const peak = outObj.peak_results || {};
+            updatePeakDesignWeatherStatus(peak);
             const hourlyCount = Array.isArray(outObj.hourly_results) ? outObj.hourly_results.length : 0;
             const d = job.diagnostics || {};
             setSolverDataStatus(
@@ -5912,7 +6019,7 @@ json.dumps(out, indent=2)
                 `Annual PUE=${fmtNumber(annual.annual_average_PUE, 3)}\n` +
                 `Annual IT energy=${fmtInteger(annual.annual_IT_energy_kWh)} kWh\n` +
                 `Annual facility energy=${fmtInteger(annual.annual_facility_energy_kWh)} kWh\n` +
-                `Peak design hour=${peak.peak_design_hour_index ?? peak.peak_hour_index}, facility electrical demand=${fmtInteger(peak.peak_design_facility_electrical_demand_kW ?? peak.peak_total_facility_power_kW)} kW`
+                `Peak design condition=${peak.peak_design_weather_source || "N/A"} ${peak.peak_design_weather_station || ""}, facility electrical demand=${fmtInteger(peak.peak_design_facility_electrical_demand_kW ?? peak.peak_total_facility_power_kW)} kW`
             );
         } else {
             clearRuntimeErrorDetails();

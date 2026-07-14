@@ -490,6 +490,10 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "name": loaded["configuration_name"],
             "calculation_mode": "project_8760",
             "project_mode": True,
+            "peak_design_weather_source": "ashrae_auto",
+            "location": {
+                "peak_design_weather_source": "ashrae_auto",
+            },
             "design_it_load_kW": design_it_load_kw,
             "cooling_unit_capacity_kW": loaded["cooling_unit_capacity_mw"] * 1000.0,
             "required_units": sizing["required_units"],

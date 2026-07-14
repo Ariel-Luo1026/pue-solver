@@ -9,6 +9,11 @@
 from math import ceil, isfinite
 from copy import deepcopy
 
+try:
+    from ashrae_design_conditions import get_peak_design_condition
+except Exception:
+    get_peak_design_condition = None
+
 # -------------------------
 # helpers
 # -------------------------
@@ -68,6 +73,59 @@ def _heat_gain_inputs(input_obj):
         "other_auxiliary_heat_gain_kW": max(0.0, float(other_aux_kw or 0.0)),
         "_force_solar_heat_gain_max": bool(input_obj.get("_force_solar_heat_gain_max")),
     }
+
+def _peak_design_weather_condition(input_obj):
+    project = input_obj.get("project", {}) if isinstance(input_obj.get("project"), dict) else {}
+    location = project.get("location", {}) if isinstance(project.get("location"), dict) else {}
+    source = (
+        input_obj.get("peak_design_weather_source")
+        or project.get("peak_design_weather_source")
+        or location.get("peak_design_weather_source")
+        or "ashrae_auto"
+    )
+    source_key = str(source or "ashrae_auto").strip().lower()
+    manual_db = _num(input_obj.get("peak_design_outdoor_dry_bulb_C"), None)
+    if manual_db is None:
+        manual_db = _num(project.get("peak_design_outdoor_dry_bulb_C"), None)
+    if manual_db is None:
+        manual_db = _num(location.get("peak_design_outdoor_dry_bulb_C"), None)
+    if source_key == "manual" and manual_db is not None:
+        return {
+            "source": "User Defined Design Condition",
+            "station_name": "User Defined",
+            "station_id": "",
+            "extreme_db_max_C": float(manual_db),
+            "extreme_db_min_C": None,
+            "temperature_basis": "User Defined Design Condition",
+        }
+
+    latitude = _num(input_obj.get("latitude"), None)
+    longitude = _num(input_obj.get("longitude"), None)
+    if latitude is None:
+        latitude = _num(project.get("latitude"), None)
+    if longitude is None:
+        longitude = _num(project.get("longitude"), None)
+    if latitude is None:
+        latitude = _num(location.get("latitude"), None)
+    if longitude is None:
+        longitude = _num(location.get("longitude"), None)
+
+    if get_peak_design_condition is None:
+        condition = {
+            "source": "ASHRAE_20_year_extreme",
+            "station_name": "WINSTON FIELD, TX, USA",
+            "station_id": "ASHRAE_PLACEHOLDER_WINSTON_FIELD_TX",
+            "extreme_db_max_C": 44.0,
+            "extreme_db_min_C": -16.9,
+        }
+    else:
+        condition = get_peak_design_condition(latitude, longitude, source="ashrae_auto")
+    condition = dict(condition or {})
+    condition.setdefault("source", "ASHRAE_20_year_extreme")
+    condition.setdefault("station_name", "Unknown ASHRAE design station")
+    condition.setdefault("station_id", "")
+    condition.setdefault("temperature_basis", "ASHRAE n=20 year Extreme Annual Design Condition")
+    return condition
 
 def _hour_of_day(hour_index, fallback_index):
     raw = _num(hour_index, fallback_index)
@@ -3216,16 +3274,15 @@ def compute_pue_project(input_obj):
             validation.setdefault("warnings", []).append(
                 "Peak Design PUE was not calculated because design_it_load_kW is missing; peak_PUE retains max hourly PUE."
             )
-        elif annual_max_ambient_c is None:
-            validation.setdefault("warnings", []).append(
-                "Peak Design PUE was not calculated because annual maximum dry-bulb temperature is unavailable; peak_PUE retains max hourly PUE."
-            )
         else:
-            max_dry_pos = max(
-                range(len(dry_bulb)),
-                key=lambda j: _num(dry_bulb[j], -1.0e30),
+            peak_design_condition = _peak_design_weather_condition(input_obj)
+            peak_design_ambient_c = _num(peak_design_condition.get("extreme_db_max_C"), None)
+        if design_it_load_source is not None and design_it_load_source > 0 and peak_design_ambient_c is None:
+            validation.setdefault("warnings", []).append(
+                "Peak Design PUE was not calculated because peak design dry-bulb temperature is unavailable; peak_PUE retains max hourly PUE."
             )
-            peak_design_hour_index = hour_index[max_dry_pos] if max_dry_pos < len(hour_index) else max_dry_pos
+        elif design_it_load_source is not None and design_it_load_source > 0:
+            peak_design_hour_index = None
             peak_design_input = deepcopy(input_obj)
             peak_design_project = peak_design_input.setdefault("project", {})
             peak_design_it_load = peak_design_project.setdefault("it_load", {})
@@ -3234,14 +3291,10 @@ def compute_pue_project(input_obj):
             peak_design_it_load["hourly_it_load_percent"] = [100.0]
             peak_design_project["design_it_load_kW"] = float(design_it_load_source)
             peak_design_weather = peak_design_input.setdefault("weather", {}).setdefault("hourly_data", {})
-            peak_design_weather["hour_index"] = [peak_design_hour_index]
-            peak_design_weather["dry_bulb_C"] = [float(annual_max_ambient_c)]
-            peak_design_weather["wet_bulb_C"] = [
-                _num(wet_bulb[max_dry_pos], None)
-            ] if max_dry_pos < len(wet_bulb) else []
-            peak_design_weather["relative_humidity_percent"] = [
-                _num(rel_humidity[max_dry_pos], None)
-            ] if max_dry_pos < len(rel_humidity) else []
+            peak_design_weather["hour_index"] = [0]
+            peak_design_weather["dry_bulb_C"] = [float(peak_design_ambient_c)]
+            peak_design_weather["wet_bulb_C"] = []
+            peak_design_weather["relative_humidity_percent"] = []
             peak_design_input["_skip_peak_design_pue"] = True
             peak_design_input["_force_solar_heat_gain_max"] = True
             if acc_v2_engine is not None:
@@ -3266,13 +3319,17 @@ def compute_pue_project(input_obj):
                     "peak_PUE": peak_design_pue,
                     "peak_PUE_definition": "peak_design",
                     "peak_PUE_hour_index": peak_design_hour_index,
-                    "peak_PUE_outdoor_dry_bulb_C": annual_max_ambient_c,
+                    "peak_PUE_outdoor_dry_bulb_C": peak_design_ambient_c,
                     "peak_PUE_IT_load_kW": float(design_it_load_source),
                     "peak_design_total_facility_power_kW": peak_design_total_facility,
                     "peak_design_facility_electrical_demand_kW": peak_design_total_facility,
                     "peak_design_it_load_kW": float(design_it_load_source),
                     "peak_design_cooling_load_kW": peak_design_hour.get("cooling_load_kW"),
-                    "peak_design_outdoor_dry_bulb_C": annual_max_ambient_c,
+                    "peak_design_weather_source": peak_design_condition.get("source"),
+                    "peak_design_weather_station": peak_design_condition.get("station_name"),
+                    "peak_design_weather_station_id": peak_design_condition.get("station_id"),
+                    "peak_design_temperature_basis": peak_design_condition.get("temperature_basis"),
+                    "peak_design_outdoor_dry_bulb_C": peak_design_ambient_c,
                     "peak_design_hour_index": peak_design_hour_index,
                     "peak_design_ACC_power_kW": peak_design_hour.get("acc_power_kW"),
                     "peak_design_CHW_pump_power_kW": peak_design_hour.get("pump_power_kW"),
@@ -3294,7 +3351,7 @@ def compute_pue_project(input_obj):
                     "peak_design_terminal_fan_power_kW": peak_design_hour.get("terminal_fan_power_kW"),
                     "peak_total_facility_power_kW": peak_design_total_facility,
                     "peak_hour_index": peak_design_hour_index,
-                    "peak_outdoor_dry_bulb_C": annual_max_ambient_c,
+                    "peak_outdoor_dry_bulb_C": peak_design_ambient_c,
                     "peak_outdoor_wet_bulb_C": peak_design_hour.get("wet_bulb_C"),
                     "peak_IT_load_kW": float(design_it_load_source),
                 })

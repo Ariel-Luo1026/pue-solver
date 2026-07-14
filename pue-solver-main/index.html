@@ -545,6 +545,27 @@
             </div>
             <div id="unitQuantityStatus" class="hint" style="margin-top:10px;">Auto mode derives required, installed, running, and standby units from project load and selected unit capacity.</div>
         </div>
+        <div class="panel" style="margin-top:14px;">
+            <div class="panelTitle">Peak Design Weather</div>
+            <div class="fileGrid" style="margin-top:10px;">
+                <label class="fileSlot">
+                    <input id="peakDesignWeatherAuto" name="peakDesignWeatherSource" type="radio" value="ashrae_auto" checked style="width:auto; margin-right:8px;" />
+                    Automatic ASHRAE 20-year Extreme Design Condition
+                    <div class="hint" id="peakDesignWeatherAutoSummary">Weather Station: pending ASHRAE lookup; Extreme DB Maximum: pending</div>
+                </label>
+                <label class="fileSlot">
+                    <input id="peakDesignWeatherManual" name="peakDesignWeatherSource" type="radio" value="manual" style="width:auto; margin-right:8px;" />
+                    Manual Override
+                    <div class="compactFields">
+                        <span class="muted">
+                            Design Outdoor Dry Bulb (deg C)
+                            <input id="manualPeakDesignDryBulbC" type="number" step="0.1" placeholder="45.0" />
+                        </span>
+                    </div>
+                </label>
+            </div>
+            <div id="peakDesignWeatherStatus" class="hint" style="margin-top:10px;">Peak Design Condition uses ASHRAE n=20 year extreme dry-bulb maximum unless manual override is selected.</div>
+        </div>
         <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Manual Excel upload remains available below.</div>
         <div id="configurationLibrarySummary" class="fileGrid" style="margin-top:12px; display:none;"></div>
     </div>

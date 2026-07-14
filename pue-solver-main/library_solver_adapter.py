@@ -111,6 +111,7 @@ def convert_library_input_to_solver_input(library_input):
     }
 
     project = deepcopy(project_source)
+    project.setdefault("peak_design_weather_source", "ashrae_auto")
     project["it_load"] = deepcopy(it_source)
     project["it_load"]["cooling_unit_capacity_kW"] = capacity_kw
     project["it_load"]["cooling_unit_count"] = active_units

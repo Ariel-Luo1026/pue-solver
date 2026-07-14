@@ -1,0 +1,10 @@
+[
+  {
+    "station_name": "WINSTON FIELD, TX, USA",
+    "station_id": "ASHRAE_PLACEHOLDER_WINSTON_FIELD_TX",
+    "latitude": 32.693,
+    "longitude": -100.951,
+    "db_max_20yr_C": 44.0,
+    "db_min_20yr_C": -16.9
+  }
+]
