@@ -163,7 +163,9 @@ const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
 const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "equipment_registry.py",
     "topology_registry.py",
+    "ashrae_online_lookup.py",
     "ashrae_design_conditions.py",
+    "ashrae_design_conditions_data.json",
     "configuration_library_scanner.py",
     "configuration_library_loader.py",
     "equipment_curve_reader.py",
@@ -1026,17 +1028,33 @@ function getPeakDesignWeatherInput() {
     };
 }
 
+function peakDesignSourceLabel(source) {
+    const normalized = String(source || "").trim();
+    if (normalized === "ASHRAE_online" || normalized === "ASHRAE Online") return "ASHRAE Online";
+    if (normalized === "manual" || normalized === "User Defined Design Condition") return "Manual Override";
+    if (normalized === "ASHRAE_local_cache" || normalized === "ASHRAE_local_fallback") return "Local ASHRAE Cache";
+    return normalized || "ASHRAE Online";
+}
+
 function updatePeakDesignWeatherStatus(peakResults = null) {
     const status = document.getElementById("peakDesignWeatherStatus");
     const autoSummary = document.getElementById("peakDesignWeatherAutoSummary");
     const input = getPeakDesignWeatherInput();
     const source = peakResults?.peak_design_weather_source;
     const station = peakResults?.peak_design_weather_station;
+    const stationId = peakResults?.peak_design_weather_station_id;
+    const distance = peakResults?.peak_design_weather_station_distance_km;
     const dryBulb = peakResults?.peak_design_outdoor_dry_bulb_C;
+    const lookupStatus = String(peakResults?.peak_design_lookup_status || "").toUpperCase();
+    const lookupProvider = peakResults?.peak_design_lookup_provider || "ASHRAE_online";
+    const lookupFailureReason = peakResults?.peak_design_lookup_failure_reason;
+    const fallbackMessage = source !== "ASHRAE_online" && lookupFailureReason
+        ? `; ASHRAE Online Lookup Failed: ${lookupFailureReason}; ${source === "ASHRAE_local_cache" ? "Using Local ASHRAE Cache fallback" : "Using Manual Override fallback"}`
+        : "";
     if (autoSummary) {
         autoSummary.textContent = station && Number.isFinite(Number(dryBulb))
-            ? `Weather Station: ${station}; Extreme DB Maximum: ${fmtNumber(Number(dryBulb), 1)} deg C`
-            : "Weather Station: pending ASHRAE lookup; Extreme DB Maximum: pending";
+            ? `Automatic ASHRAE Online Lookup; Lookup Status: ${lookupStatus || "UNKNOWN"}; Provider: ${peakDesignSourceLabel(lookupProvider)}; Lookup Source: ${peakDesignSourceLabel(source)}; Weather Station: ${station}; Station ID: ${stationId || "N/A"}; Distance: ${Number.isFinite(Number(distance)) ? fmtNumber(Number(distance), 1) + " km" : "N/A"}; Design DB Maximum: ${fmtNumber(Number(dryBulb), 1)} deg C${fallbackMessage}`
+            : "Automatic ASHRAE Online Lookup; Lookup Status: pending; Weather Station: pending; Design DB Maximum: pending";
     }
     if (!status) return;
     if (input.peakDesignWeatherSource === "manual") {
@@ -1047,7 +1065,7 @@ function updatePeakDesignWeatherStatus(peakResults = null) {
         return;
     }
     status.textContent = station
-        ? `Peak Design Condition: ${source || "ASHRAE_20_year_extreme"} / ${station} / ${fmtNumber(Number(dryBulb), 1)} deg C.`
+        ? `Peak Design Weather: Automatic ASHRAE Online Lookup; Lookup Status: ${lookupStatus || "UNKNOWN"}; Provider: ${peakDesignSourceLabel(lookupProvider)}; ${peakDesignSourceLabel(source)} / ${station} / ${fmtNumber(Number(dryBulb), 1)} deg C.${fallbackMessage}`
         : "Peak Design Condition: Automatic ASHRAE 20-year Extreme Design Condition.";
     status.style.color = "#059669";
 }
@@ -2463,12 +2481,17 @@ function buildHtmlReport(context) {
         : null;
     const peakDesignDemandKw = peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW ?? peak.peak_total_facility_power_kW;
     const maxHourlyDemandKw = peak.max_hourly_facility_electrical_demand_kW ?? peak.max_hourly_total_facility_power_kW;
-    const peakDesignWeatherSource = peak.peak_design_weather_source || "ASHRAE_20_year_extreme";
+    const peakDesignWeatherSource = peak.peak_design_weather_source || "ASHRAE_local_cache";
     const peakDesignWeatherStation = peak.peak_design_weather_station || "N/A";
-    const peakDesignTemperatureBasis = peak.peak_design_temperature_basis || "ASHRAE n=20 year Extreme Annual Design Condition";
-    const peakDesignDisplaySource = peakDesignWeatherSource === "User Defined Design Condition"
+    const peakDesignWeatherStationId = peak.peak_design_weather_station_id || "N/A";
+    const peakDesignWeatherStationDistance = peak.peak_design_weather_station_distance_km;
+    const peakDesignTemperatureBasis = peak.peak_design_temperature_basis || "ASHRAE_20_year_extreme_annual_design_condition";
+    const peakDesignDisplaySource = peakDesignWeatherSource === "manual" || peakDesignWeatherSource === "User Defined Design Condition"
         ? "User Defined Design Condition"
-        : "ASHRAE 20-year Extreme Annual Design Condition";
+        : "ASHRAE Climatic Design Conditions";
+    const peakDesignDisplayBasis = peakDesignTemperatureBasis === "User Defined Design Condition"
+        ? "User Defined Design Condition"
+        : "20-year Extreme Annual Design Condition";
     const peakPueMetricHtml = isConfigurationLibraryAccV2DirectMode
         ? `<div class="metric"><div class="label">Peak Design PUE</div><div class="value">${reportValue(peakDesignPue, "", 3)}</div>${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`
         : `<div class="metric"><div class="label">Peak Hourly PUE</div><div class="value">${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}</div>${isAnnualBenchmarkMode ? `<div class="subtitle">Annual-equivalent assessment uses average equipment values.</div>` : ""}${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`;
@@ -2673,7 +2696,7 @@ function buildHtmlReport(context) {
     ${isBenchmarkMode ? `<p>This assessment evaluates the annual operating performance of the JUNO data center using an hourly weather-driven simulation with the project-specific ACC cooling architecture.</p>` : ""}
     ${isAccV2DirectMode ? `<div class="note"><b>ACC V2 Direct Mode</b><br>Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` : ""}
     ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Simulation Method</b><br>True EPW × Solver_Curve<br><b>Simulation Basis</b><br>8760-hour Annual Dynamic Simulation</div>` : ""}
-    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Peak Design Condition</b><br>Outdoor Dry Bulb: ${reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)}<br>Source: ${esc(peakDesignDisplaySource)}<br>Weather Station: ${esc(peakDesignWeatherStation)}</div>` : ""}
+    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Peak Design Condition</b><br>Outdoor Design Dry Bulb: ${reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)}<br>Source: ${esc(peakDesignDisplaySource)}<br>Reference Station: ${esc(peakDesignWeatherStation)}<br>Design Criteria: ${esc(peakDesignDisplayBasis)}</div>` : ""}
     ${hasExperimentalPeakWarning ? `<div class="note" style="background:#F5F5F5;border-left-color:#7A7A7A;color:#222222;"><b>Warning:</b> Direct hourly ACC power exceeds scenario peak ACC power by more than 10%. Peak Hourly PUE should be reviewed against design intent.</div>` : ""}
     ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
     <div class="meta">
@@ -2719,8 +2742,8 @@ function buildHtmlReport(context) {
             ["Peak Design Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
             ["Max Hourly Facility Electrical Demand", reportValue(maxHourlyDemandKw, " kW", 0)],
             ["Peak Design Condition", esc(peakDesignDisplaySource)],
-            ["Peak Design Weather Station", esc(peakDesignWeatherStation)],
-            ["Peak Design Weather Source", esc(peakDesignWeatherSource)],
+            ["Reference Station", esc(peakDesignWeatherStation)],
+            ["Peak Design Temperature Basis", esc(peakDesignDisplayBasis)],
             ["Peak Design Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)],
             ["Peak Design IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
             ["Peak Design Cooling Load", reportValue(peak.peak_design_cooling_load_kW, " kW", 1)]
@@ -2750,7 +2773,8 @@ function buildHtmlReport(context) {
         ${isConfigurationLibraryAccV2DirectMode ? `<div class="card"><h3>Peak Design Condition</h3><table><tbody>${tableRows([
             ["Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " °C", 1)],
             ["Source", esc(peakDesignDisplaySource)],
-            ["Weather Station", esc(peakDesignWeatherStation)],
+            ["Reference Station", esc(peakDesignWeatherStation)],
+            ["Design Criteria", esc(peakDesignDisplayBasis)],
             ["IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
             ["Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
             ["Peak Design PUE", reportValue(peak.peak_PUE, "", 3)]
@@ -4626,6 +4650,10 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             project_mode: true,
             latitude: projectInfo.latitude,
             longitude: projectInfo.longitude,
+            site_location: {
+                latitude: projectInfo.latitude,
+                longitude: projectInfo.longitude
+            },
             peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
             peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
             location: {
@@ -4681,6 +4709,10 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         },
         peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
         peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
+        site_location: {
+            latitude: projectInfo.latitude,
+            longitude: projectInfo.longitude
+        },
         other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
         selected_curves: selectedCurves
     };
@@ -4882,8 +4914,14 @@ function renderConfigurationLibrarySummary(data) {
             ["ACC V2 Direct Mode", "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup."],
             ["Simulation Method", "True EPW × Solver_Curve"],
             ["Simulation Basis", "8760-hour Annual Dynamic Simulation"],
-            ["Peak Design Condition", peakResults.peak_design_temperature_basis || "ASHRAE n=20 year Extreme Annual Design Condition"],
+            ["Peak Design Condition", peakResults.peak_design_temperature_basis || "ASHRAE_20_year_extreme_annual_design_condition"],
             ["Peak Design Weather Station", peakResults.peak_design_weather_station || "Not available"],
+            ["Peak Design Weather Station ID", peakResults.peak_design_weather_station_id || "Not available"],
+            ["Peak Design Weather Station Distance", peakResults.peak_design_weather_station_distance_km != null ? `${fmtNumber(peakResults.peak_design_weather_station_distance_km, 1)} km` : "Not available"],
+            ["ASHRAE Online Lookup Provider", peakDesignSourceLabel(peakResults.peak_design_lookup_provider || "ASHRAE_online")],
+            ["ASHRAE Online Lookup Status", peakResults.peak_design_lookup_status || "Not available"],
+            ["ASHRAE Online Lookup Failed", peakResults.peak_design_lookup_failure_reason || "No"],
+            ["ASHRAE Lookup Fallback", peakResults.peak_design_weather_source === "ASHRAE_local_cache" ? "Using Local ASHRAE Cache fallback" : (peakResults.peak_design_weather_source === "manual" ? "Using Manual Override fallback" : "None")],
             ["Peak Design Outdoor Dry Bulb", peakResults.peak_design_outdoor_dry_bulb_C != null ? `${fmtNumber(peakResults.peak_design_outdoor_dry_bulb_C, 1)} deg C` : "Not available"]
         ] : []),
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
@@ -5469,8 +5507,10 @@ function showProjectVisualization(outObj) {
         const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
         const cards = [
             ...(isDirectAccV2 ? [
-                ["Peak Design Condition", peak.peak_design_temperature_basis || "ASHRAE n=20 year Extreme Annual Design Condition"],
-                ["Peak Design Weather Station", peak.peak_design_weather_station || "N/A"]
+                ["Peak Design Condition", peak.peak_design_temperature_basis || "ASHRAE_20_year_extreme_annual_design_condition"],
+                ["ASHRAE Weather Station", peak.peak_design_weather_station || "N/A"],
+                ["Station Distance", peak.peak_design_weather_station_distance_km != null ? `${fmtNumber(peak.peak_design_weather_station_distance_km, 1)} km` : "N/A"],
+                ["Design Temperature Source", "ASHRAE 20-year Extreme Annual DB Max"]
             ] : [["Peak Facility Hour", peak.peak_hour_index]]),
             [isDirectAccV2 ? "Max Hourly PUE Hour" : "Max PUE Hour", peak.max_hourly_PUE_hour_index ?? peak.peak_PUE_hour_index],
             [isDirectAccV2 ? "Peak Design PUE" : "Peak PUE", fmtNumber(peak.peak_PUE, 3)],

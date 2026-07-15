@@ -661,6 +661,7 @@ class ACCV2EngineTest(unittest.TestCase):
         sample["solar_daytime_end_hour"] = 18
         sample["other_auxiliary_heat_gain_kW"] = 71
         sample["project"].setdefault("auxiliary_loads", {})["other_electrical_auxiliary_power_kW"] = 18
+        sample["site_location"] = {"latitude": 32.693, "longitude": -100.951}
         sample["acc_v2_enabled"] = True
         sample["acc_v2"] = {"configuration_path": str(config)}
         annual_only_sample.update({
@@ -668,6 +669,7 @@ class ACCV2EngineTest(unittest.TestCase):
             "solar_daytime_start_hour": sample["solar_daytime_start_hour"],
             "solar_daytime_end_hour": sample["solar_daytime_end_hour"],
             "other_auxiliary_heat_gain_kW": sample["other_auxiliary_heat_gain_kW"],
+            "site_location": sample["site_location"],
             "acc_v2_enabled": True,
             "acc_v2": {"configuration_path": str(config)},
         })
@@ -686,11 +688,16 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertEqual(peak["peak_PUE_definition"], "peak_design")
         self.assertAlmostEqual(peak["peak_design_it_load_kW"], 4400)
         self.assertIsNone(peak["peak_design_hour_index"])
-        self.assertEqual(peak["peak_design_weather_source"], "ASHRAE_20_year_extreme")
+        self.assertEqual(peak["peak_design_weather_source"], "ASHRAE_local_cache")
+        self.assertEqual(peak["peak_design_lookup_provider"], "ASHRAE_online")
+        self.assertEqual(peak["peak_design_lookup_status"], "failed")
+        self.assertEqual(peak["peak_design_lookup_failure_reason"], "Online ASHRAE provider unavailable")
         self.assertEqual(peak["peak_design_weather_station"], "WINSTON FIELD, TX, USA")
+        self.assertEqual(peak["peak_design_weather_station_id"], "722122")
+        self.assertAlmostEqual(peak["peak_design_weather_station_distance_km"], 0.0)
         self.assertEqual(
             peak["peak_design_temperature_basis"],
-            "ASHRAE n=20 year Extreme Annual Design Condition",
+            "ASHRAE_20_year_extreme_annual_design_condition",
         )
         self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 44.0)
         self.assertAlmostEqual(peak["peak_design_cooling_load_kW"], 4400 + 4.065 + 71)
@@ -752,7 +759,38 @@ class ACCV2EngineTest(unittest.TestCase):
 
         self.assertNotIn("error", result)
         peak = result["peak_results"]
-        self.assertEqual(peak["peak_design_weather_source"], "User Defined Design Condition")
+        self.assertEqual(peak["peak_design_weather_source"], "manual")
+        self.assertEqual(peak["peak_design_lookup_provider"], "ASHRAE_online")
+        self.assertEqual(peak["peak_design_lookup_status"], "failed")
+        self.assertEqual(peak["peak_design_lookup_failure_reason"], "manual override selected")
+        self.assertEqual(peak["peak_design_weather_station"], "User Defined")
+        self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 45.0)
+
+    def test_configuration_library_acc_v2_manual_design_condition_does_not_require_online_lookup(self):
+        config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
+        sample = convert_library_input_to_solver_input(
+            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        )
+        sample["project"]["it_load"]["hourly_it_load_kW"] = [4400]
+        sample["weather"]["hourly_data"] = {
+            "hour_index": [7],
+            "dry_bulb_C": [20],
+            "wet_bulb_C": [],
+        }
+        sample["site_location"] = {"latitude": 32.693, "longitude": -100.951}
+        sample["peak_design_weather_source"] = "manual"
+        sample["peak_design_outdoor_dry_bulb_C"] = 45.0
+        sample["acc_v2_enabled"] = True
+        sample["acc_v2"] = {"configuration_path": str(config)}
+
+        result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        peak = result["peak_results"]
+        self.assertEqual(peak["peak_design_weather_source"], "manual")
+        self.assertEqual(peak["peak_design_lookup_provider"], "ASHRAE_online")
+        self.assertEqual(peak["peak_design_lookup_status"], "failed")
+        self.assertEqual(peak["peak_design_lookup_failure_reason"], "manual override selected")
         self.assertEqual(peak["peak_design_weather_station"], "User Defined")
         self.assertAlmostEqual(peak["peak_design_outdoor_dry_bulb_C"], 45.0)
 

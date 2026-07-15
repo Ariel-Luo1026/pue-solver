@@ -74,57 +74,179 @@ def _heat_gain_inputs(input_obj):
         "_force_solar_heat_gain_max": bool(input_obj.get("_force_solar_heat_gain_max")),
     }
 
+def _first_text(*values):
+    for value in values:
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
 def _peak_design_weather_condition(input_obj):
     project = input_obj.get("project", {}) if isinstance(input_obj.get("project"), dict) else {}
     location = project.get("location", {}) if isinstance(project.get("location"), dict) else {}
+    site_location = input_obj.get("site_location", {}) if isinstance(input_obj.get("site_location"), dict) else {}
+    project_site_location = project.get("site_location", {}) if isinstance(project.get("site_location"), dict) else {}
     source = (
         input_obj.get("peak_design_weather_source")
         or project.get("peak_design_weather_source")
         or location.get("peak_design_weather_source")
+        or site_location.get("peak_design_weather_source")
+        or project_site_location.get("peak_design_weather_source")
         or "ashrae_auto"
     )
     source_key = str(source or "ashrae_auto").strip().lower()
-    manual_db = _num(input_obj.get("peak_design_outdoor_dry_bulb_C"), None)
-    if manual_db is None:
-        manual_db = _num(project.get("peak_design_outdoor_dry_bulb_C"), None)
-    if manual_db is None:
-        manual_db = _num(location.get("peak_design_outdoor_dry_bulb_C"), None)
-    if source_key == "manual" and manual_db is not None:
-        return {
-            "source": "User Defined Design Condition",
-            "station_name": "User Defined",
-            "station_id": "",
-            "extreme_db_max_C": float(manual_db),
-            "extreme_db_min_C": None,
-            "temperature_basis": "User Defined Design Condition",
-        }
-
     latitude = _num(input_obj.get("latitude"), None)
     longitude = _num(input_obj.get("longitude"), None)
+    if latitude is None:
+        latitude = _num(site_location.get("latitude"), None)
+    if longitude is None:
+        longitude = _num(site_location.get("longitude"), None)
     if latitude is None:
         latitude = _num(project.get("latitude"), None)
     if longitude is None:
         longitude = _num(project.get("longitude"), None)
     if latitude is None:
+        latitude = _num(project_site_location.get("latitude"), None)
+    if longitude is None:
+        longitude = _num(project_site_location.get("longitude"), None)
+    if latitude is None:
         latitude = _num(location.get("latitude"), None)
     if longitude is None:
         longitude = _num(location.get("longitude"), None)
+    ashrae_endpoint = _first_text(
+        input_obj.get("ashrae_design_conditions_url"),
+        input_obj.get("ASHRAE_DESIGN_CONDITIONS_URL"),
+        project.get("ashrae_design_conditions_url"),
+        project.get("ASHRAE_DESIGN_CONDITIONS_URL"),
+        location.get("ashrae_design_conditions_url"),
+        site_location.get("ashrae_design_conditions_url"),
+        project_site_location.get("ashrae_design_conditions_url"),
+    )
+
+    manual_db = _num(input_obj.get("peak_design_outdoor_dry_bulb_C"), None)
+    if manual_db is None:
+        manual_db = _num(project.get("peak_design_outdoor_dry_bulb_C"), None)
+    if manual_db is None:
+        manual_db = _num(location.get("peak_design_outdoor_dry_bulb_C"), None)
+    if manual_db is None:
+        manual_db = _num(site_location.get("peak_design_outdoor_dry_bulb_C"), None)
+    if manual_db is None:
+        manual_db = _num(project_site_location.get("peak_design_outdoor_dry_bulb_C"), None)
+
+    if source_key == "manual" and manual_db is not None:
+        return {
+            "source": "manual",
+            "lookup_provider": "ASHRAE_online",
+            "lookup_status": "failed",
+            "failure_reason": "manual override selected",
+            "station_name": "User Defined",
+            "station_id": "",
+            "station_distance_km": None,
+            "station_latitude": None,
+            "station_longitude": None,
+            "design_db_max_C": float(manual_db),
+            "extreme_db_max_C": float(manual_db),
+            "extreme_db_min_C": None,
+            "temperature_basis": "User Defined Design Condition",
+        }
+
+    if latitude is not None and longitude is not None:
+        if get_peak_design_condition is None:
+            condition = {
+                "source": "ASHRAE_local_cache",
+                "lookup_provider": "ASHRAE_online",
+                "lookup_status": "failed",
+                "failure_reason": "online lookup module unavailable",
+                "station_name": "WINSTON FIELD, TX, USA",
+                "station_id": "722122",
+                "station_distance_km": 0.0,
+                "station_latitude": 32.693,
+                "station_longitude": -100.951,
+                "extreme_db_max_C": 44.0,
+                "extreme_db_min_C": -16.9,
+                "temperature_basis": "ASHRAE_20_year_extreme_annual_design_condition",
+            }
+        else:
+            condition = get_peak_design_condition(
+                latitude,
+                longitude,
+                source="ashrae_auto",
+                endpoint=ashrae_endpoint,
+            )
+        condition = dict(condition or {})
+        if condition.get("source") != "ASHRAE_online" and manual_db is not None:
+            return {
+                "source": "manual",
+                "lookup_provider": "ASHRAE_online",
+                "lookup_status": "failed",
+                "failure_reason": condition.get("failure_reason") or "online lookup unavailable",
+                "station_name": "User Defined",
+                "station_id": "",
+                "station_distance_km": None,
+                "station_latitude": None,
+                "station_longitude": None,
+                "design_db_max_C": float(manual_db),
+                "extreme_db_max_C": float(manual_db),
+                "extreme_db_min_C": None,
+                "temperature_basis": "User Defined Design Condition",
+            }
+        condition.setdefault("source", "ASHRAE_local_cache")
+        condition.setdefault("lookup_provider", "ASHRAE_online")
+        condition.setdefault("lookup_status", "success" if condition.get("source") == "ASHRAE_online" else "failed")
+        condition.setdefault("failure_reason", "" if condition.get("source") == "ASHRAE_online" else "online lookup unavailable")
+        condition.setdefault("station_name", "Unknown ASHRAE design station")
+        condition.setdefault("station_id", "")
+        condition.setdefault("station_distance_km", 0.0)
+        condition.setdefault("temperature_basis", "ASHRAE_20_year_extreme_annual_design_condition")
+        return condition
+
+    if manual_db is not None:
+        return {
+            "source": "manual",
+            "lookup_provider": "ASHRAE_online",
+            "lookup_status": "failed",
+            "failure_reason": "manual override selected",
+            "station_name": "User Defined",
+            "station_id": "",
+            "station_distance_km": None,
+            "station_latitude": None,
+            "station_longitude": None,
+            "design_db_max_C": float(manual_db),
+            "extreme_db_max_C": float(manual_db),
+            "extreme_db_min_C": None,
+            "temperature_basis": "User Defined Design Condition",
+        }
 
     if get_peak_design_condition is None:
         condition = {
-            "source": "ASHRAE_20_year_extreme",
+            "source": "ASHRAE_local_cache",
+            "lookup_provider": "ASHRAE_online",
+            "lookup_status": "failed",
+            "failure_reason": "online lookup module unavailable",
             "station_name": "WINSTON FIELD, TX, USA",
-            "station_id": "ASHRAE_PLACEHOLDER_WINSTON_FIELD_TX",
+            "station_id": "722122",
+            "station_distance_km": 0.0,
+            "station_latitude": 32.693,
+            "station_longitude": -100.951,
             "extreme_db_max_C": 44.0,
             "extreme_db_min_C": -16.9,
+            "temperature_basis": "ASHRAE_20_year_extreme_annual_design_condition",
         }
     else:
-        condition = get_peak_design_condition(latitude, longitude, source="ashrae_auto")
+        condition = get_peak_design_condition(
+            latitude,
+            longitude,
+            source="ashrae_auto",
+            endpoint=ashrae_endpoint,
+        )
     condition = dict(condition or {})
-    condition.setdefault("source", "ASHRAE_20_year_extreme")
+    condition.setdefault("source", "ASHRAE_local_cache")
+    condition.setdefault("lookup_provider", "ASHRAE_online")
+    condition.setdefault("lookup_status", "success" if condition.get("source") == "ASHRAE_online" else "failed")
+    condition.setdefault("failure_reason", "" if condition.get("source") == "ASHRAE_online" else "online lookup unavailable")
     condition.setdefault("station_name", "Unknown ASHRAE design station")
     condition.setdefault("station_id", "")
-    condition.setdefault("temperature_basis", "ASHRAE n=20 year Extreme Annual Design Condition")
+    condition.setdefault("station_distance_km", 0.0)
+    condition.setdefault("temperature_basis", "ASHRAE_20_year_extreme_annual_design_condition")
     return condition
 
 def _hour_of_day(hour_index, fallback_index):
@@ -3326,8 +3448,14 @@ def compute_pue_project(input_obj):
                     "peak_design_it_load_kW": float(design_it_load_source),
                     "peak_design_cooling_load_kW": peak_design_hour.get("cooling_load_kW"),
                     "peak_design_weather_source": peak_design_condition.get("source"),
+                    "peak_design_lookup_provider": peak_design_condition.get("lookup_provider"),
+                    "peak_design_lookup_status": peak_design_condition.get("lookup_status"),
+                    "peak_design_lookup_failure_reason": peak_design_condition.get("failure_reason"),
                     "peak_design_weather_station": peak_design_condition.get("station_name"),
                     "peak_design_weather_station_id": peak_design_condition.get("station_id"),
+                    "peak_design_weather_station_distance_km": peak_design_condition.get("station_distance_km"),
+                    "peak_design_weather_station_latitude": peak_design_condition.get("station_latitude"),
+                    "peak_design_weather_station_longitude": peak_design_condition.get("station_longitude"),
                     "peak_design_temperature_basis": peak_design_condition.get("temperature_basis"),
                     "peak_design_outdoor_dry_bulb_C": peak_design_ambient_c,
                     "peak_design_hour_index": peak_design_hour_index,

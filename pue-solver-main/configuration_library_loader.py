@@ -491,6 +491,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "calculation_mode": "project_8760",
             "project_mode": True,
             "peak_design_weather_source": "ashrae_auto",
+            "site_location": {},
             "location": {
                 "peak_design_weather_source": "ashrae_auto",
             },
@@ -508,6 +509,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
                 "hourly_it_load_kW": hourly_it_load_kw,
             },
         },
+        "site_location": {},
         "equipment": equipment,
         "electrical_path": electrical_path,
         "selected_curves": selected_curves,

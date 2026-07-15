@@ -457,14 +457,38 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertNotIn("Max Hourly Engine Output", block)
         self.assertIn("peak_design_cooling_load_kW", report_block)
         self.assertIn("peak_design_outdoor_dry_bulb_C", report_block)
-        self.assertIn("ASHRAE 20-year Extreme Annual Design Condition", report_block)
+        self.assertIn("ASHRAE Climatic Design Conditions", report_block)
+        self.assertIn("Reference Station", report_block)
+        self.assertIn("Design Criteria", report_block)
+        self.assertNotIn("Station ID", report_block)
+        self.assertNotIn("Peak Design Weather Source", report_block)
+        self.assertIn("20-year Extreme Annual Design Condition", report_block)
         self.assertIn("Annual Simulation Basis", report_block)
         self.assertIn("Weather Source: EPW Weather File", report_block)
         self.assertIn("peak_design_facility_electrical_demand_kW", visualization_block)
         self.assertIn("max_hourly_facility_electrical_demand_kW", visualization_block)
         self.assertIn("ASHRAE 20-year Extreme Annual Design Condition", visualization_block)
+        self.assertIn("ASHRAE Weather Station", visualization_block)
+        self.assertIn("Station Distance", visualization_block)
+        self.assertIn("Design Temperature Source", visualization_block)
 
     def test_peak_design_weather_controls_feed_library_input(self):
+        self.assertIn('"ashrae_online_lookup.py"', self.ui)
+        self.assertIn('"ashrae_design_conditions.py"', self.ui)
+        self.assertIn('"ashrae_design_conditions_data.json"', self.ui)
+        self.assertIn("function peakDesignSourceLabel", self.ui)
+        self.assertIn("ASHRAE Online", self.ui)
+        self.assertIn("Automatic ASHRAE Online Lookup", self.ui)
+        self.assertIn("Lookup Status", self.ui)
+        self.assertIn("Design DB Maximum", self.ui)
+        self.assertIn("Manual Override", self.ui)
+        self.assertIn("Local ASHRAE Cache", self.ui)
+        self.assertIn("ASHRAE Online Lookup Failed", self.ui)
+        self.assertIn("Using Local ASHRAE Cache fallback", self.ui)
+        self.assertIn("peak_design_lookup_provider", self.ui)
+        self.assertIn("peak_design_lookup_status", self.ui)
+        self.assertIn("peak_design_lookup_failure_reason", self.ui)
+
         for text in (
             "Peak Design Weather",
             "Automatic ASHRAE 20-year Extreme Design Condition",
@@ -479,6 +503,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             "const peakDesignWeather = getPeakDesignWeatherInput()",
             "peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource",
             "peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC",
+            "site_location: {",
             "latitude: projectInfo.latitude",
             "longitude: projectInfo.longitude",
         ):

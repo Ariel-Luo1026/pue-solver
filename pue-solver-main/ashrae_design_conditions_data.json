@@ -1,10 +1,40 @@
 [
   {
     "station_name": "WINSTON FIELD, TX, USA",
-    "station_id": "ASHRAE_PLACEHOLDER_WINSTON_FIELD_TX",
+    "station_id": "722122",
+    "country": "USA",
+    "state": "TX",
     "latitude": 32.693,
     "longitude": -100.951,
     "db_max_20yr_C": 44.0,
-    "db_min_20yr_C": -16.9
+    "db_min_20yr_C": -16.9,
+    "design_conditions": {
+      "extreme_annual_db_max_C": 44.0,
+      "basis": "ASHRAE_20_year_extreme_annual_design_condition"
+    }
+  },
+  {
+    "station_name": "DALLAS LOVE FIELD, TX, USA",
+    "station_id": "722580",
+    "country": "USA",
+    "state": "TX",
+    "latitude": 32.8471,
+    "longitude": -96.8518,
+    "design_conditions": {
+      "extreme_annual_db_max_C": 45.0,
+      "basis": "ASHRAE_20_year_extreme_annual_design_condition"
+    }
+  },
+  {
+    "station_name": "PHOENIX SKY HARBOR INTL AP, AZ, USA",
+    "station_id": "722780",
+    "country": "USA",
+    "state": "AZ",
+    "latitude": 33.4342,
+    "longitude": -112.0116,
+    "design_conditions": {
+      "extreme_annual_db_max_C": 49.4,
+      "basis": "ASHRAE_20_year_extreme_annual_design_condition"
+    }
   }
 ]
