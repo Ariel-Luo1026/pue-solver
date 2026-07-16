@@ -138,6 +138,8 @@ def _peak_design_weather_condition(input_obj):
             "lookup_provider": "ASHRAE_online",
             "lookup_status": "failed",
             "failure_reason": "manual override selected",
+            "lookup_method": "ASHRAE_manual",
+            "lookup_endpoint": None,
             "station_name": "User Defined",
             "station_id": "",
             "station_distance_km": None,
@@ -156,6 +158,8 @@ def _peak_design_weather_condition(input_obj):
                 "lookup_provider": "ASHRAE_online",
                 "lookup_status": "failed",
                 "failure_reason": "online lookup module unavailable",
+                "lookup_method": "ASHRAE_web",
+                "lookup_endpoint": None,
                 "station_name": "WINSTON FIELD, TX, USA",
                 "station_id": "722122",
                 "station_distance_km": 0.0,
@@ -179,6 +183,8 @@ def _peak_design_weather_condition(input_obj):
                 "lookup_provider": "ASHRAE_online",
                 "lookup_status": "failed",
                 "failure_reason": condition.get("failure_reason") or "online lookup unavailable",
+                "lookup_method": "ASHRAE_manual",
+                "lookup_endpoint": condition.get("lookup_endpoint"),
                 "station_name": "User Defined",
                 "station_id": "",
                 "station_distance_km": None,
@@ -193,6 +199,8 @@ def _peak_design_weather_condition(input_obj):
         condition.setdefault("lookup_provider", "ASHRAE_online")
         condition.setdefault("lookup_status", "success" if condition.get("source") == "ASHRAE_online" else "failed")
         condition.setdefault("failure_reason", "" if condition.get("source") == "ASHRAE_online" else "online lookup unavailable")
+        condition.setdefault("lookup_method", "ASHRAE_web" if condition.get("source") == "ASHRAE_online" else "ASHRAE_local_cache")
+        condition.setdefault("lookup_endpoint", None)
         condition.setdefault("station_name", "Unknown ASHRAE design station")
         condition.setdefault("station_id", "")
         condition.setdefault("station_distance_km", 0.0)
@@ -205,6 +213,8 @@ def _peak_design_weather_condition(input_obj):
             "lookup_provider": "ASHRAE_online",
             "lookup_status": "failed",
             "failure_reason": "manual override selected",
+            "lookup_method": "ASHRAE_manual",
+            "lookup_endpoint": None,
             "station_name": "User Defined",
             "station_id": "",
             "station_distance_km": None,
@@ -222,6 +232,8 @@ def _peak_design_weather_condition(input_obj):
             "lookup_provider": "ASHRAE_online",
             "lookup_status": "failed",
             "failure_reason": "online lookup module unavailable",
+            "lookup_method": "ASHRAE_web",
+            "lookup_endpoint": None,
             "station_name": "WINSTON FIELD, TX, USA",
             "station_id": "722122",
             "station_distance_km": 0.0,
@@ -243,6 +255,8 @@ def _peak_design_weather_condition(input_obj):
     condition.setdefault("lookup_provider", "ASHRAE_online")
     condition.setdefault("lookup_status", "success" if condition.get("source") == "ASHRAE_online" else "failed")
     condition.setdefault("failure_reason", "" if condition.get("source") == "ASHRAE_online" else "online lookup unavailable")
+    condition.setdefault("lookup_method", "ASHRAE_web" if condition.get("source") == "ASHRAE_online" else "ASHRAE_local_cache")
+    condition.setdefault("lookup_endpoint", None)
     condition.setdefault("station_name", "Unknown ASHRAE design station")
     condition.setdefault("station_id", "")
     condition.setdefault("station_distance_km", 0.0)
@@ -3400,6 +3414,23 @@ def compute_pue_project(input_obj):
             peak_design_condition = _peak_design_weather_condition(input_obj)
             peak_design_ambient_c = _num(peak_design_condition.get("extreme_db_max_C"), None)
         if design_it_load_source is not None and design_it_load_source > 0 and peak_design_ambient_c is None:
+            result["peak_results"].update({
+                "peak_design_weather_source": peak_design_condition.get("source"),
+                "peak_design_lookup_provider": peak_design_condition.get("lookup_provider"),
+                "peak_design_lookup_status": peak_design_condition.get("lookup_status"),
+                "peak_design_lookup_failure_reason": peak_design_condition.get("failure_reason"),
+                "peak_design_online_status": peak_design_condition.get("online_status"),
+                "peak_design_fallback_status": peak_design_condition.get("fallback_status"),
+                "peak_design_lookup_method": peak_design_condition.get("lookup_method"),
+                "peak_design_lookup_endpoint": peak_design_condition.get("lookup_endpoint"),
+                "peak_design_weather_station": peak_design_condition.get("station_name"),
+                "peak_design_weather_station_id": peak_design_condition.get("station_id"),
+                "peak_design_weather_station_distance_km": peak_design_condition.get("station_distance_km"),
+                "peak_design_weather_station_latitude": peak_design_condition.get("station_latitude"),
+                "peak_design_weather_station_longitude": peak_design_condition.get("station_longitude"),
+                "peak_design_temperature_basis": peak_design_condition.get("temperature_basis"),
+                "peak_design_outdoor_dry_bulb_C": None,
+            })
             validation.setdefault("warnings", []).append(
                 "Peak Design PUE was not calculated because peak design dry-bulb temperature is unavailable; peak_PUE retains max hourly PUE."
             )
@@ -3451,6 +3482,10 @@ def compute_pue_project(input_obj):
                     "peak_design_lookup_provider": peak_design_condition.get("lookup_provider"),
                     "peak_design_lookup_status": peak_design_condition.get("lookup_status"),
                     "peak_design_lookup_failure_reason": peak_design_condition.get("failure_reason"),
+                    "peak_design_online_status": peak_design_condition.get("online_status"),
+                    "peak_design_fallback_status": peak_design_condition.get("fallback_status"),
+                    "peak_design_lookup_method": peak_design_condition.get("lookup_method"),
+                    "peak_design_lookup_endpoint": peak_design_condition.get("lookup_endpoint"),
                     "peak_design_weather_station": peak_design_condition.get("station_name"),
                     "peak_design_weather_station_id": peak_design_condition.get("station_id"),
                     "peak_design_weather_station_distance_km": peak_design_condition.get("station_distance_km"),

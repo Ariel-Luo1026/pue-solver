@@ -1022,15 +1022,18 @@ function getCoolingLoadHeatGainInput() {
 function getPeakDesignWeatherInput() {
     const manualSelected = document.getElementById("peakDesignWeatherManual")?.checked === true;
     const manualDryBulb = optionalFiniteNumber("manualPeakDesignDryBulbC");
+    const proxyUrl = manualSelected ? null : "http://127.0.0.1:8011/api/ashrae_design_condition";
     return {
         peakDesignWeatherSource: manualSelected ? "manual" : "ashrae_auto",
-        peakDesignOutdoorDryBulbC: manualSelected ? manualDryBulb : null
+        peakDesignOutdoorDryBulbC: manualSelected ? manualDryBulb : null,
+        ashraeDesignConditionsUrl: proxyUrl
     };
 }
 
 function peakDesignSourceLabel(source) {
     const normalized = String(source || "").trim();
     if (normalized === "ASHRAE_online" || normalized === "ASHRAE Online") return "ASHRAE Online";
+    if (normalized === "ASHRAE_online_proxy" || normalized === "ASHRAE Online Proxy") return "ASHRAE Online Proxy";
     if (normalized === "manual" || normalized === "User Defined Design Condition") return "Manual Override";
     if (normalized === "ASHRAE_local_cache" || normalized === "ASHRAE_local_fallback") return "Local ASHRAE Cache";
     return normalized || "ASHRAE Online";
@@ -1047,14 +1050,21 @@ function updatePeakDesignWeatherStatus(peakResults = null) {
     const dryBulb = peakResults?.peak_design_outdoor_dry_bulb_C;
     const lookupStatus = String(peakResults?.peak_design_lookup_status || "").toUpperCase();
     const lookupProvider = peakResults?.peak_design_lookup_provider || "ASHRAE_online";
+    const lookupMethod = peakResults?.peak_design_lookup_method || "";
     const lookupFailureReason = peakResults?.peak_design_lookup_failure_reason;
+    const onlineStatus = peakResults?.peak_design_online_status;
+    const fallbackStatus = peakResults?.peak_design_fallback_status;
+    const hasSuccessfulAshraeLookup = lookupStatus === "SUCCESS" && station && Number.isFinite(Number(dryBulb));
     const fallbackMessage = source !== "ASHRAE_online" && lookupFailureReason
         ? `; ASHRAE Online Lookup Failed: ${lookupFailureReason}; ${source === "ASHRAE_local_cache" ? "Using Local ASHRAE Cache fallback" : "Using Manual Override fallback"}`
         : "";
+    const failedLookupMessage = lookupFailureReason
+        ? `ASHRAE Online unavailable; Reason: ${lookupFailureReason}; Online Status: ${onlineStatus || "failed"}; Fallback Status: ${fallbackStatus || "manual_override_required"}; Manual override required`
+        : "";
     if (autoSummary) {
-        autoSummary.textContent = station && Number.isFinite(Number(dryBulb))
-            ? `Automatic ASHRAE Online Lookup; Lookup Status: ${lookupStatus || "UNKNOWN"}; Provider: ${peakDesignSourceLabel(lookupProvider)}; Lookup Source: ${peakDesignSourceLabel(source)}; Weather Station: ${station}; Station ID: ${stationId || "N/A"}; Distance: ${Number.isFinite(Number(distance)) ? fmtNumber(Number(distance), 1) + " km" : "N/A"}; Design DB Maximum: ${fmtNumber(Number(dryBulb), 1)} deg C${fallbackMessage}`
-            : "Automatic ASHRAE Online Lookup; Lookup Status: pending; Weather Station: pending; Design DB Maximum: pending";
+        autoSummary.textContent = hasSuccessfulAshraeLookup
+            ? `ASHRAE Online Lookup Successful; Lookup Status: ${lookupStatus || "UNKNOWN"}; Lookup Method: ${lookupMethod || "ASHRAE_web"}; Provider: ${peakDesignSourceLabel(lookupProvider)}; Lookup Source: ${peakDesignSourceLabel(source)}; Weather Station: ${station}; Station ID: ${stationId || "N/A"}; Distance: ${Number.isFinite(Number(distance)) ? fmtNumber(Number(distance), 1) + " km" : "N/A"}; Design DB Maximum: ${fmtNumber(Number(dryBulb), 1)} deg C${fallbackMessage}`
+            : (failedLookupMessage || "Automatic ASHRAE Online Lookup; Lookup Status: pending; Weather Station: pending; Design DB Maximum: pending");
     }
     if (!status) return;
     if (input.peakDesignWeatherSource === "manual") {
@@ -1064,9 +1074,9 @@ function updatePeakDesignWeatherStatus(peakResults = null) {
         status.style.color = Number.isFinite(Number(input.peakDesignOutdoorDryBulbC)) ? "#059669" : "#b45309";
         return;
     }
-    status.textContent = station
-        ? `Peak Design Weather: Automatic ASHRAE Online Lookup; Lookup Status: ${lookupStatus || "UNKNOWN"}; Provider: ${peakDesignSourceLabel(lookupProvider)}; ${peakDesignSourceLabel(source)} / ${station} / ${fmtNumber(Number(dryBulb), 1)} deg C.${fallbackMessage}`
-        : "Peak Design Condition: Automatic ASHRAE 20-year Extreme Design Condition.";
+    status.textContent = hasSuccessfulAshraeLookup
+        ? `Peak Design Weather: ASHRAE Online Lookup Successful; Lookup Status: ${lookupStatus || "UNKNOWN"}; Lookup Method: ${lookupMethod || "ASHRAE_web"}; Provider: ${peakDesignSourceLabel(lookupProvider)}; ${peakDesignSourceLabel(source)} / ${station} / ${fmtNumber(Number(dryBulb), 1)} deg C.${fallbackMessage}`
+        : (failedLookupMessage || "Peak Design Condition: Automatic ASHRAE 20-year Extreme Design Condition.");
     status.style.color = "#059669";
 }
 
@@ -4656,12 +4666,14 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             },
             peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
             peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
+            ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl,
             location: {
                 name: projectInfo.location,
                 latitude: projectInfo.latitude,
                 longitude: projectInfo.longitude,
                 peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
-                peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC
+                peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
+                ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl
             },
             design_it_load_kW: designItLoadKw,
             cooling_unit_capacity_kW: data.cooling_unit_capacity_mw * 1000,
@@ -4709,9 +4721,11 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         },
         peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
         peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
+        ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl,
         site_location: {
             latitude: projectInfo.latitude,
-            longitude: projectInfo.longitude
+            longitude: projectInfo.longitude,
+            ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl
         },
         other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
         selected_curves: selectedCurves
@@ -4787,6 +4801,7 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         project,
         peak_design_weather_source: libraryInput.peak_design_weather_source ?? project.peak_design_weather_source ?? "ashrae_auto",
         peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C ?? project.peak_design_outdoor_dry_bulb_C ?? null,
+        ashrae_design_conditions_url: libraryInput.ashrae_design_conditions_url ?? project.ashrae_design_conditions_url ?? null,
         solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0,
         solar_daytime_start_hour: libraryInput.heat_gains?.solar_daytime_start_hour ?? 6,
         solar_daytime_end_hour: libraryInput.heat_gains?.solar_daytime_end_hour ?? 18,
@@ -4920,8 +4935,11 @@ function renderConfigurationLibrarySummary(data) {
             ["Peak Design Weather Station Distance", peakResults.peak_design_weather_station_distance_km != null ? `${fmtNumber(peakResults.peak_design_weather_station_distance_km, 1)} km` : "Not available"],
             ["ASHRAE Online Lookup Provider", peakDesignSourceLabel(peakResults.peak_design_lookup_provider || "ASHRAE_online")],
             ["ASHRAE Online Lookup Status", peakResults.peak_design_lookup_status || "Not available"],
+            ["ASHRAE Online Status", peakResults.peak_design_online_status || "Not available"],
+            ["ASHRAE Online Lookup Method", peakResults.peak_design_lookup_method || "Not available"],
+            ["ASHRAE Online Lookup Endpoint", peakResults.peak_design_lookup_endpoint || "Not available"],
             ["ASHRAE Online Lookup Failed", peakResults.peak_design_lookup_failure_reason || "No"],
-            ["ASHRAE Lookup Fallback", peakResults.peak_design_weather_source === "ASHRAE_local_cache" ? "Using Local ASHRAE Cache fallback" : (peakResults.peak_design_weather_source === "manual" ? "Using Manual Override fallback" : "None")],
+            ["ASHRAE Lookup Fallback", peakResults.peak_design_fallback_status || (peakResults.peak_design_weather_source === "ASHRAE_local_cache" ? "Using Local ASHRAE Cache fallback" : (peakResults.peak_design_weather_source === "manual" ? "Using Manual Override fallback" : "None"))],
             ["Peak Design Outdoor Dry Bulb", peakResults.peak_design_outdoor_dry_bulb_C != null ? `${fmtNumber(peakResults.peak_design_outdoor_dry_bulb_C, 1)} deg C` : "Not available"]
         ] : []),
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],

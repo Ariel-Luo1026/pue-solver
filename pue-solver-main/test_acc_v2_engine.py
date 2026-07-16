@@ -675,8 +675,9 @@ class ACCV2EngineTest(unittest.TestCase):
         })
         annual_only_sample["project"].setdefault("auxiliary_loads", {})["other_electrical_auxiliary_power_kW"] = 18
 
-        result = compute_pue_project(sample)
-        annual_only_result = compute_pue_project(annual_only_sample)
+        with patch.dict("ashrae_online_lookup.environ", {"ASHRAE_ONLINE_LOOKUP_DISABLED": "1"}, clear=True):
+            result = compute_pue_project(sample)
+            annual_only_result = compute_pue_project(annual_only_sample)
 
         self.assertNotIn("error", result)
         annual = result["annual_results"]
@@ -691,7 +692,8 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertEqual(peak["peak_design_weather_source"], "ASHRAE_local_cache")
         self.assertEqual(peak["peak_design_lookup_provider"], "ASHRAE_online")
         self.assertEqual(peak["peak_design_lookup_status"], "failed")
-        self.assertEqual(peak["peak_design_lookup_failure_reason"], "Online ASHRAE provider unavailable")
+        self.assertEqual(peak["peak_design_lookup_failure_reason"], "online lookup disabled")
+        self.assertEqual(peak["peak_design_lookup_method"], "ASHRAE_local_cache")
         self.assertEqual(peak["peak_design_weather_station"], "WINSTON FIELD, TX, USA")
         self.assertEqual(peak["peak_design_weather_station_id"], "722122")
         self.assertAlmostEqual(peak["peak_design_weather_station_distance_km"], 0.0)

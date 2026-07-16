@@ -10,6 +10,7 @@ except Exception:
     lookup_online_ashrae_design_condition = None
 
 DATA_PATH = Path(__file__).resolve().with_name("ashrae_design_conditions_data.json")
+MAX_LOCAL_CACHE_FALLBACK_DISTANCE_KM = 500.0
 
 _FALLBACK_STATIONS = [
     {
@@ -133,6 +134,10 @@ def get_peak_design_condition(latitude, longitude, source="ashrae_auto", endpoin
     stations = load_design_condition_stations()
     lookup_status = "failed"
     lookup_failure_reason = ""
+    lookup_method = None
+    lookup_endpoint = None
+    online_status = "not_attempted"
+    fallback_status = "not_used"
     if latitude is None or longitude is None:
         matched = _station_result(stations[0], 0.0)
         source_label = "ASHRAE_local_cache"
@@ -144,6 +149,7 @@ def get_peak_design_condition(latitude, longitude, source="ashrae_auto", endpoin
                 online = lookup_online_ashrae_design_condition(latitude, longitude, endpoint=endpoint, timeout=timeout_seconds)
                 lookup_status = online.get("lookup_status", "success") if isinstance(online, dict) else "failed"
                 lookup_failure_reason = online.get("failure_reason", "") if isinstance(online, dict) else "invalid response"
+                online_status = online.get("online_status", lookup_status) if isinstance(online, dict) else "failed"
                 if isinstance(online, dict) and lookup_status == "success":
                     matched = {
                         "station_name": online["station_name"],
@@ -156,18 +162,45 @@ def get_peak_design_condition(latitude, longitude, source="ashrae_auto", endpoin
                     }
                     source_label = "ASHRAE_online"
                     lookup_failure_reason = ""
+                    lookup_method = online.get("lookup_method")
+                    lookup_endpoint = online.get("lookup_endpoint")
+                    fallback_status = online.get("fallback_status", "not_used")
             else:
                 lookup_failure_reason = "online lookup module unavailable"
+                online_status = "failed"
         if matched is None:
             matched = find_nearest_ashrae_station(latitude, longitude, stations)
             source_label = "ASHRAE_local_cache"
             if not lookup_failure_reason:
                 lookup_failure_reason = "online lookup unavailable"
+            if online_status == "not_attempted":
+                online_status = "failed"
+            lookup_method = "ASHRAE_local_cache"
+            lookup_endpoint = None
+            fallback_status = "ASHRAE_local_cache"
+            if _num(matched.get("distance_km"), float("inf")) > MAX_LOCAL_CACHE_FALLBACK_DISTANCE_KM:
+                matched = {
+                    "station_name": "No valid nearby ASHRAE cache station",
+                    "station_id": "",
+                    "distance_km": None,
+                    "latitude": None,
+                    "longitude": None,
+                    "extreme_annual_db_max_C": None,
+                    "basis": "ASHRAE_20_year_extreme_annual_design_condition",
+                }
+                source_label = "ASHRAE_online"
+                lookup_status = "failed"
+                fallback_status = "no_valid_nearby_ASHRAE_cache_station"
+                lookup_method = "ASHRAE_web"
     return {
         "source": source_label,
         "lookup_provider": "ASHRAE_online",
         "lookup_status": lookup_status if source_label == "ASHRAE_online" else "failed",
-        "failure_reason": "" if source_label == "ASHRAE_online" else lookup_failure_reason,
+        "failure_reason": "" if source_label == "ASHRAE_online" and lookup_status == "success" else lookup_failure_reason,
+        "online_status": online_status,
+        "fallback_status": fallback_status,
+        "lookup_method": lookup_method,
+        "lookup_endpoint": lookup_endpoint,
         "station_name": matched["station_name"],
         "station_id": matched["station_id"],
         "station_distance_km": matched["distance_km"],
