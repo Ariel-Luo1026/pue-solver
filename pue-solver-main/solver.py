@@ -114,13 +114,11 @@ def _peak_design_weather_condition(input_obj):
         longitude = _num(location.get("longitude"), None)
     ashrae_endpoint = _first_text(
         input_obj.get("ashrae_design_conditions_url"),
-        input_obj.get("ASHRAE_DESIGN_CONDITIONS_URL"),
         project.get("ashrae_design_conditions_url"),
-        project.get("ASHRAE_DESIGN_CONDITIONS_URL"),
-        location.get("ashrae_design_conditions_url"),
-        site_location.get("ashrae_design_conditions_url"),
-        project_site_location.get("ashrae_design_conditions_url"),
     )
+    print("[Phase19B:solver] _peak_design_weather_condition received endpoint=", ashrae_endpoint)
+    print("[Phase19B:solver] _peak_design_weather_condition source=", source, "lat=", latitude, "lon=", longitude)
+    print("[Phase19B:solver] get_peak_design_condition available=", get_peak_design_condition is not None)
 
     manual_db = _num(input_obj.get("peak_design_outdoor_dry_bulb_C"), None)
     if manual_db is None:
@@ -151,6 +149,41 @@ def _peak_design_weather_condition(input_obj):
             "temperature_basis": "User Defined Design Condition",
         }
 
+    override = input_obj.get("peak_design_condition_override")
+    if not isinstance(override, dict):
+        override = project.get("peak_design_condition_override")
+    if isinstance(override, dict):
+        override_db = _num(
+            override.get("design_db_max_C")
+            if override.get("design_db_max_C") is not None
+            else override.get("extreme_db_max_C"),
+            None,
+        )
+        if override_db is not None:
+            print("[Phase19B:solver] get_peak_design_condition NOT called: using browser proxy peak_design_condition_override")
+            return {
+                "source": override.get("source") or "ASHRAE_online_proxy",
+                "lookup_provider": override.get("lookup_provider") or "ASHRAE_online_proxy",
+                "lookup_status": override.get("lookup_status") or "success",
+                "failure_reason": override.get("failure_reason") or "",
+                "online_status": override.get("online_status") or override.get("lookup_status") or "success",
+                "fallback_status": override.get("fallback_status") or "not_used",
+                "lookup_method": override.get("lookup_method") or "ASHRAE_proxy",
+                "lookup_endpoint": override.get("lookup_endpoint") or ashrae_endpoint,
+                "station_name": override.get("station_name") or "Unknown ASHRAE design station",
+                "station_id": override.get("station_id") or "",
+                "station_distance_km": _num(override.get("station_distance_km"), _num(override.get("distance_km"), 0.0)),
+                "station_latitude": _num(override.get("station_latitude"), _num(override.get("latitude"), None)),
+                "station_longitude": _num(override.get("station_longitude"), _num(override.get("longitude"), None)),
+                "design_db_max_C": float(override_db),
+                "extreme_db_max_C": float(override_db),
+                "extreme_db_min_C": _num(override.get("extreme_db_min_C"), None),
+                "temperature_basis": (
+                    override.get("temperature_basis")
+                    or "ASHRAE_20_year_extreme_annual_design_condition"
+                ),
+            }
+
     if latitude is not None and longitude is not None:
         if get_peak_design_condition is None:
             condition = {
@@ -170,6 +203,7 @@ def _peak_design_weather_condition(input_obj):
                 "temperature_basis": "ASHRAE_20_year_extreme_annual_design_condition",
             }
         else:
+            print("[Phase19B:solver] calling get_peak_design_condition endpoint=", ashrae_endpoint)
             condition = get_peak_design_condition(
                 latitude,
                 longitude,
@@ -244,6 +278,7 @@ def _peak_design_weather_condition(input_obj):
             "temperature_basis": "ASHRAE_20_year_extreme_annual_design_condition",
         }
     else:
+        print("[Phase19B:solver] calling get_peak_design_condition without valid coordinates endpoint=", ashrae_endpoint)
         condition = get_peak_design_condition(
             latitude,
             longitude,
@@ -2062,6 +2097,11 @@ def compute_pue_project(input_obj):
     """
     if not isinstance(input_obj, dict):
         return {"error": "input is not an object"}
+    project_debug = input_obj.get("project", {}) if isinstance(input_obj.get("project"), dict) else {}
+    print("[Phase19B:solver] compute_pue_project received top endpoint=", input_obj.get("ashrae_design_conditions_url"))
+    print("[Phase19B:solver] compute_pue_project received project endpoint=", project_debug.get("ashrae_design_conditions_url"))
+    print("[Phase19B:solver] compute_pue_project received run_mode=", input_obj.get("run_mode"))
+    print("[Phase19B:solver] compute_pue_project received acc_v2=", input_obj.get("acc_v2"))
 
     # curve library passed from UI (recommended)
     curve_lib = input_obj.get("curve_library", None)
@@ -3400,17 +3440,26 @@ def compute_pue_project(input_obj):
     design_it_load_source = _num(it_load.get("design_it_load_kW"), None)
     if design_it_load_source is None or design_it_load_source <= 0:
         design_it_load_source = _num(project.get("design_it_load_kW"), None)
+    peak_design_condition = {}
+    peak_design_ambient_c = None
     should_calculate_peak_design = (
         configuration_library_direct_mode
         and acc_v2_direct_mode_enabled
         and not input_obj.get("_skip_peak_design_pue")
     )
+    print("[Phase19B:solver] peak design gate configuration_library_direct_mode=", configuration_library_direct_mode)
+    print("[Phase19B:solver] peak design gate acc_v2_direct_mode_enabled=", acc_v2_direct_mode_enabled)
+    print("[Phase19B:solver] peak design gate skip=", bool(input_obj.get("_skip_peak_design_pue")))
+    print("[Phase19B:solver] peak design gate design_it_load_source=", design_it_load_source)
+    print("[Phase19B:solver] peak design gate should_calculate_peak_design=", should_calculate_peak_design)
     if should_calculate_peak_design:
         if design_it_load_source is None or design_it_load_source <= 0:
+            print("[Phase19B:solver] get_peak_design_condition NOT called: design_it_load_source missing or <= 0")
             validation.setdefault("warnings", []).append(
                 "Peak Design PUE was not calculated because design_it_load_kW is missing; peak_PUE retains max hourly PUE."
             )
         else:
+            print("[Phase19B:solver] get_peak_design_condition WILL be called via _peak_design_weather_condition")
             peak_design_condition = _peak_design_weather_condition(input_obj)
             peak_design_ambient_c = _num(peak_design_condition.get("extreme_db_max_C"), None)
         if design_it_load_source is not None and design_it_load_source > 0 and peak_design_ambient_c is None:
@@ -3522,6 +3571,8 @@ def compute_pue_project(input_obj):
                 validation.setdefault("warnings", []).append(
                     f"Peak Design PUE evaluation failed; peak_PUE retains max hourly PUE. Reason: {exc}"
                 )
+    else:
+        print("[Phase19B:solver] get_peak_design_condition NOT called: peak design gate false")
     validation["checks"]["PUE_greater_than_1_check"] = annual_pue is None or annual_pue > 1.0
     if isinstance(weather.get("design_peak_hour_method"), str) and weather.get("design_peak_hour_method").lower() == "highest_dry_bulb_hour":
         max_dry = max(range(len(dry_bulb)), key=lambda j: _num(dry_bulb[j], -1.0)) if len(dry_bulb) > 0 else None

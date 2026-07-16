@@ -160,6 +160,8 @@ const equipmentPdfSpecs = {};
 const CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE = "acc_v2_direct_solver_curve_hourly";
 const CONFIGURATION_LIBRARY_ACC_ENGINE = "acc_v2_configuration_library";
 const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
+const ASHRAE_PROXY_URL = "http://127.0.0.1:8011/api/ashrae_design_condition";
+const PHASE19B_TRACE = true;
 const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "equipment_registry.py",
     "topology_registry.py",
@@ -181,6 +183,12 @@ const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
 
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
+
+function phase19bTrace(label, data = null) {
+    if (!PHASE19B_TRACE) return;
+    const payload = data && typeof data === "object" ? JSON.parse(JSON.stringify(data)) : data;
+    console.log(`[Phase19B] ${label}`, payload ?? "");
+}
 
 function setRunButtonsDisabled(disabled) {
     if (btnRun) btnRun.disabled = disabled;
@@ -276,7 +284,7 @@ async function ensurePyodideReady() {
 }
 
 async function loadPythonModuleIntoPyodide(fileName) {
-    const text = await fetch(`./${fileName}`).then(response => {
+    const text = await fetch(`./${fileName}`, { cache: "no-store" }).then(response => {
         if (!response.ok) throw new Error(`Failed to load ${fileName}`);
         return response.text();
     });
@@ -331,6 +339,13 @@ function applyAccCalculationEngineSelection(inputObj, calculationMode = CONFIGUR
     inputObj.acc_v2.enabled = true;
     const activeConfigurationPath = configurationPath || inputObj.configuration_path || inputObj.configuration_name || inputObj.project?.name;
     if (activeConfigurationPath) inputObj.acc_v2.configuration_path = activeConfigurationPath;
+    phase19bTrace("applyAccCalculationEngineSelection", {
+        run_mode: inputObj.run_mode,
+        acc_v2_enabled: inputObj.acc_v2.enabled,
+        acc_v2_configuration_path: inputObj.acc_v2.configuration_path,
+        ashrae_top: inputObj.ashrae_design_conditions_url,
+        ashrae_project: inputObj.project?.ashrae_design_conditions_url
+    });
     return inputObj;
 }
 
@@ -1022,12 +1037,31 @@ function getCoolingLoadHeatGainInput() {
 function getPeakDesignWeatherInput() {
     const manualSelected = document.getElementById("peakDesignWeatherManual")?.checked === true;
     const manualDryBulb = optionalFiniteNumber("manualPeakDesignDryBulbC");
-    const proxyUrl = manualSelected ? null : "http://127.0.0.1:8011/api/ashrae_design_condition";
+    const proxyUrl = manualSelected ? null : ASHRAE_PROXY_URL;
     return {
         peakDesignWeatherSource: manualSelected ? "manual" : "ashrae_auto",
         peakDesignOutdoorDryBulbC: manualSelected ? manualDryBulb : null,
         ashraeDesignConditionsUrl: proxyUrl
     };
+}
+
+async function fetchAshraeProxyDesignConditionForLibrary(libraryInput) {
+    const project = libraryInput?.project || {};
+    const latitude = Number(project.latitude ?? project.site_location?.latitude ?? project.location?.latitude);
+    const longitude = Number(project.longitude ?? project.site_location?.longitude ?? project.location?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        phase19bTrace("fetchAshraeProxyDesignConditionForLibrary:skipped missing coordinates", { latitude, longitude });
+        return null;
+    }
+    const url = new URL(ASHRAE_PROXY_URL);
+    url.searchParams.set("latitude", String(latitude));
+    url.searchParams.set("longitude", String(longitude));
+    phase19bTrace("fetchAshraeProxyDesignConditionForLibrary:browser GET", { url: url.href });
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`ASHRAE proxy HTTP ${response.status}`);
+    const payload = await response.json();
+    phase19bTrace("fetchAshraeProxyDesignConditionForLibrary:browser response", payload);
+    return payload;
 }
 
 function peakDesignSourceLabel(source) {
@@ -3468,6 +3502,14 @@ function solverProjectArraysReady(inputObj) {
 }
 
 function prepareSolverJob(rawInput, curveLib) {
+    phase19bTrace("prepareSolverJob:start", {
+        ashrae_top: rawInput?.ashrae_design_conditions_url,
+        ashrae_project: rawInput?.project?.ashrae_design_conditions_url,
+        run_mode: rawInput?.run_mode,
+        acc_v2_configuration_path: rawInput?.acc_v2?.configuration_path,
+        has_project: Boolean(rawInput?.project),
+        has_weather: Boolean(rawInput?.weather)
+    });
     if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) {
         return {
             kind: "invalid",
@@ -3495,6 +3537,13 @@ function prepareSolverJob(rawInput, curveLib) {
 
     const normalizedProject = normalizeAnnualProjectInput(withCurves);
     const normalizedInput = normalizedProject.input;
+    phase19bTrace("prepareSolverJob:after normalizeAnnualProjectInput", {
+        ashrae_top: normalizedInput?.ashrae_design_conditions_url,
+        ashrae_project: normalizedInput?.project?.ashrae_design_conditions_url,
+        hourlyItCount: normalizedProject.hourlyItCount,
+        weatherCount: normalizedProject.weatherCount,
+        isProject: normalizedProject.isProject
+    });
     const projectReady = solverProjectArraysReady(normalizedInput);
     const projectIntent =
         hasProjectIntent(rawInput) ||
@@ -3506,7 +3555,7 @@ function prepareSolverJob(rawInput, curveLib) {
         const hourlyIt = getPath(normalizedInput, ["project", "it_load", "hourly_it_load_kW"]);
         const dryBulb = getPath(normalizedInput, ["weather", "hourly_data", "dry_bulb_C"]);
         const n = Math.min(hourlyIt.length, dryBulb.length);
-        return {
+        const job = {
             kind: "project",
             solverFn: "compute_pue_project",
             input: normalizedInput,
@@ -3523,6 +3572,14 @@ function prepareSolverJob(rawInput, curveLib) {
                     : "IT and weather arrays have different lengths; solver will fill missing side with defaults."
             }
         };
+        phase19bTrace("prepareSolverJob:return project", {
+            solverFn: job.solverFn,
+            ashrae_top: job.input?.ashrae_design_conditions_url,
+            ashrae_project: job.input?.project?.ashrae_design_conditions_url,
+            itHours: hourlyIt.length,
+            weatherHours: dryBulb.length
+        });
+        return job;
     }
 
     if (projectIntent) {
@@ -4604,6 +4661,11 @@ function maxHourlyResultField(hourlyRows, fieldNames) {
 }
 
 function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) {
+    phase19bTrace("buildFrontendSolverInputFromLibrary:start", {
+        configuration_name: data?.configuration_name,
+        scenarioNameOverride,
+        existing_data_path: data?.configuration_path
+    });
     const projectInfo = getProjectReportInfo();
     const totalCapacityMw = projectInfo.capacityMw;
     if (!(Number(totalCapacityMw) > 0)) return null;
@@ -4625,6 +4687,11 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     const designItLoadKw = Number(totalCapacityMw) * 1000;
     const heatGains = getCoolingLoadHeatGainInput();
     const peakDesignWeather = getPeakDesignWeatherInput();
+    const libraryAshraeUrl = ASHRAE_PROXY_URL;
+    phase19bTrace("buildFrontendSolverInputFromLibrary:ashrae assignment", {
+        peakDesignWeather,
+        assigned_ashrae_design_conditions_url: libraryAshraeUrl
+    });
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
     const selectedCurves = Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
@@ -4666,14 +4733,14 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             },
             peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
             peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
-            ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl,
+            ashrae_design_conditions_url: libraryAshraeUrl,
             location: {
                 name: projectInfo.location,
                 latitude: projectInfo.latitude,
                 longitude: projectInfo.longitude,
                 peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
                 peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
-                ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl
+                ashrae_design_conditions_url: libraryAshraeUrl
             },
             design_it_load_kW: designItLoadKw,
             cooling_unit_capacity_kW: data.cooling_unit_capacity_mw * 1000,
@@ -4721,11 +4788,11 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         },
         peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource,
         peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC,
-        ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl,
+        ashrae_design_conditions_url: libraryAshraeUrl,
         site_location: {
             latitude: projectInfo.latitude,
             longitude: projectInfo.longitude,
-            ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl
+            ashrae_design_conditions_url: libraryAshraeUrl
         },
         other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
         selected_curves: selectedCurves
@@ -4733,11 +4800,26 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
 }
 
 function convertFrontendLibraryInputToSolverInput(libraryInput) {
+    phase19bTrace("convertFrontendLibraryInputToSolverInput:start", {
+        ashrae_top: libraryInput?.ashrae_design_conditions_url,
+        ashrae_project: libraryInput?.project?.ashrae_design_conditions_url,
+        configuration_path: libraryInput?.configuration_path,
+        scenario_name: libraryInput?.scenario_name
+    });
     const clone = value => JSON.parse(JSON.stringify(value));
     const project = clone(libraryInput.project);
     const hourlyIt = project.it_load.hourly_it_load_kW;
     const hours = hourlyIt.length;
     const activeUnits = Number(project.active_units);
+    const ashraeEndpoint = libraryInput.ashrae_design_conditions_url ?? project.ashrae_design_conditions_url ?? null;
+    project.ashrae_design_conditions_url = ashraeEndpoint;
+    const peakDesignConditionOverride = libraryInput.peak_design_condition_override ?? project.peak_design_condition_override ?? null;
+    if (peakDesignConditionOverride) project.peak_design_condition_override = peakDesignConditionOverride;
+    phase19bTrace("convertFrontendLibraryInputToSolverInput:ashrae assignment", {
+        ashraeEndpoint,
+        project_ashrae_design_conditions_url: project.ashrae_design_conditions_url,
+        has_peak_design_condition_override: Boolean(peakDesignConditionOverride)
+    });
     project.auxiliary_loads = project.auxiliary_loads && typeof project.auxiliary_loads === "object" ? project.auxiliary_loads : {};
     project.auxiliary_loads.other_electrical_auxiliary_power_kW =
         project.auxiliary_loads.other_electrical_auxiliary_power_kW ?? libraryInput.other_electrical_auxiliary_power_kW ?? 0;
@@ -4799,9 +4881,11 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             data: clone(radiatorRows)
         },
         project,
+        peak_design_condition_override: peakDesignConditionOverride,
+        ashrae_proxy_prefetch_failure: libraryInput.ashrae_proxy_prefetch_failure ?? null,
         peak_design_weather_source: libraryInput.peak_design_weather_source ?? project.peak_design_weather_source ?? "ashrae_auto",
         peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C ?? project.peak_design_outdoor_dry_bulb_C ?? null,
-        ashrae_design_conditions_url: libraryInput.ashrae_design_conditions_url ?? project.ashrae_design_conditions_url ?? null,
+        ashrae_design_conditions_url: ashraeEndpoint,
         solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0,
         solar_daytime_start_hour: libraryInput.heat_gains?.solar_daytime_start_hour ?? 6,
         solar_daytime_end_hour: libraryInput.heat_gains?.solar_daytime_end_hour ?? 18,
@@ -4841,6 +4925,11 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
 }
 
 async function runUsingConfigurationLibrary() {
+    phase19bTrace("Run Using Configuration Library starts", {
+        hasConfigurationLibraryData: Boolean(configurationLibraryData),
+        configuration_name: configurationLibraryData?.configuration_name,
+        ui_script: "ui.js?v=20260716-phase19b-trace"
+    });
     const status = document.getElementById("configurationLibraryStatus");
     if (!configurationLibraryData) {
         if (status) status.textContent = "Load Configuration Library first.";
@@ -4848,9 +4937,40 @@ async function runUsingConfigurationLibrary() {
     }
     const calculationMode = CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE;
     const libraryInput = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+    phase19bTrace("runUsingConfigurationLibrary:libraryInput built", {
+        ashrae_top: libraryInput?.ashrae_design_conditions_url,
+        ashrae_project: libraryInput?.project?.ashrae_design_conditions_url,
+        project: {
+            latitude: libraryInput?.project?.latitude,
+            longitude: libraryInput?.project?.longitude,
+            active_units: libraryInput?.project?.active_units,
+            design_it_load_kW: libraryInput?.project?.design_it_load_kW
+        }
+    });
     if (!libraryInput) {
         if (status) status.textContent = "Enter Total IT Capacity before running the configuration.";
         return;
+    }
+    try {
+        const proxyCondition = await fetchAshraeProxyDesignConditionForLibrary(libraryInput);
+        if (proxyCondition) {
+            libraryInput.peak_design_condition_override = proxyCondition;
+            libraryInput.project.peak_design_condition_override = proxyCondition;
+            phase19bTrace("runUsingConfigurationLibrary:proxy condition override assigned", {
+                lookup_status: proxyCondition.lookup_status,
+                lookup_method: proxyCondition.lookup_method,
+                lookup_provider: proxyCondition.lookup_provider,
+                station_name: proxyCondition.station_name,
+                design_db_max_C: proxyCondition.design_db_max_C
+            });
+        }
+    } catch (error) {
+        libraryInput.ashrae_proxy_prefetch_failure = String(error.message || error);
+        phase19bTrace("runUsingConfigurationLibrary:proxy prefetch failed; solver will receive proxy URL", {
+            failure: libraryInput.ashrae_proxy_prefetch_failure,
+            ashrae_top: libraryInput.ashrae_design_conditions_url,
+            ashrae_project: libraryInput.project?.ashrae_design_conditions_url
+        });
     }
     let syncResult;
     setRunButtonsDisabled(true);
@@ -4871,7 +4991,15 @@ async function runUsingConfigurationLibrary() {
     libraryInput.configuration_path = syncResult.configuration_path;
     configurationLibraryData.standardized_solver_input = libraryInput;
     const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput);
+    configurationLibraryData.final_solver_input = adaptedInput;
     applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path);
+    phase19bTrace("runUsingConfigurationLibrary:adaptedInput after engine selection", {
+        ashrae_top: adaptedInput?.ashrae_design_conditions_url,
+        ashrae_project: adaptedInput?.project?.ashrae_design_conditions_url,
+        run_mode: adaptedInput?.run_mode,
+        acc_v2: adaptedInput?.acc_v2,
+        final_json_passed_to_run: adaptedInput
+    });
     if (!adaptedInput.acc_v2?.configuration_path) {
         if (status) {
             status.textContent = "Configuration Library path is missing. Please click Load Configuration Library before running.";
@@ -4906,6 +5034,8 @@ function renderConfigurationLibrarySummary(data) {
     const electricalPath = standardized?.electrical_path;
     const annualElectrical = data.last_solver_output?.annual_results || {};
     const peakResults = data.last_solver_output?.peak_results || {};
+    const finalSolverInput = data.final_solver_input || null;
+    const ashraeEndpointSent = finalSolverInput?.ashrae_design_conditions_url || finalSolverInput?.project?.ashrae_design_conditions_url || standardized?.ashrae_design_conditions_url || standardized?.project?.ashrae_design_conditions_url || "Not available";
     const hourlyElectrical = Array.isArray(data.last_solver_output?.hourly_results) ? data.last_solver_output.hourly_results : [];
     const directAccV2Disclosure = isConfigurationLibraryAccV2DirectResult(data.last_solver_output || {}, data.standardized_solver_input || null);
     const resultValue = (value, formatter) => value != null ? formatter(value) : "Not available";
@@ -4938,6 +5068,10 @@ function renderConfigurationLibrarySummary(data) {
             ["ASHRAE Online Status", peakResults.peak_design_online_status || "Not available"],
             ["ASHRAE Online Lookup Method", peakResults.peak_design_lookup_method || "Not available"],
             ["ASHRAE Online Lookup Endpoint", peakResults.peak_design_lookup_endpoint || "Not available"],
+            ["ASHRAE Endpoint Sent to Solver", ashraeEndpointSent],
+            ["ASHRAE Endpoint Received by Solver", peakResults.peak_design_lookup_endpoint || "Not available"],
+            ["Lookup Method", peakResults.peak_design_lookup_method || "Not available"],
+            ["Lookup Provider", peakDesignSourceLabel(peakResults.peak_design_lookup_provider || "ASHRAE_online")],
             ["ASHRAE Online Lookup Failed", peakResults.peak_design_lookup_failure_reason || "No"],
             ["ASHRAE Lookup Fallback", peakResults.peak_design_fallback_status || (peakResults.peak_design_weather_source === "ASHRAE_local_cache" ? "Using Local ASHRAE Cache fallback" : (peakResults.peak_design_weather_source === "manual" ? "Using Manual Override fallback" : "None"))],
             ["Peak Design Outdoor Dry Bulb", peakResults.peak_design_outdoor_dry_bulb_C != null ? `${fmtNumber(peakResults.peak_design_outdoor_dry_bulb_C, 1)} deg C` : "Not available"]
@@ -5870,6 +6004,12 @@ async function init() {
 }
 
 async function run(options = {}) {
+    phase19bTrace("run:start", {
+        libraryRun: options?.libraryRun === true,
+        requestedSolverFn: options?.solverFn || null,
+        providedLibraryInputAshraeTop: options?.libraryInput?.ashrae_design_conditions_url,
+        providedLibraryInputAshraeProject: options?.libraryInput?.project?.ashrae_design_conditions_url
+    });
     if (runInProgress) return;
     runInProgress = true;
     setRunButtonsDisabled(true);
@@ -5916,12 +6056,26 @@ async function run(options = {}) {
             refreshStandardInputStatus();
         }
         const rawInput = providedLibraryInput || standardSolverInput || JSON.parse(elIn.value);
+        phase19bTrace("run:rawInput selected", {
+            source: providedLibraryInput ? "providedLibraryInput" : (standardSolverInput ? "standardSolverInput" : "elIn"),
+            ashrae_top: rawInput?.ashrae_design_conditions_url,
+            ashrae_project: rawInput?.project?.ashrae_design_conditions_url,
+            run_mode: rawInput?.run_mode,
+            acc_v2: rawInput?.acc_v2
+        });
         const curveLib = window.curveLib || {
             curves_1d: {},
             cop_surfaces: {}
         };
 
         const job = prepareSolverJob(rawInput, curveLib);
+        phase19bTrace("run:job prepared", {
+            kind: job.kind,
+            solverFn: job.solverFn,
+            ashrae_top: job.input?.ashrae_design_conditions_url,
+            ashrae_project: job.input?.project?.ashrae_design_conditions_url,
+            diagnostics: job.diagnostics
+        });
 
         if (job.kind === "invalid" || job.kind === "invalid_project") {
             const d = job.diagnostics || {};
@@ -5973,10 +6127,21 @@ async function run(options = {}) {
         }
         pyodide.globals.set("dc_json_str", JSON.stringify(job.input));
         pyodide.globals.set("solver_fn", executedSolverFn);
+        phase19bTrace("run:final JSON passed into Pyodide", {
+            executedSolverFn,
+            ashrae_top: job.input?.ashrae_design_conditions_url,
+            ashrae_project: job.input?.project?.ashrae_design_conditions_url,
+            json: job.input
+        });
 
         const outStr = pyodide.runPython(`
 import json
 dc = json.loads(dc_json_str)
+print("[Phase19B:Pyodide] solver_fn=", solver_fn)
+print("[Phase19B:Pyodide] dc.ashrae_design_conditions_url=", dc.get("ashrae_design_conditions_url"))
+print("[Phase19B:Pyodide] dc.project.ashrae_design_conditions_url=", (dc.get("project") or {}).get("ashrae_design_conditions_url"))
+print("[Phase19B:Pyodide] dc.run_mode=", dc.get("run_mode"))
+print("[Phase19B:Pyodide] dc.acc_v2=", dc.get("acc_v2"))
 if solver_fn == "compute_acc_excel_replicated_hourly" and "compute_acc_excel_replicated_hourly" not in globals():
     raise RuntimeError("compute_acc_excel_replicated_hourly is not loaded")
 out = compute_acc_excel_replicated_hourly(dc) if solver_fn == "compute_acc_excel_replicated_hourly" else (compute_acc_experimental_hourly_shape(dc) if solver_fn == "compute_acc_experimental_hourly_shape" else (compute_acc_excel_benchmark(dc) if solver_fn == "compute_acc_excel_benchmark" else (compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc))))

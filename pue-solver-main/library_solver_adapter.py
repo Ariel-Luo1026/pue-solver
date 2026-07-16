@@ -112,6 +112,9 @@ def convert_library_input_to_solver_input(library_input):
 
     project = deepcopy(project_source)
     project.setdefault("peak_design_weather_source", "ashrae_auto")
+    ashrae_endpoint = library_input.get("ashrae_design_conditions_url") or project.get("ashrae_design_conditions_url")
+    if ashrae_endpoint:
+        project["ashrae_design_conditions_url"] = ashrae_endpoint
     if isinstance(library_input.get("site_location"), dict):
         project.setdefault("site_location", deepcopy(library_input["site_location"]))
     project["it_load"] = deepcopy(it_source)
@@ -160,6 +163,7 @@ def convert_library_input_to_solver_input(library_input):
             "data": deepcopy(radiator_rows),
         },
         "project": project,
+        "ashrae_design_conditions_url": ashrae_endpoint,
         "site_location": deepcopy(library_input.get("site_location", {})),
         "weather": weather,
         "curve_library": {"curves": curves},

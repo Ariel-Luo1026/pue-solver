@@ -18,6 +18,7 @@ from ashrae_design_conditions import (
     load_design_condition_stations,
 )
 from ashrae_proxy import query_ashrae_design_condition
+import solver
 
 
 class AshraeDesignConditionsTest(unittest.TestCase):
@@ -252,6 +253,7 @@ class AshraeDesignConditionsTest(unittest.TestCase):
         self.assertEqual(online["lookup_status"], "success")
 
     def test_local_proxy_endpoint_is_identified_as_proxy_method(self):
+        proxy_url = "http://127.0.0.1:8011/api/ashrae_design_condition"
         payload = {
             "station_name": "ALBANY INTL, NY, USA",
             "station_id": "725180",
@@ -267,16 +269,110 @@ class AshraeDesignConditionsTest(unittest.TestCase):
             online = query_ashrae_online(
                 42.651,
                 -73.754,
-                endpoint="http://127.0.0.1:8011/api/ashrae_design_condition",
+                endpoint=proxy_url,
             )
 
         self.assertEqual(online["lookup_status"], "success")
         self.assertEqual(online["lookup_method"], "ASHRAE_proxy")
+        self.assertEqual(online["lookup_endpoint"], proxy_url)
         self.assertEqual(online["lookup_provider"], "ASHRAE_online_proxy")
         self.assertEqual(online["station_name"], "ALBANY INTL, NY, USA")
         self.assertEqual(online["station_id"], "725180")
         self.assertLess(online["distance_km"], 20.0)
         self.assertAlmostEqual(online["design_db_max_C"], 37.1)
+
+    def test_proxy_endpoint_does_not_call_direct_ashrae_web_lookup(self):
+        proxy_url = "http://127.0.0.1:8011/api/ashrae_design_condition"
+        payload = {
+            "station_name": "ALBANY INTL, NY, USA",
+            "station_id": "725180",
+            "latitude": 42.747,
+            "longitude": -73.799,
+            "distance_km": 10.8,
+            "design_db_max_C": 37.1,
+        }
+        with patch("ashrae_online_lookup._fetch_endpoint", return_value=payload), patch(
+            "ashrae_online_lookup._query_ashrae_meteo"
+        ) as direct_web:
+            online = query_ashrae_online(42.651, -73.754, endpoint=proxy_url)
+
+        direct_web.assert_not_called()
+        self.assertEqual(online["lookup_status"], "success")
+        self.assertEqual(online["lookup_method"], "ASHRAE_proxy")
+        self.assertEqual(online["lookup_provider"], "ASHRAE_online_proxy")
+        self.assertEqual(online["lookup_endpoint"], proxy_url)
+
+    def test_proxy_unavailable_preserves_proxy_failure_diagnostics(self):
+        proxy_url = "http://127.0.0.1:8011/api/ashrae_design_condition"
+        with patch("ashrae_online_lookup._fetch_endpoint", side_effect=OSError("proxy offline")):
+            condition = get_peak_design_condition(32.693, -100.951, endpoint=proxy_url)
+
+        self.assertEqual(condition["lookup_status"], "failed")
+        self.assertIn("proxy offline", condition["failure_reason"])
+        self.assertEqual(condition["lookup_provider"], "ASHRAE_online_proxy")
+        self.assertEqual(condition["lookup_method"], "ASHRAE_proxy")
+        self.assertEqual(condition["lookup_endpoint"], proxy_url)
+        self.assertEqual(condition["fallback_status"], "ASHRAE_local_cache")
+        self.assertEqual(condition["station_name"], "WINSTON FIELD, TX, USA")
+
+    def test_solver_passes_supplied_proxy_endpoint_unchanged_to_peak_lookup(self):
+        proxy_url = "http://127.0.0.1:8011/api/ashrae_design_condition"
+        with patch("solver.get_peak_design_condition", return_value={
+            "source": "ASHRAE_online_proxy",
+            "lookup_provider": "ASHRAE_online_proxy",
+            "lookup_status": "success",
+            "failure_reason": "",
+            "lookup_method": "ASHRAE_proxy",
+            "lookup_endpoint": proxy_url,
+            "station_name": "ALBANY INTL, NY, USA",
+            "station_id": "725180",
+            "station_distance_km": 10.8,
+            "station_latitude": 42.747,
+            "station_longitude": -73.799,
+            "extreme_db_max_C": 37.1,
+            "temperature_basis": "ASHRAE_20_year_extreme_annual_design_condition",
+        }) as peak_lookup:
+            condition = solver._peak_design_weather_condition({
+                "ashrae_design_conditions_url": proxy_url,
+                "project": {
+                    "latitude": 42.651,
+                    "longitude": -73.754,
+                    "ashrae_design_conditions_url": "https://example.test/wrong",
+                },
+            })
+
+        self.assertEqual(peak_lookup.call_args.kwargs["endpoint"], proxy_url)
+        self.assertEqual(condition["lookup_endpoint"], proxy_url)
+
+    def test_solver_uses_browser_proxy_override_without_online_lookup(self):
+        proxy_url = "http://127.0.0.1:8011/api/ashrae_design_condition"
+        with patch("solver.get_peak_design_condition") as peak_lookup:
+            condition = solver._peak_design_weather_condition({
+                "ashrae_design_conditions_url": proxy_url,
+                "peak_design_condition_override": {
+                    "station_name": "ALBANY INTL, NY, USA",
+                    "station_id": "725180",
+                    "latitude": 42.747,
+                    "longitude": -73.799,
+                    "distance_km": 11.6,
+                    "design_db_max_C": 37.1,
+                    "lookup_provider": "ASHRAE_online_proxy",
+                    "lookup_method": "ASHRAE_proxy",
+                    "lookup_endpoint": proxy_url,
+                    "lookup_status": "success",
+                },
+                "project": {
+                    "latitude": 42.651,
+                    "longitude": -73.754,
+                },
+            })
+
+        peak_lookup.assert_not_called()
+        self.assertEqual(condition["lookup_endpoint"], proxy_url)
+        self.assertEqual(condition["lookup_method"], "ASHRAE_proxy")
+        self.assertEqual(condition["lookup_provider"], "ASHRAE_online_proxy")
+        self.assertEqual(condition["station_name"], "ALBANY INTL, NY, USA")
+        self.assertAlmostEqual(condition["extreme_db_max_C"], 37.1)
 
     def test_proxy_query_normalizes_albany_online_result(self):
         with patch(

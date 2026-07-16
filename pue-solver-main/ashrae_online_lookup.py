@@ -53,11 +53,15 @@ def _num(value, default=None):
         return default
 
 
+def _lookup_provider_for_method(lookup_method):
+    return "ASHRAE_online_proxy" if lookup_method == "ASHRAE_proxy" else "ASHRAE_online"
+
+
 def _failure(reason, lookup_method=None, endpoint=None):
     result = {
         "lookup_status": "failed",
         "failure_reason": reason,
-        "lookup_provider": "ASHRAE_online",
+        "lookup_provider": _lookup_provider_for_method(lookup_method),
         "source": "ASHRAE_online",
     }
     if lookup_method:
@@ -209,7 +213,7 @@ def _extract_station_rows(payload):
     return [payload]
 
 
-def _lookup_from_rows(latitude, longitude, rows, lookup_method=None, endpoint=None):
+def _lookup_from_rows(latitude, longitude, rows, lookup_method=None, endpoint=None, lookup_provider=None):
     candidates = []
     failure_reasons = []
     for row in rows:
@@ -221,6 +225,9 @@ def _lookup_from_rows(latitude, longitude, rows, lookup_method=None, endpoint=No
                 normalized["lookup_method"] = lookup_method
             if endpoint:
                 normalized["lookup_endpoint"] = endpoint
+            if lookup_provider:
+                normalized["lookup_provider"] = lookup_provider
+                normalized["source"] = lookup_provider
             candidates.append(normalized)
     if not candidates:
         for reason in ("ASHRAE online response missing design temperature", "Invalid ASHRAE response format"):
@@ -245,6 +252,7 @@ def _fetch_endpoint(latitude, longitude, endpoint, timeout):
     endpoint = normalize_ashrae_url(endpoint)
     separator = "&" if "?" in endpoint else "?"
     url = f"{endpoint}{separator}{urlencode({'latitude': latitude, 'longitude': longitude})}"
+    print("[Phase19B:ashrae_online_lookup] HTTP GET endpoint url=", url)
     with urlopen(url, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     return loads(body)
@@ -379,6 +387,7 @@ def _query_ashrae_meteo(latitude, longitude, timeout_seconds):
 
 def query_ashrae_online(latitude, longitude, timeout_seconds=10, endpoint=None):
     """Return nearest online ASHRAE design-condition station or failure status."""
+    print("[Phase19B:ashrae_online_lookup] query_ashrae_online called latitude=", latitude, "longitude=", longitude, "endpoint=", endpoint)
     latitude = _num(latitude)
     longitude = _num(longitude)
     if latitude is None or longitude is None:
@@ -388,14 +397,27 @@ def query_ashrae_online(latitude, longitude, timeout_seconds=10, endpoint=None):
     endpoint = endpoint or environ.get("ASHRAE_DESIGN_CONDITIONS_URL")
     if endpoint:
         endpoint = normalize_ashrae_url(endpoint)
-    lookup_method = "ASHRAE_proxy" if endpoint and "/api/ashrae_design_condition" in endpoint else ("ASHRAE_API" if endpoint else "ASHRAE_web")
+    is_proxy_endpoint = bool(endpoint and "/api/ashrae_design_condition" in endpoint)
+    lookup_method = "ASHRAE_proxy" if is_proxy_endpoint else ("ASHRAE_API" if endpoint else "ASHRAE_web")
+    lookup_provider = _lookup_provider_for_method(lookup_method)
+    print("[Phase19B:ashrae_online_lookup] normalized endpoint=", endpoint)
+    print("[Phase19B:ashrae_online_lookup] is_proxy_endpoint=", is_proxy_endpoint, "lookup_method=", lookup_method)
     try:
         if endpoint:
+            print("[Phase19B:ashrae_online_lookup] using custom/proxy JSON endpoint path")
             payload = _fetch_endpoint(latitude, longitude, endpoint, timeout_seconds)
             rows = _extract_station_rows(payload)
             if not rows:
                 return _failure("Invalid ASHRAE response format", lookup_method=lookup_method, endpoint=endpoint)
-            return _lookup_from_rows(latitude, longitude, rows, lookup_method=lookup_method, endpoint=endpoint)
+            return _lookup_from_rows(
+                latitude,
+                longitude,
+                rows,
+                lookup_method=lookup_method,
+                endpoint=endpoint,
+                lookup_provider=lookup_provider,
+            )
+        print("[Phase19B:ashrae_online_lookup] no endpoint supplied; falling back to direct ASHRAE Meteo workflow")
         return _query_ashrae_meteo(latitude, longitude, timeout_seconds)
     except (SocketTimeout, TimeoutError):
         return _failure("ASHRAE online request timeout", lookup_method=lookup_method, endpoint=endpoint or ASHRAE_METEO_BASE_URL)

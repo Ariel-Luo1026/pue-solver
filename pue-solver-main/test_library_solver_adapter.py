@@ -80,6 +80,17 @@ class LibrarySolverAdapterTest(unittest.TestCase):
         self.assertEqual(len(adapted["weather"]["hourly_data"]["dry_bulb_C"]), 8760)
         self.assertEqual(adapted["weather"]["hourly_data"]["hour_index"][0], 1)
 
+    def test_ashrae_proxy_url_survives_library_adapter_conversion(self):
+        proxy_url = "http://127.0.0.1:8011/api/ashrae_design_condition"
+        library_input = deepcopy(self.normal_library)
+        library_input["ashrae_design_conditions_url"] = proxy_url
+        library_input["project"]["ashrae_design_conditions_url"] = proxy_url
+
+        adapted = convert_library_input_to_solver_input(library_input)
+
+        self.assertEqual(adapted["ashrae_design_conditions_url"], proxy_url)
+        self.assertEqual(adapted["project"]["ashrae_design_conditions_url"], proxy_url)
+
     def test_partial_weather_falls_back_to_valid_annual_assumption(self):
         library_input = deepcopy(self.normal_library)
         library_input["weather"] = {"hourly_data": {"dry_bulb_C": [30.0]}}

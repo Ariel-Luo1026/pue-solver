@@ -485,8 +485,9 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn('const hasSuccessfulAshraeLookup = lookupStatus === "SUCCESS"', self.ui)
         self.assertIn("Design DB Maximum", self.ui)
         self.assertIn("http://127.0.0.1:8011/api/ashrae_design_condition", self.ui)
+        self.assertIn('const ASHRAE_PROXY_URL = "http://127.0.0.1:8011/api/ashrae_design_condition"', self.ui)
         self.assertIn("ashraeDesignConditionsUrl", self.ui)
-        self.assertIn("ashrae_design_conditions_url: peakDesignWeather.ashraeDesignConditionsUrl", self.ui)
+        self.assertIn("ashrae_design_conditions_url: libraryAshraeUrl", self.ui)
         self.assertIn("Manual Override", self.ui)
         self.assertIn("Local ASHRAE Cache", self.ui)
         self.assertIn("ASHRAE Online unavailable", self.ui)
@@ -512,8 +513,10 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
         for text in (
             "const peakDesignWeather = getPeakDesignWeatherInput()",
+            "const libraryAshraeUrl = ASHRAE_PROXY_URL",
             "peak_design_weather_source: peakDesignWeather.peakDesignWeatherSource",
             "peak_design_outdoor_dry_bulb_C: peakDesignWeather.peakDesignOutdoorDryBulbC",
+            "ashrae_design_conditions_url: libraryAshraeUrl",
             "site_location: {",
             "latitude: projectInfo.latitude",
             "longitude: projectInfo.longitude",
@@ -523,6 +526,23 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
         self.assertIn("peak_design_weather_source: libraryInput.peak_design_weather_source", adapter_block)
         self.assertIn("peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C", adapter_block)
+        self.assertIn("const ashraeEndpoint = libraryInput.ashrae_design_conditions_url ?? project.ashrae_design_conditions_url ?? null", adapter_block)
+        self.assertIn("project.ashrae_design_conditions_url = ashraeEndpoint", adapter_block)
+        self.assertIn("ashrae_design_conditions_url: ashraeEndpoint", adapter_block)
+        self.assertIn("fetchAshraeProxyDesignConditionForLibrary", self.ui)
+        self.assertIn('fetch(url, { cache: "no-store" })', self.ui)
+        self.assertIn("peak_design_condition_override", self.ui)
+
+    def test_configuration_library_engineering_ashrae_diagnostics_stay_out_of_customer_report(self):
+        summary_block = self._function_source("renderConfigurationLibrarySummary")
+        self.assertIn("ASHRAE Endpoint Sent to Solver", summary_block)
+        self.assertIn("ASHRAE Endpoint Received by Solver", summary_block)
+        self.assertIn("Lookup Method", summary_block)
+        self.assertIn("Lookup Provider", summary_block)
+
+        report_block = self._function_source("buildHtmlReport")
+        self.assertNotIn("ASHRAE Endpoint Sent to Solver", report_block)
+        self.assertNotIn("ASHRAE Endpoint Received by Solver", report_block)
 
     def test_benchmark_report_labels_remain_separate(self):
         report_block = self._function_source("buildHtmlReport")
