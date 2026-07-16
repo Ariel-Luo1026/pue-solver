@@ -472,7 +472,7 @@ function resolveFrontendEquipmentId(equipmentId) {
 }
 
 async function loadConfigurationEquipmentAliases() {
-    const aliasUrl = new URL("Configuration Library/equipment_aliases.json", document.baseURI);
+    const aliasUrl = new URL("equipment_aliases.json", CONFIGURATION_LIBRARY_ROOT_URL);
     try {
         const response = await fetch(aliasUrl, { cache: "no-store" });
         if (!response.ok) throw new Error(`Could not load ${aliasUrl.href} (HTTP ${response.status}).`);

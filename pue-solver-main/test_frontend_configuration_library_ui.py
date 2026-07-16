@@ -95,7 +95,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
 
     def test_configuration_library_aliases_load_shared_json_with_fallback(self):
         alias_block = self._function_source("loadConfigurationEquipmentAliases")
-        self.assertIn('new URL("Configuration Library/equipment_aliases.json", document.baseURI)', alias_block)
+        self.assertIn('new URL("equipment_aliases.json", CONFIGURATION_LIBRARY_ROOT_URL)', alias_block)
         self.assertIn("directModeEquipmentAliases = { ...DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES, ...loaded }", alias_block)
         self.assertIn("directModeEquipmentAliases = { ...DEFAULT_DIRECT_MODE_EQUIPMENT_ALIASES }", alias_block)
         self.assertIn('fetch(aliasUrl, { cache: "no-store" })', alias_block)

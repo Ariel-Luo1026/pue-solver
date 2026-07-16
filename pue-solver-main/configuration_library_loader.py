@@ -16,7 +16,8 @@ from equipment_registry import canonicalize_equipment_id
 
 SUPPORTED_CONFIGURATIONS = {"ACC_1.5MW_GASENGINE_CDU"}
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
-SHARED_ALIAS_PATH = Path(__file__).resolve().parent / "Configuration Library" / "equipment_aliases.json"
+# Resolved Configuration Library path: project root / "Configuration Library".
+SHARED_ALIAS_PATH = DEFAULT_LIBRARY_ROOT / "equipment_aliases.json"
 DEFAULT_EQUIPMENT_ALIASES = {
     "RTC_1": "RTC_1&2",
     "RTC_2": "RTC_1&2",
