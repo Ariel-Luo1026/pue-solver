@@ -93,7 +93,7 @@ def validate_configuration_manifest(raw_manifest, manifest_path=None):
         raise _error(configuration_id, manifest_path, "optional_roles must be a list")
 
     manifest["equipment_roles"] = {
-        str(role): (None if equipment_id is None else str(equipment_id))
+        str(role): _normalize_equipment_role_value(configuration_id, manifest_path, role, equipment_id)
         for role, equipment_id in manifest["equipment_roles"].items()
     }
     manifest["required_roles"] = [str(role) for role in manifest["required_roles"]]
@@ -112,6 +112,29 @@ def validate_configuration_manifest(raw_manifest, manifest_path=None):
     if manifest_path:
         manifest["manifest_path"] = str(manifest_path)
     return manifest
+
+
+def _normalize_equipment_role_value(configuration_id, manifest_path, role, equipment_id):
+    if equipment_id is None:
+        return None
+    if isinstance(equipment_id, list):
+        normalized = []
+        for item in equipment_id:
+            if item in (None, ""):
+                raise _error(
+                    configuration_id,
+                    manifest_path,
+                    f"equipment role '{role}' contains an empty equipment ID",
+                )
+            normalized.append(str(item))
+        return normalized
+    if isinstance(equipment_id, (str, int, float)):
+        return str(equipment_id)
+    raise _error(
+        configuration_id,
+        manifest_path,
+        f"equipment role '{role}' must be an equipment ID or list of equipment IDs",
+    )
 
 
 def discover_configuration_manifests(library_root, include_invalid=False):

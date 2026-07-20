@@ -59,7 +59,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         for equipment_id in expected_ids:
             self.assertIn(equipment_id, direct_block)
         binding_block = self._function_source("renderConfigurationLibrarySummary")
-        self.assertIn("DIRECT_MODE_EQUIPMENT_ORDER.map", binding_block)
+        self.assertIn("manifestEquipmentRoleIds(data.configuration_manifest).map", binding_block)
         self.assertIn("Using Configuration Library Solver_Curve", binding_block)
         self.assertIn("Missing Solver_Curve", binding_block)
 
@@ -157,7 +157,9 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
 
     def test_configuration_library_run_input_uses_canonical_auxiliary_ids(self):
         builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
-        self.assertIn('["CDU_2", "RTC_1&2", "MAU_1&2"].map', builder_block)
+        self.assertIn('manifest?.equipment_roles?.indoor_cooling', builder_block)
+        self.assertIn('["cdu", "rtc", "mau"].map', builder_block)
+        self.assertIn('resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment)', builder_block)
         self.assertIn("equipment_id: resolved.resolvedId", builder_block)
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
         self.assertIn("library_fixed_power: clone(libraryInput.equipment.auxiliary)", adapter_block)
@@ -247,7 +249,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         sync_block = self._function_source("syncConfigurationLibraryToPyodide")
         self.assertIn('["configuration.xlsx", "scenario.xlsx", "input/IT_LOAD_90_PERCENT.xlsx"]', sync_block)
         self.assertIn("buildConfigurationLibraryWorkbookSyncPlan(selectedConfiguration)", sync_block)
-        self.assertIn("verifyConfigurationLibrarySynced(configurationPath)", sync_block)
+        self.assertIn("verifyConfigurationLibrarySynced(configurationPath, selectedConfiguration)", sync_block)
         self.assertIn("workbook_paths: workbookPaths", sync_block)
 
     def test_configuration_library_options_are_manifest_discovered(self):
@@ -281,12 +283,13 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
 
     def test_configuration_library_sync_plan_uses_direct_mode_equipment_paths(self):
         plan_block = self._function_source("buildConfigurationLibraryWorkbookSyncPlan")
-        self.assertIn("DIRECT_MODE_EQUIPMENT_ORDER.map", plan_block)
+        self.assertIn("manifestEquipmentRoleIds(data?.configuration_manifest)", plan_block)
+        self.assertIn("roleEquipmentIds.map", plan_block)
         self.assertIn("findLibraryEquipmentPackage(data, equipmentId)", plan_block)
         self.assertIn("sourceRelativePaths", plan_block)
         self.assertIn("pyodideRelativePath", plan_block)
         self.assertIn("resolved.resolvedId", plan_block)
-        self.assertIn("DIRECT_MODE_EQUIPMENT_ORDER.includes(resolvedId)", plan_block)
+        self.assertIn("roleTargets.has(resolvedId)", plan_block)
         for equipment_id in (
             "ACC_2",
             "CHW_PUMP_2",

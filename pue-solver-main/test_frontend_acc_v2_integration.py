@@ -109,6 +109,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "equipment_curve_reader.py",
             "equipment_engine.py",
             "configuration_manifest.py",
+            "equipment_role_resolver.py",
             "configuration_library_loader.py",
             "equipment_registry.py",
             "acc_v2_curve_lookup.py",
@@ -127,9 +128,14 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             self.ui.index("function log")
         ]
         self.assertIn('"configuration_manifest.py"', module_block)
+        self.assertIn('"equipment_role_resolver.py"', module_block)
         self.assertIn('"configuration_library_loader.py"', module_block)
         self.assertLess(
             module_block.index('"configuration_manifest.py"'),
+            module_block.index('"configuration_library_loader.py"'),
+        )
+        self.assertLess(
+            module_block.index('"equipment_role_resolver.py"'),
             module_block.index('"configuration_library_loader.py"'),
         )
 

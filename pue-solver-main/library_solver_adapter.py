@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from configuration_library_scanner import parse_equipment_folder_name
 from equipment_registry import canonicalize_equipment_id
+from equipment_role_resolver import resolve_equipment_role_id
 
 
 def _selected_curve(library_input, equipment_id):
@@ -106,10 +107,12 @@ def convert_library_input_to_solver_input(library_input):
         weather["hourly_data"]["hour_index"] = list(range(1, hours + 1))
 
     selected_curves = library_input.get("selected_curves", {})
-    acc_equipment_id = _resolve_equipment_key(selected_curves, "ACC_2", "acc_unit")
-    pump_equipment_id = _resolve_equipment_key(selected_curves, "CHW_PUMP_2", "pump")
-    engine_equipment_id = _resolve_equipment_key(selected_curves, "ENGINE_2", "gas_engine")
-    radiator_equipment_id = _resolve_equipment_key(selected_curves, "ENGINE_RADIATOR_2", "engine_radiator")
+    if not isinstance(manifest, dict) or not manifest.get("equipment_roles"):
+        raise ValueError("library_input is missing configuration_manifest.equipment_roles")
+    acc_equipment_id = resolve_equipment_role_id(manifest, "primary_cooling", selected_curves)
+    pump_equipment_id = resolve_equipment_role_id(manifest, "chw_pump", selected_curves)
+    engine_equipment_id = resolve_equipment_role_id(manifest, "engine", selected_curves)
+    radiator_equipment_id = resolve_equipment_role_id(manifest, "engine_radiator", selected_curves)
 
     acc_rows = _selected_curve(library_input, acc_equipment_id)
     pump_rows = _selected_curve(library_input, pump_equipment_id)

@@ -172,6 +172,7 @@ const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "ashrae_design_conditions_data.json",
     "configuration_library_scanner.py",
     "configuration_manifest.py",
+    "equipment_role_resolver.py",
     "configuration_library_loader.py",
     "equipment_curve_reader.py",
     "equipment_curve_lookup.py",
@@ -4533,6 +4534,54 @@ function selectedConfigurationManifest() {
     return configurationLibraryCatalog.find(item => item.configuration_id === configurationId) || null;
 }
 
+function manifestEquipmentRoleIds(manifest) {
+    const roles = manifest?.equipment_roles || {};
+    return [...new Set(Object.values(roles).flatMap(value => Array.isArray(value) ? value : [value]).filter(Boolean).map(String))];
+}
+
+function roleValueFromManifest(manifest, roleName, required = true) {
+    const roles = manifest?.equipment_roles || {};
+    const requiredRoles = new Set(manifest?.required_roles || []);
+    const optionalRoles = new Set(manifest?.optional_roles || []);
+    const roleValue = roles[roleName];
+    if (roleValue === undefined || roleValue === null || roleValue === "" || (Array.isArray(roleValue) && !roleValue.length)) {
+        if (!required || (optionalRoles.has(roleName) && !requiredRoles.has(roleName))) {
+            console.log(`[Configuration Library] Optional equipment role not configured: ${roleName}`);
+            return null;
+        }
+        throw new Error(`Configuration manifest is missing required equipment role: ${roleName}`);
+    }
+    return roleValue;
+}
+
+function equipmentRoleFamily(equipmentId) {
+    return equipmentCurveFamily(resolveFrontendEquipmentId(equipmentId));
+}
+
+function resolveEquipmentRoleIdFromMapping(manifest, roleName, mapping, required = true) {
+    const roleValue = roleValueFromManifest(manifest, roleName, required);
+    if (roleValue === null) return null;
+    if (Array.isArray(roleValue)) {
+        return roleValue.map(equipmentId => resolveDeclaredEquipmentIdFromMapping(manifest, roleName, equipmentId, mapping));
+    }
+    return resolveDeclaredEquipmentIdFromMapping(manifest, roleName, roleValue, mapping);
+}
+
+function resolveDeclaredEquipmentIdFromMapping(manifest, roleName, declaredEquipmentId, mapping) {
+    const configurationId = manifest?.configuration_id || "unknown";
+    const declared = String(declaredEquipmentId);
+    if (Object.prototype.hasOwnProperty.call(mapping || {}, declared)) return declared;
+    const aliasResolved = resolveFrontendEquipmentId(declared);
+    if (Object.prototype.hasOwnProperty.call(mapping || {}, aliasResolved)) return aliasResolved;
+    const declaredFamily = equipmentRoleFamily(declared);
+    const matches = Object.keys(mapping || {}).filter(equipmentId => equipmentRoleFamily(equipmentId) === declaredFamily);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+        throw new Error(`Configuration ${configurationId} role ${roleName}=${declared} is ambiguous: ${matches.join(", ")}`);
+    }
+    throw new Error(`Configuration ${configurationId} role ${roleName} references missing equipment ${declared}`);
+}
+
 async function fetchConfigurationWorkbook(relativePath) {
     const workbookUrl = new URL(relativePath, CONFIGURATION_LIBRARY_ROOT_URL);
     const response = await fetch(workbookUrl, { cache: "no-store" });
@@ -4562,7 +4611,8 @@ function configurationLibraryPyodidePath(configurationName) {
 
 function buildConfigurationLibraryWorkbookSyncPlan(data) {
     const configurationName = data?.configuration_name;
-    const directModeItems = DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+    const roleEquipmentIds = manifestEquipmentRoleIds(data?.configuration_manifest);
+    const directModeItems = roleEquipmentIds.map(equipmentId => {
         const resolved = findLibraryEquipmentPackage(data, equipmentId);
         const aliases = DIRECT_MODE_EQUIPMENT_CANDIDATES[resolved.resolvedId] || [resolved.resolvedId];
         const sourceIds = [resolved.resolvedId, ...aliases, resolved.equipmentPackage?.equipment_id, resolved.packageKey]
@@ -4570,10 +4620,11 @@ function buildConfigurationLibraryWorkbookSyncPlan(data) {
             .filter((value, index, values) => values.indexOf(value) === index);
         return { sourceIds, targetId: resolved.resolvedId, required: true };
     });
+    const roleTargets = new Set(directModeItems.map(item => item.targetId));
     const loadedItems = Object.entries(data?.equipment || {}).map(([key, item]) => {
         const loadedId = item?.equipment_id || key;
         const resolvedId = resolveDirectModeEquipmentId(loadedId);
-        if (DIRECT_MODE_EQUIPMENT_ORDER.includes(resolvedId)) return null;
+        if (roleTargets.has(resolvedId)) return null;
         return {
             sourceIds: [loadedId],
             targetId: loadedId,
@@ -4630,10 +4681,12 @@ async function fetchResolvedConfigurationEquipmentWorkbook(configurationBase, ra
     throw new Error(errors.join("; "));
 }
 
-function verifyConfigurationLibrarySynced(configurationPath) {
-    const accWorkbookPath = `${configurationPath}/equipment/ACC_2/ACC_2.xlsx`;
+function verifyConfigurationLibrarySynced(configurationPath, selectedConfiguration) {
+    const manifest = selectedConfiguration?.configuration_manifest || {};
+    const primaryCoolingId = resolveEquipmentRoleIdFromMapping(manifest, "primary_cooling", selectedConfiguration?.equipment || {});
+    const primaryCoolingPath = `${configurationPath}/equipment/${primaryCoolingId}/${primaryCoolingId}.xlsx`;
     try {
-        pyodide.FS.stat(accWorkbookPath);
+        pyodide.FS.stat(primaryCoolingPath);
     } catch (_) {
         throw new Error("Configuration Library workbooks were not synced into Pyodide runtime. Please reload the Configuration Library.");
     }
@@ -4670,7 +4723,7 @@ async function syncConfigurationLibraryToPyodide(selectedConfiguration) {
         workbookPaths.push(pyodidePath);
     }
 
-    verifyConfigurationLibrarySynced(configurationPath);
+    verifyConfigurationLibrarySynced(configurationPath, selectedConfiguration);
     return {
         configuration_name: configurationName,
         configuration_path: configurationPath,
@@ -4787,12 +4840,12 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     });
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
-    const selectedCurves = Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+    const selectedCurves = Object.fromEntries(manifestEquipmentRoleIds(manifest).map(equipmentId => {
         const resolved = findLibraryEquipmentPackage(data, equipmentId);
         return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, scenarioName)];
     }));
-    const binding = (equipmentId, role) => {
-        const resolved = findLibraryEquipmentPackage(data, equipmentId);
+    const bindingForResolvedId = (resolvedId, role) => {
+        const resolved = findLibraryEquipmentPackage(data, resolvedId);
         const item = resolved.equipmentPackage;
         const selected = selectedCurves[resolved.resolvedId];
         return {
@@ -4806,7 +4859,15 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             curve_data: selected?.curve || null
         };
     };
-    const electricalPath = data.equipment.ELECTRICAL_DISTRIBUTION_2?.electrical_path || null;
+    const bindingByRole = (roleName, bindingRole, required = true) => {
+        const resolvedId = resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment, required);
+        return resolvedId === null ? null : bindingForResolvedId(resolvedId, bindingRole);
+    };
+    const indoorEquipmentIds = manifest?.equipment_roles?.indoor_cooling
+        ? resolveEquipmentRoleIdFromMapping(manifest, "indoor_cooling", data.equipment)
+        : ["cdu", "rtc", "mau"].map(roleName => resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment));
+    const electricalId = resolveEquipmentRoleIdFromMapping(manifest, "electrical_distribution", data.equipment);
+    const electricalPath = data.equipment[electricalId]?.electrical_path || null;
     const manifestMetadata = {
         configuration_id: manifest.configuration_id || data.configuration_id || data.configuration_name,
         configuration_display_name: manifest.display_name || data.configuration_display_name || data.configuration_name,
@@ -4875,12 +4936,14 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         unit_quantity: unitQuantity,
         equipment: {
             cooling: {
-                ACC: binding("ACC_2", "cooling_equipment"),
-                pumps: { CHW_PUMP_2: binding("CHW_PUMP_2", "pump_power") },
-                engine: binding("ENGINE_3", "engine_output_reference"),
-                engine_radiator: binding("ENGINE_RADIATOR_1", "engine_radiator_power")
+                ACC: bindingByRole("primary_cooling", "cooling_equipment"),
+                pumps: Object.fromEntries([
+                    resolveEquipmentRoleIdFromMapping(manifest, "chw_pump", data.equipment)
+                ].map(id => [id, bindingForResolvedId(id, "pump_power")])),
+                engine: bindingByRole("engine", "engine_output_reference"),
+                engine_radiator: bindingByRole("engine_radiator", "engine_radiator_power")
             },
-            auxiliary: Object.fromEntries(["CDU_2", "RTC_1&2", "MAU_1&2"].map(id => [id, binding(id, "white_space_auxiliary")])),
+            auxiliary: Object.fromEntries(indoorEquipmentIds.map(id => [id, bindingForResolvedId(id, "white_space_auxiliary")])),
             electrical_path: electricalPath
         },
         electrical_path: electricalPath,
@@ -4947,12 +5010,17 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         ? { source: "loaded_weather" }
         : { source: "library_solver_adapter_default", assumption: "25 C constant dry bulb" }
     };
-    const accRows = libraryInput.selected_curves.ACC_2?.curve || [];
-    const pumpRows = libraryInput.selected_curves.CHW_PUMP_2?.curve || [];
-    const engineRows = libraryInput.selected_curves.ENGINE_3?.curve || [];
-    const radiatorRows = libraryInput.selected_curves.ENGINE_RADIATOR_1?.curve || [];
-    const accCurveId = "ACC_2_COP";
-    const pumpCurveId = "CHW_PUMP_2_power_vs_load";
+    const manifest = libraryInput.configuration_manifest || {};
+    const accEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "primary_cooling", libraryInput.selected_curves);
+    const pumpEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "chw_pump", libraryInput.selected_curves);
+    const engineEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "engine", libraryInput.selected_curves);
+    const radiatorEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "engine_radiator", libraryInput.selected_curves);
+    const accRows = libraryInput.selected_curves[accEquipmentId]?.curve || [];
+    const pumpRows = libraryInput.selected_curves[pumpEquipmentId]?.curve || [];
+    const engineRows = libraryInput.selected_curves[engineEquipmentId]?.curve || [];
+    const radiatorRows = libraryInput.selected_curves[radiatorEquipmentId]?.curve || [];
+    const accCurveId = `${accEquipmentId}_COP`;
+    const pumpCurveId = `${pumpEquipmentId}_power_vs_load`;
     const curves = {
         [accCurveId]: {
             type: "2d_lookup_table", x_axis: "ambient_C", y_axis: "load_ratio", output: "COP", interpolation: "bilinear",
@@ -4980,20 +5048,20 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         power_source: libraryInput.power_source,
         scenario_name: libraryInput.scenario_name,
         acc_curve: {
-            equipment_id: "ACC_2",
-            source_sheet: libraryInput.selected_curves.ACC_2?.sheet_name || null,
+            equipment_id: accEquipmentId,
+            source_sheet: libraryInput.selected_curves[accEquipmentId]?.sheet_name || null,
             data: clone(accRows)
         },
         engine_curve: {
-            equipment_id: "ENGINE_3",
-            source_sheet: libraryInput.selected_curves.ENGINE_3?.sheet_name || null,
+            equipment_id: engineEquipmentId,
+            source_sheet: libraryInput.selected_curves[engineEquipmentId]?.sheet_name || null,
             data: clone(engineRows),
             default_efficiency: 0.40,
             default_efficiency_source: "temporary_assumption_pending_vendor_fuel_map"
         },
         engine_radiator_curve: {
-            equipment_id: "ENGINE_RADIATOR_1",
-            source_sheet: libraryInput.selected_curves.ENGINE_RADIATOR_1?.sheet_name || null,
+            equipment_id: radiatorEquipmentId,
+            source_sheet: libraryInput.selected_curves[radiatorEquipmentId]?.sheet_name || null,
             data: clone(radiatorRows)
         },
         project,
@@ -5013,10 +5081,10 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
             cooling: {
                 cooling_unit_capacity_kW: project.cooling_unit_capacity_kW,
                 cooling_unit_count: activeUnits,
-                chiller: { enabled: true, curve_ref: accCurveId, source_equipment_id: "ACC_2" },
-                ACC: { enabled: true, curve_ref: accCurveId, source_equipment_id: "ACC_2" },
+                chiller: { enabled: true, curve_ref: accCurveId, source_equipment_id: accEquipmentId },
+                ACC: { enabled: true, curve_ref: accCurveId, source_equipment_id: accEquipmentId },
                 dry_cooler: { enabled: false },
-                pumps: { enabled: true, power_curve_refs: [pumpCurveId], source_equipment_id: "CHW_PUMP_2" },
+                pumps: { enabled: true, power_curve_refs: [pumpCurveId], source_equipment_id: pumpEquipmentId },
                 fans: { enabled: false }
             },
             library_fixed_power: clone(libraryInput.equipment.auxiliary),
@@ -5246,7 +5314,7 @@ function renderConfigurationLibrarySummary(data) {
     ];
     summary.style.display = "grid";
     const selectedScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
-    const equipmentRows = DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+    const equipmentRows = manifestEquipmentRoleIds(data.configuration_manifest).map(equipmentId => {
         const resolved = findLibraryEquipmentPackage(data, equipmentId);
         const item = resolved.equipmentPackage || { equipment_id: resolved.resolvedId, status: "Missing", solver_curves: {} };
         const selected = selectLibrarySolverCurve(item, selectedScenario);
@@ -5309,7 +5377,8 @@ async function loadSelectedConfigurationLibrary() {
             equipment_id: String(row.Equipment || ""),
             per_cooling_unit: Number(row["Per Cooling Unit"] || 0)
         }));
-        const equipmentRequests = equipmentPerUnit.map(async ({ equipment_id: equipmentId }) => {
+        const equipmentLoadIds = manifestEquipmentRoleIds(selectedManifest);
+        const equipmentRequests = equipmentLoadIds.map(async equipmentId => {
             const resolvedId = resolveFrontendEquipmentId(equipmentId);
             const packagePath = `equipment/${resolvedId}/${resolvedId}.xlsx`;
             try {
@@ -5422,7 +5491,7 @@ async function loadSelectedConfigurationLibrary() {
             equipment_packages: configurationLibraryData.equipment,
             selected_curves: Object.fromEntries(scenarios.map(scenario => [
                 scenario.scenario,
-                Object.fromEntries(DIRECT_MODE_EQUIPMENT_ORDER.map(equipmentId => {
+                Object.fromEntries(manifestEquipmentRoleIds(configurationLibraryData.configuration_manifest).map(equipmentId => {
                     const resolved = findLibraryEquipmentPackage(configurationLibraryData, equipmentId);
                     return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, scenario.scenario)];
                 }))

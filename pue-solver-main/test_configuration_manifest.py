@@ -86,6 +86,13 @@ class ConfigurationManifestTest(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationManifestError, "missing required equipment role: engine"):
             validate_configuration_manifest(manifest)
 
+    def test_equipment_role_can_be_a_list(self):
+        manifest = valid_acc_manifest()
+        manifest["equipment_roles"]["indoor_cooling"] = ["CDU_2", "RTC_1&2", "MAU_1&2"]
+        manifest["optional_roles"] = ["indoor_cooling"]
+        validated = validate_configuration_manifest(manifest)
+        self.assertEqual(validated["equipment_roles"]["indoor_cooling"], ["CDU_2", "RTC_1&2", "MAU_1&2"])
+
     def test_placeholder_topology_cannot_execute(self):
         manifest = valid_acc_manifest(
             configuration_id="CHILLER_COOLINGTOWER_2MW_GRID_CDU",

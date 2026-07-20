@@ -18,6 +18,10 @@ from configuration_manifest import (
 )
 from configuration_library_scanner import parse_equipment_folder_name
 from equipment_registry import canonicalize_equipment_id
+from equipment_role_resolver import (
+    resolve_equipment_role_id,
+    validate_required_equipment_roles,
+)
 
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
 # Resolved Configuration Library path: project root / "Configuration Library".
@@ -439,24 +443,7 @@ def load_configuration_library(configuration_name, library_root=None, total_it_c
 
 
 def _validate_manifest_equipment_roles(manifest, equipment_packages):
-    missing = []
-    aliases = load_equipment_aliases()
-    available_ids = set(equipment_packages)
-    resolved_available_ids = {
-        resolve_equipment_alias(equipment_id, aliases)
-        for equipment_id in available_ids
-    }
-    for role in manifest.get("required_roles", []):
-        equipment_id = manifest.get("equipment_roles", {}).get(role)
-        resolved_equipment_id = resolve_equipment_alias(equipment_id, aliases)
-        if equipment_id and equipment_id not in available_ids and equipment_id not in resolved_available_ids and resolved_equipment_id not in available_ids:
-            missing.append(f"{role}={equipment_id}")
-    if missing:
-        configuration_id = manifest.get("configuration_id", "<unknown>")
-        raise ValueError(
-            f"Configuration '{configuration_id}' manifest references equipment IDs missing from configuration.xlsx/equipment packages: "
-            + ", ".join(missing)
-        )
+    validate_required_equipment_roles(manifest, equipment_packages)
 
 
 def _manifest_metadata(manifest):
@@ -494,21 +481,19 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         for equipment_id, package in loaded["equipment"].items()
     }
 
-    acc_id = _resolve_loaded_equipment_id(loaded["equipment"], "ACC_2", "acc_unit")
-    pump_id = _resolve_loaded_equipment_id(loaded["equipment"], "CHW_PUMP_2", "pump")
-    engine_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_2", "gas_engine")
-    radiator_id = _resolve_loaded_equipment_id(loaded["equipment"], "ENGINE_RADIATOR_2", "engine_radiator")
-    electrical_id = _resolve_loaded_equipment_id(
-        loaded["equipment"], "ELECTRICAL_DISTRIBUTION_2", "electrical_distribution"
-    )
-    auxiliary_ids = [
-        _resolve_loaded_equipment_id(loaded["equipment"], preferred, canonical)
-        for preferred, canonical in (
-            ("CDU_2", "cdu"),
-            ("RTC_2", "rtc"),
-            ("MAU_2", "mau"),
-        )
-    ]
+    manifest = loaded["configuration_manifest"]
+    acc_id = resolve_equipment_role_id(manifest, "primary_cooling", loaded["equipment"])
+    pump_id = resolve_equipment_role_id(manifest, "chw_pump", loaded["equipment"])
+    engine_id = resolve_equipment_role_id(manifest, "engine", loaded["equipment"])
+    radiator_id = resolve_equipment_role_id(manifest, "engine_radiator", loaded["equipment"])
+    electrical_id = resolve_equipment_role_id(manifest, "electrical_distribution", loaded["equipment"])
+    if "indoor_cooling" in manifest.get("equipment_roles", {}):
+        auxiliary_ids = resolve_equipment_role_id(manifest, "indoor_cooling", loaded["equipment"])
+    else:
+        auxiliary_ids = [
+            resolve_equipment_role_id(manifest, role, loaded["equipment"])
+            for role in ("cdu", "rtc", "mau")
+        ]
 
     def equipment_binding(equipment_id, role):
         package = loaded["equipment"][equipment_id]
