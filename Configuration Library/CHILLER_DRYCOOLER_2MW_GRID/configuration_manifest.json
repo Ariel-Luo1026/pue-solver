@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "configuration_id": "CHILLER_DRYCOOLER_2MW_GRID",
+  "display_name": "Chiller + Dry Cooler 2 MW Grid",
+  "cooling_system_type": "chiller_dry_cooler",
+  "implementation_status": "framework_ready_data_missing",
+  "description": "Framework-only Chiller + Dry Cooler Configuration Library package. Annual simulation requires validated manufacturer Solver_Curve data and solver module implementation.",
+  "equipment_roles": {
+    "chiller": "CENTRIFUGALCHILLER_1",
+    "dry_cooler": "DRYCOOLER_6",
+    "chw_pump": "CHW_PUMP_2",
+    "indoor_cooling": [
+      "CDU_2",
+      "RTC_1&2",
+      "MAU_1&2"
+    ],
+    "electrical_distribution": "ELECTRICAL_DISTRIBUTION_2"
+  },
+  "required_roles": [
+    "chiller",
+    "dry_cooler",
+    "chw_pump",
+    "electrical_distribution"
+  ],
+  "optional_roles": [
+    "indoor_cooling"
+  ],
+  "solver_topology": "chiller_dry_cooler",
+  "report_profile": "chiller_dry_cooler"
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "configuration_id": "TEST_ACC_CONFIGURATION",
+  "display_name": "Test ACC Configuration",
+  "cooling_system_type": "ACC",
+  "implementation_status": "test_only",
+  "solver_topology": "acc_gas_engine_cdu",
+  "equipment_roles": {
+    "acc": "TEST_ACC"
+  },
+  "required_roles": [
+    "acc"
+  ],
+  "optional_roles": [],
+  "report_profile": "generic"
+}

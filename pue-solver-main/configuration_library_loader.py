@@ -17,6 +17,7 @@ from configuration_manifest import (
     load_configuration_manifest,
 )
 from configuration_library_scanner import parse_equipment_folder_name
+from equipment_metadata import load_equipment_metadata, validate_equipment_metadata
 from equipment_registry import canonicalize_equipment_id
 from equipment_role_resolver import (
     resolve_equipment_role_id,
@@ -256,6 +257,26 @@ def load_equipment_packages(configuration_dir, equipment_list):
         information = _sheet_key_values(sheets.get("Information", []))
         metadata = _sheet_key_values(sheets.get("Metadata", []))
         validation = _sheet_key_values(sheets.get("Validation", []))
+        metadata_path = workbook.parent / "equipment_metadata.json"
+        equipment_metadata = None
+        equipment_metadata_validation = {
+            "status": "error",
+            "equipment_id": actual_equipment_id,
+            "issues": ["equipment_metadata.json is missing."],
+        }
+        if metadata_path.is_file():
+            try:
+                equipment_metadata = load_equipment_metadata(metadata_path)
+                equipment_metadata_validation = validate_equipment_metadata(
+                    equipment_metadata,
+                    equipment_folder=workbook.parent,
+                )
+            except Exception as exc:
+                equipment_metadata_validation = {
+                    "status": "error",
+                    "equipment_id": actual_equipment_id,
+                    "issues": [f"Could not load equipment_metadata.json: {exc}"],
+                }
         equipment_type = information.get("Equipment Type") or metadata.get("equipment_type")
         is_electrical_path = equipment_id.startswith("ELECTRICAL_DISTRIBUTION") or str(equipment_type).strip().lower() == "electrical distribution"
         electrical_path = None
@@ -284,6 +305,8 @@ def load_equipment_packages(configuration_dir, equipment_list):
             "information": information,
             "metadata": metadata,
             "validation": validation,
+            "equipment_metadata": equipment_metadata,
+            "equipment_metadata_validation": equipment_metadata_validation,
         }
     return packages
 
@@ -506,6 +529,8 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "selected_curve_sheet": selected["sheet_name"],
             "selected_curve_status": selected["status"],
             "curve_data": selected["curve"],
+            "equipment_metadata": package.get("equipment_metadata"),
+            "equipment_metadata_validation": package.get("equipment_metadata_validation"),
         }
 
     electrical_path = loaded["equipment"][electrical_id]["electrical_path"]

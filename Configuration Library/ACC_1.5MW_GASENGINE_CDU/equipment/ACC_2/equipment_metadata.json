@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "ACC_2",
+  "equipment_type": "ACC",
+  "display_name": "YORK YVAM1650",
+  "manufacturer": "YORK",
+  "model": "YVAM1650",
+  "rated_capacity_kW": null,
+  "power_input_type": "compressor_and_fan",
+  "curve_type": "ambient_capacity_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Workbook Information sheet identifies equipment type ACC and model YVAM1650."
+}

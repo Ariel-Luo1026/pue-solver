@@ -111,6 +111,22 @@ class ConfigurationManifestTest(unittest.TestCase):
         with self.assertRaisesRegex(UnsupportedConfigurationStatusError, "placeholder"):
             assert_manifest_executable(validated)
 
+    def test_test_only_manifest_is_discoverable_but_not_executable(self):
+        manifest = valid_acc_manifest(
+            configuration_id="TEST_ACC_CONFIGURATION",
+            cooling_system_type="ACC",
+            implementation_status="test_only",
+            equipment_roles={"acc": "TEST_ACC"},
+            required_roles=["acc"],
+            optional_roles=[],
+            report_profile="generic",
+        )
+        validated = validate_configuration_manifest(manifest)
+
+        self.assertEqual(validated["implementation_status"], "test_only")
+        with self.assertRaisesRegex(UnsupportedConfigurationStatusError, "test-only"):
+            assert_manifest_executable(validated)
+
     def test_mismatched_solver_topology_rejected(self):
         with self.assertRaisesRegex(ConfigurationManifestError, "different registered topologies"):
             validate_configuration_manifest(valid_acc_manifest(solver_topology="chiller_cooling_tower"))

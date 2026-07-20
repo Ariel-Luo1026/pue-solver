@@ -200,6 +200,26 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         ):
             self.assertIn(text, summary_block)
 
+    def test_configuration_library_summary_displays_equipment_metadata(self):
+        self.assertIn("function fetchConfigurationLibraryJson", self.ui)
+        load_block = self._function_source("loadSelectedConfigurationLibrary")
+        self.assertIn("equipment_metadata.json", load_block)
+        self.assertIn("equipment_metadata: equipmentMetadata", load_block)
+        validation_block = self._function_source("validateFrontendConfigurationLibrary")
+        self.assertIn("equipment_metadata missing", validation_block)
+        summary_block = self._function_source("renderConfigurationLibrarySummary")
+        for text in (
+            "Equipment Summary / Package Auto Binding",
+            "Equipment Type",
+            "Curve Type",
+            "Curve Schema",
+            "Metadata Status",
+            "equipmentMetadata.equipment_type",
+            "equipmentMetadata.curve_type",
+            "equipmentCurveSchema",
+        ):
+            self.assertIn(text, summary_block)
+
     def test_configuration_library_direct_input_carries_configuration_path(self):
         builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
         self.assertIn("configuration_path: data.configuration_path || data.configuration_name", builder_block)
@@ -260,14 +280,15 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("configuration_manifest.json", self.ui)
         self.assertIn("configurationStatusLabel", self.ui)
         self.assertIn("Available", self.ui)
-        self.assertIn("Equipment Data Missing", self.ui)
+        self.assertIn("Framework Ready / Data Missing", self.ui)
+        self.assertIn("Topology:", self.ui)
         init_block = self._function_source("initStandardDataInputs")
         self.assertIn("loadConfigurationLibraryCatalog()", init_block)
 
     def test_unavailable_configuration_cannot_run_frontend_direct_mode(self):
         run_block = self._function_source("runUsingConfigurationLibrary")
-        self.assertIn('configurationLibraryData.implementation_status !== "implemented"', run_block)
-        self.assertIn("SUPPORTED_CONFIGURATION_TOPOLOGY", run_block)
+        self.assertIn("isConfigurationManifestRunnable(configurationLibraryData.configuration_manifest)", run_block)
+        self.assertIn("requires validated Solver_Curve data and solver module implementation", run_block)
         builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
         self.assertIn("Unsupported solver topology for Configuration Library direct mode", builder_block)
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
@@ -407,6 +428,21 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             "benchmark target",
         ):
             self.assertNotIn(forbidden, report_block)
+
+    def test_report_uses_topology_profile_metadata(self):
+        self.assertIn("const REPORT_PROFILE_REGISTRY", self.ui)
+        self.assertIn("function reportProfileForTopology", self.ui)
+        self.assertIn("function dispatchReportProfile", self.ui)
+        report_block = self._function_source("buildHtmlReport")
+        for text in (
+            "dispatchReportProfile(solverTopology, output)",
+            "Configuration",
+            "Cooling System Type",
+            "Solver Topology",
+            "Report Profile",
+            "Report Profile Source",
+        ):
+            self.assertIn(text, report_block)
 
     def test_configuration_library_acc_v2_direct_disclosure_labels(self):
         detector_block = self._function_source("isConfigurationLibraryAccV2DirectResult")

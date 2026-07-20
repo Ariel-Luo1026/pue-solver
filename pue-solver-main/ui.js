@@ -164,9 +164,124 @@ const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
 const ASHRAE_PROXY_URL = "http://127.0.0.1:8011/api/ashrae_design_condition";
 const PHASE19B_TRACE = true;
 const SUPPORTED_CONFIGURATION_TOPOLOGY = "acc_gas_engine_cdu";
+const CONFIGURATION_TOPOLOGY_STATUS = Object.freeze({
+    acc_gas_engine_cdu: { display: "ACC Gas Engine CDU", status: "implemented", adapter: "acc_gas_engine_cdu" },
+    chiller_dry_cooler: { display: "Chiller + Dry Cooler", status: "framework_ready_data_missing", adapter: "chiller_dry_cooler" },
+    water_cooled_chiller: { display: "Water-Cooled Chiller", status: "placeholder", adapter: null },
+    chiller_cooling_tower: { display: "Chiller + Cooling Tower", status: "placeholder", adapter: null },
+    liquid_cooling: { display: "Liquid Cooling", status: "placeholder", adapter: null },
+    abs_dry_cooler: { display: "ABS + Dry Cooler", status: "placeholder", adapter: null },
+    abs_cooling_tower: { display: "ABS + Cooling Tower", status: "placeholder", adapter: null }
+});
+const REPORT_PROFILE_REGISTRY = Object.freeze({
+    acc_gas_engine_cdu: {
+        profile_id: "acc_gas_engine_cdu",
+        display_name: "ACC Gas Engine CDU Report",
+        cooling_system_type: "ACC + Gas Engine + CDU",
+        topology: "acc_gas_engine_cdu",
+        fields: [
+            "annual_average_PUE",
+            "annual_IT_energy_kWh",
+            "annual_facility_energy_kWh",
+            "annual_total_cooling_system_energy_kWh",
+            "annual_acc_energy_kWh",
+            "annual_pump_energy_kWh",
+            "annual_white_space_equipment_energy_kWh",
+            "annual_engine_energy_kWh",
+            "annual_engine_radiator_energy_kWh",
+            "annual_electrical_loss_kWh"
+        ]
+    },
+    chiller_dry_cooler: {
+        profile_id: "chiller_dry_cooler",
+        display_name: "Chiller + Dry Cooler Report",
+        cooling_system_type: "Chiller + Dry Cooler",
+        topology: "chiller_dry_cooler",
+        configuration_status: "Framework Ready / Data Missing",
+        fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
+    },
+    water_cooled_chiller: {
+        profile_id: "water_cooled_chiller",
+        display_name: "Water-Cooled Chiller Report",
+        cooling_system_type: "Water-Cooled Chiller",
+        topology: "water_cooled_chiller",
+        fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
+    },
+    liquid_cooling: {
+        profile_id: "liquid_cooling",
+        display_name: "Liquid Cooling Report",
+        cooling_system_type: "Liquid Cooling",
+        topology: "liquid_cooling",
+        fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
+    }
+});
+const GENERIC_REPORT_PROFILE = Object.freeze({
+    profile_id: "generic_pue",
+    display_name: "Generic PUE Summary",
+    cooling_system_type: "Unknown Cooling System",
+    topology: "unknown",
+    fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
+});
+const EQUIPMENT_CURVE_SCHEMA_REGISTRY = Object.freeze({
+    ACC: {
+        ambient_capacity_power: "ambient_capacity_power_2D",
+        ambient_capacity_power_2D: "ambient_capacity_power_2D"
+    },
+    CHILLER: {
+        cop_curve: "cop_map_2D",
+        cop_map_2D: "cop_map_2D"
+    },
+    DRY_COOLER: {
+        ambient_capacity_power: "ambient_capacity_power_1D",
+        ambient_capacity_power_1D: "ambient_capacity_power_1D"
+    },
+    CHW_PUMP: {
+        load_ratio_power: "load_ratio_power_1D",
+        load_ratio_power_1D: "load_ratio_power_1D"
+    },
+    CDU: {
+        load_ratio_power: "load_ratio_power_1D",
+        load_ratio_power_1D: "load_ratio_power_1D"
+    },
+    RTC: {
+        load_ratio_power: "load_ratio_power_1D",
+        load_ratio_power_1D: "load_ratio_power_1D"
+    },
+    MAU: {
+        load_ratio_power: "load_ratio_power_1D",
+        load_ratio_power_1D: "load_ratio_power_1D"
+    },
+    ENGINE: {
+        load_ratio_engine_output: "load_ratio_engine_output_1D"
+    },
+    ENGINE_RADIATOR: {
+        load_ratio_power: "load_ratio_power_1D",
+        load_ratio_power_1D: "load_ratio_power_1D"
+    },
+    ELECTRICAL_DISTRIBUTION: {
+        electrical_path_efficiency: "efficiency_curve",
+        efficiency_curve: "efficiency_curve"
+    }
+});
+function equipmentCurveSchema(equipmentType, curveType) {
+    const normalizedType = String(equipmentType || "").trim().toUpperCase();
+    const normalizedCurve = String(curveType || "").trim();
+    return EQUIPMENT_CURVE_SCHEMA_REGISTRY[normalizedType]?.[normalizedCurve] || "Not available";
+}
 const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "equipment_registry.py",
     "topology_registry.py",
+    "topology_dispatcher.py",
+    "topology_adapters/__init__.py",
+    "topology_adapters/acc_gas_engine_cdu.py",
+    "topology_adapters/chiller_dry_cooler.py",
+    "equipment_type_registry.py",
+    "equipment_curve_registry.py",
+    "equipment_metadata.py",
+    "equipment_engines/__init__.py",
+    "equipment_engines/equipment_engine_dispatcher.py",
+    "report_profile_registry.py",
+    "report_dispatcher.py",
     "ashrae_online_lookup.py",
     "ashrae_design_conditions.py",
     "ashrae_design_conditions_data.json",
@@ -187,6 +302,20 @@ const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
 
 function log(msg) { elLog.textContent = msg; }
 function pretty(obj) { return JSON.stringify(obj, null, 2); }
+
+function reportProfileForTopology(topologyId) {
+    return REPORT_PROFILE_REGISTRY[topologyId] || { ...GENERIC_REPORT_PROFILE, topology: topologyId || "unknown" };
+}
+
+function dispatchReportProfile(topologyId, solverResult = {}) {
+    const profile = reportProfileForTopology(topologyId);
+    const annual = solverResult?.annual_results || {};
+    const summary = {};
+    for (const field of profile.fields || []) {
+        summary[field] = annual[field] ?? null;
+    }
+    return { ...profile, summary, dispatch_status: REPORT_PROFILE_REGISTRY[topologyId] ? "matched" : "generic" };
+}
 
 function phase19bTrace(label, data = null) {
     if (!PHASE19B_TRACE) return;
@@ -292,6 +421,8 @@ async function loadPythonModuleIntoPyodide(fileName) {
         if (!response.ok) throw new Error(`Failed to load ${fileName}`);
         return response.text();
     });
+    const directory = String(fileName || "").split("/").slice(0, -1).join("/");
+    if (directory) ensurePyodideDir(directory);
     pyodide.FS.writeFile(fileName, text);
 }
 
@@ -2481,6 +2612,11 @@ function buildHtmlReport(context) {
     const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
     const annual = output.annual_results || {};
     const peak = output.peak_results || {};
+    const manifest = context.input?.configuration_manifest || {};
+    const solverTopology = context.input?.topology_id || context.input?.solver_dispatch_key || manifest.solver_topology || "unknown";
+    const reportProfile = dispatchReportProfile(solverTopology, output);
+    const topologyDisplay = CONFIGURATION_TOPOLOGY_STATUS[solverTopology]?.display || reportProfile.cooling_system_type || "N/A";
+    const coolingSystemDisplay = reportProfile.cooling_system_type || context.input?.cooling_system_type || "N/A";
     const isAnnualBenchmarkMode = output.calculation_mode === "excel_benchmark_compatible" || annual.calculation_mode === "excel_benchmark_compatible";
     const isExcelReplicatedHourlyMode = output.calculation_mode === "excel_replicated_hourly" || annual.calculation_mode === "excel_replicated_hourly";
     const isExperimentalHourlyMode = output.calculation_mode === "experimental_acc_hourly_shape" || annual.calculation_mode === "experimental_acc_hourly_shape";
@@ -2493,13 +2629,17 @@ function buildHtmlReport(context) {
     const benchmarkAverage = benchmark.component_average_kW || {};
     const projectInfo = getProjectReportInfo();
     const manifestRows = context.input?.configuration_id ? [
+        ["Configuration", esc(context.input.configuration_display_name || context.input.configuration_id || "N/A")],
+        ["Cooling System Type", esc(coolingSystemDisplay)],
+        ["Solver Topology", esc(solverTopology)],
+        ["Report Profile", esc(reportProfile.profile_id || context.input.report_profile || "generic_pue")],
         ["Configuration ID", esc(context.input.configuration_id)],
         ["Configuration Display Name", esc(context.input.configuration_display_name || "N/A")],
         ["Manifest Schema Version", esc(context.input.configuration_manifest_schema_version || "N/A")],
-        ["Topology ID", esc(context.input.topology_id || "N/A")],
+        ["Topology ID", esc(topologyDisplay)],
         ["Implementation Status", esc(context.input.implementation_status || "N/A")],
         ["Solver Dispatch Key", esc(context.input.solver_dispatch_key || "N/A")],
-        ["Report Profile", esc(context.input.report_profile || "N/A")]
+        ["Report Profile Source", esc(context.input.report_profile || reportProfile.profile_id || "N/A")]
     ] : [];
     const heatGains = getCoolingLoadHeatGainInput();
     const weather = standardDataFiles.weather || {};
@@ -4463,16 +4603,28 @@ const CONFIGURATION_LIBRARY_INDEX_URL = new URL("configuration_library_index.jso
 function configurationStatusLabel(status) {
     const labels = {
         implemented: "Available",
-        framework_ready_data_missing: "Equipment Data Missing",
+        test_only: "Test Only",
+        framework_ready_data_missing: "Framework Ready / Data Missing",
         placeholder: "Planned",
         disabled: "Disabled"
     };
     return labels[status] || "Unavailable";
 }
 
+function topologyStatusForManifest(manifest) {
+    const topologyId = manifest?.solver_topology || manifest?.topology_id;
+    return CONFIGURATION_TOPOLOGY_STATUS[topologyId] || {
+        display: topologyId || "Unknown",
+        status: "unknown",
+        adapter: null
+    };
+}
+
 function isConfigurationManifestRunnable(manifest) {
+    const topology = topologyStatusForManifest(manifest);
     return manifest?.implementation_status === "implemented"
-        && manifest?.solver_topology === SUPPORTED_CONFIGURATION_TOPOLOGY;
+        && topology.status === "implemented"
+        && Boolean(topology.adapter);
 }
 
 async function loadConfigurationLibraryCatalog() {
@@ -4521,7 +4673,8 @@ function renderConfigurationLibraryCatalog() {
     }
     select.innerHTML = configurationLibraryCatalog.map(manifest => {
         const statusLabel = configurationStatusLabel(manifest.implementation_status);
-        const label = `${manifest.display_name || manifest.configuration_id} — ${statusLabel}`;
+        const topology = topologyStatusForManifest(manifest);
+        const label = `${manifest.display_name || manifest.configuration_id} — Topology: ${topology.display} (${statusLabel})`;
         return `<option value="${esc(manifest.configuration_id)}" ${manifest.runnable ? "" : "disabled"}>${esc(label)}</option>`;
     }).join("");
     const firstRunnable = configurationLibraryCatalog.find(item => item.runnable);
@@ -4582,6 +4735,63 @@ function resolveDeclaredEquipmentIdFromMapping(manifest, roleName, declaredEquip
     throw new Error(`Configuration ${configurationId} role ${roleName} references missing equipment ${declared}`);
 }
 
+function validateFrontendConfigurationLibrary(data) {
+    const manifest = data?.configuration_manifest || {};
+    const selectedCurves = data?.selected_curves || data?.standardized_solver_input?.selected_curves || {};
+    const missingRoles = [];
+    const missingCurves = [];
+    const warnings = [];
+    ["configuration_id", "cooling_system_type", "solver_topology"].forEach(field => {
+        if (!manifest[field]) warnings.push(`Manifest missing required field: ${field}`);
+    });
+    const topology = topologyStatusForManifest(manifest);
+    if (!CONFIGURATION_TOPOLOGY_STATUS[manifest.solver_topology]) {
+        warnings.push(`Unknown solver_topology: ${manifest.solver_topology || "<missing>"}`);
+    }
+    (manifest.required_roles || []).forEach(roleName => {
+        let roleIds;
+        try {
+            roleIds = resolveEquipmentRoleIdFromMapping(manifest, roleName, selectedCurves);
+        } catch (error) {
+            missingRoles.push(roleName);
+            warnings.push(String(error.message || error));
+            return;
+        }
+        (Array.isArray(roleIds) ? roleIds : [roleIds]).forEach(equipmentId => {
+            const packageItem = findLibraryEquipmentPackage(data, equipmentId).equipmentPackage;
+            const selected = selectedCurves[equipmentId] || {};
+            const metadata = packageItem?.equipment_metadata;
+            if (!metadata) {
+                warnings.push(`${equipmentId}: equipment_metadata.json is missing`);
+            } else {
+                if (metadata.equipment_id && metadata.equipment_id !== packageItem.equipment_id) {
+                    warnings.push(`${equipmentId}: equipment_metadata equipment_id does not match loaded equipment folder`);
+                }
+                ["equipment_id", "equipment_type", "display_name", "curve_type", "unit_system", "status"].forEach(field => {
+                    if (metadata[field] === null || metadata[field] === undefined || metadata[field] === "") {
+                        warnings.push(`${equipmentId}: equipment_metadata missing ${field}`);
+                    }
+                });
+            }
+            const hasCurve = selected.electrical_path
+                || selected.status === "Electrical Path Found"
+                || (selected.status === "Selected" && selected.sheet_name);
+            if (!packageItem || packageItem.status === "Missing" || !hasCurve) {
+                missingCurves.push(`${roleName}=${equipmentId}`);
+            }
+        });
+    });
+    return {
+        status: (missingRoles.length || missingCurves.length || warnings.length) ? "error" : "valid",
+        configuration_id: manifest.configuration_id || data?.configuration_id || data?.configuration_name || "",
+        topology: manifest.solver_topology || data?.topology_id || "",
+        topology_display: topology.display,
+        missing_roles: missingRoles,
+        missing_curves: missingCurves,
+        warnings
+    };
+}
+
 async function fetchConfigurationWorkbook(relativePath) {
     const workbookUrl = new URL(relativePath, CONFIGURATION_LIBRARY_ROOT_URL);
     const response = await fetch(workbookUrl, { cache: "no-store" });
@@ -4603,6 +4813,13 @@ async function fetchConfigurationLibraryArrayBuffer(relativePath) {
     const response = await fetch(workbookUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Could not load ${workbookUrl.href} (HTTP ${response.status}).`);
     return response.arrayBuffer();
+}
+
+async function fetchConfigurationLibraryJson(relativePath) {
+    const jsonUrl = new URL(configurationLibraryFetchPath(relativePath), CONFIGURATION_LIBRARY_ROOT_URL);
+    const response = await fetch(jsonUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Could not load ${jsonUrl.href} (HTTP ${response.status}).`);
+    return response.json();
 }
 
 function configurationLibraryPyodidePath(configurationName) {
@@ -5126,9 +5343,19 @@ async function runUsingConfigurationLibrary() {
         if (status) status.textContent = "Load Configuration Library first.";
         return;
     }
-    if (configurationLibraryData.topology_id !== SUPPORTED_CONFIGURATION_TOPOLOGY || configurationLibraryData.implementation_status !== "implemented") {
+    if (!isConfigurationManifestRunnable(configurationLibraryData.configuration_manifest)) {
         if (status) {
-            status.textContent = `${configurationLibraryData.configuration_display_name || configurationLibraryData.configuration_name} is not an implemented ACC Configuration Library topology.`;
+            status.textContent = "This configuration requires validated Solver_Curve data and solver module implementation.";
+            status.style.color = "#dc2626";
+        }
+        return;
+    }
+    const validation = validateFrontendConfigurationLibrary(configurationLibraryData);
+    configurationLibraryData.configuration_validation = validation;
+    if (validation.status === "error") {
+        renderConfigurationLibrarySummary(configurationLibraryData);
+        if (status) {
+            status.textContent = `Configuration validation failed: ${[...validation.missing_roles, ...validation.missing_curves, ...validation.warnings].join("; ")}`;
             status.style.color = "#dc2626";
         }
         return;
@@ -5242,6 +5469,8 @@ function renderConfigurationLibrarySummary(data) {
     const annualElectrical = data.last_solver_output?.annual_results || {};
     const peakResults = data.last_solver_output?.peak_results || {};
     const finalSolverInput = data.final_solver_input || null;
+    const validation = data.configuration_validation || validateFrontendConfigurationLibrary(data);
+    data.configuration_validation = validation;
     const ashraeEndpointSent = finalSolverInput?.ashrae_design_conditions_url || finalSolverInput?.project?.ashrae_design_conditions_url || standardized?.ashrae_design_conditions_url || standardized?.project?.ashrae_design_conditions_url || "Not available";
     const hourlyElectrical = Array.isArray(data.last_solver_output?.hourly_results) ? data.last_solver_output.hourly_results : [];
     const directAccV2Disclosure = isConfigurationLibraryAccV2DirectResult(data.last_solver_output || {}, data.standardized_solver_input || null);
@@ -5254,6 +5483,10 @@ function renderConfigurationLibrarySummary(data) {
         ["Configuration ID", data.configuration_id || data.configuration_name],
         ["Configuration Display Name", data.configuration_display_name || data.configuration_name],
         ["Topology ID", data.topology_id || "Not available"],
+        ["Configuration Validation", String(validation.status || "unknown").toUpperCase()],
+        ["Validation Missing Roles", validation.missing_roles?.length ? validation.missing_roles.join(", ") : "None"],
+        ["Validation Missing Curves", validation.missing_curves?.length ? validation.missing_curves.join(", ") : "None"],
+        ["Validation Warnings", validation.warnings?.length ? validation.warnings.join("; ") : "None"],
         ["Implementation Status", data.implementation_status || "Not available"],
         ["Solver Dispatch Key", data.solver_dispatch_key || "Not available"],
         ["Report Profile", data.report_profile || "Not available"],
@@ -5319,6 +5552,7 @@ function renderConfigurationLibrarySummary(data) {
         const item = resolved.equipmentPackage || { equipment_id: resolved.resolvedId, status: "Missing", solver_curves: {} };
         const selected = selectLibrarySolverCurve(item, selectedScenario);
         const packageStatus = resolved.equipmentPackage ? "Found" : "Missing Workbook";
+        const equipmentMetadata = item.equipment_metadata || {};
         const metadataFields = DIRECT_MODE_CURVE_METADATA_FIELDS[resolved.resolvedId] || {};
         const solverSource = metadataFields.source ? annualElectrical[metadataFields.source] : null;
         const solverCurveType = metadataFields.type ? annualElectrical[metadataFields.type] : null;
@@ -5331,8 +5565,12 @@ function renderConfigurationLibrarySummary(data) {
             ? "Using Configuration Library Solver_Curve"
             : "Not evaluated");
         const curveType = displayCurveType(solverCurveType) || (selected.sheet_name || selected.electrical_path ? librarySelectedCurveType(selected) : (resolved.equipmentPackage ? "Unknown" : "Not available"));
+        const equipmentType = equipmentMetadata.equipment_type || item.equipment_type || "Not available";
+        const metadataCurveType = equipmentMetadata.curve_type || "Not available";
+        const curveSchema = equipmentCurveSchema(equipmentType, metadataCurveType);
         return `<tr>
-            <td>${esc(resolved.resolvedId)}</td><td>${esc(packageStatus)}</td>
+            <td>${esc(resolved.resolvedId)}</td><td>${esc(equipmentType)}</td>
+            <td>${esc(metadataCurveType)}</td><td>${esc(curveSchema)}</td><td>${esc(equipmentMetadata.status || packageStatus)}</td><td>${esc(packageStatus)}</td>
             <td>${esc(sheetFoundDisplay)}</td>
             <td>${selectedDisplay}</td><td>${esc(sourceStatus)}</td><td>${esc(curveType)}</td>
         </tr>`;
@@ -5340,9 +5578,9 @@ function renderConfigurationLibrarySummary(data) {
     summary.innerHTML = values.map(([label, value]) =>
         `<div class="fileSlot"><div class="panelTitle">${esc(label)}</div><div>${esc(value)}</div></div>`
     ).join("") + `<div class="fileSlot" style="grid-column:1/-1; overflow-x:auto;">
-        <div class="panelTitle">Equipment Package Auto Binding — ${esc(selectedScenario)}</div>
+        <div class="panelTitle">Equipment Summary / Package Auto Binding — ${esc(selectedScenario)}</div>
         <table style="width:100%; min-width:720px;"><thead><tr>
-            <th>Equipment ID</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th><th>Curve Type</th>
+            <th>Equipment ID</th><th>Equipment Type</th><th>Curve Type</th><th>Curve Schema</th><th>Metadata Status</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th><th>Curve Type</th>
         </tr></thead><tbody>${equipmentRows}</tbody></table>
     </div>`;
 }
@@ -5362,7 +5600,8 @@ async function loadSelectedConfigurationLibrary() {
     }
     if (!selectedManifest.runnable) {
         if (status) {
-            status.textContent = `${selectedManifest.display_name || configurationName} is ${configurationStatusLabel(selectedManifest.implementation_status)} and cannot be run.`;
+            const topology = topologyStatusForManifest(selectedManifest);
+            status.textContent = `Topology: ${topology.display} (Status: ${configurationStatusLabel(topology.status)}). This configuration requires validated Solver_Curve data and solver module implementation.`;
             status.style.color = "#b45309";
         }
         return;
@@ -5384,6 +5623,7 @@ async function loadSelectedConfigurationLibrary() {
             try {
                 const fetched = await fetchResolvedConfigurationEquipmentWorkbook(base, equipmentId);
                 const sheets = fetched.sheets;
+                const equipmentMetadata = await fetchConfigurationLibraryJson(`${configurationName}/equipment/${fetched.sourceEquipmentId}/equipment_metadata.json`).catch(() => null);
                 const curveNames = ["Solver_Curve", "Solver_Curve_Normal", "Solver_Curve_Failure"].filter(name => sheets[name]);
                 const information = librarySheetKeyValues(sheets.Information);
                 const metadata = librarySheetKeyValues(sheets.Metadata);
@@ -5410,13 +5650,15 @@ async function loadSelectedConfigurationLibrary() {
                     solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]])),
                     performance_map: sheets.Performance_Map || [],
                     electrical_path: electricalPath,
-                    validation_status: validation["Validation Status"] || validation.Status || "Available"
+                    validation_status: validation["Validation Status"] || validation.Status || "Available",
+                    equipment_metadata: equipmentMetadata
                 }];
             } catch (_) {
                 return [resolvedId, {
                     equipment_id: resolvedId, source_equipment_id: equipmentId, equipment_type: null, package_path: packagePath,
                     status: "Missing", available_sheets: [], solver_curves: {}, performance_map: [], electrical_path: null,
-                    validation_status: "Missing equipment package"
+                    validation_status: "Missing equipment package",
+                    equipment_metadata: null
                 }];
             }
         });
@@ -5465,6 +5707,12 @@ async function loadSelectedConfigurationLibrary() {
             it_load: { hours: percentages.length, hourly_it_load_percent: percentages, hourly_it_load_ratio: ratios },
             equipment: Object.fromEntries(equipmentEntries)
         };
+        const initialScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
+        configurationLibraryData.selected_curves = Object.fromEntries(manifestEquipmentRoleIds(configurationLibraryData.configuration_manifest).map(equipmentId => {
+            const resolved = findLibraryEquipmentPackage(configurationLibraryData, equipmentId);
+            return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, initialScenario)];
+        }));
+        configurationLibraryData.configuration_validation = validateFrontendConfigurationLibrary(configurationLibraryData);
         const librarySizing = calculateFrontendUnitRequirements(
             getProjectReportInfo().capacityMw, configurationLibraryData.cooling_unit_capacity_mw
         );
@@ -5544,7 +5792,8 @@ function initStandardDataInputs() {
         const manifest = selectedConfigurationManifest();
         const status = document.getElementById("configurationLibraryStatus");
         if (status && manifest) {
-            status.textContent = `${manifest.display_name || manifest.configuration_id}: ${configurationStatusLabel(manifest.implementation_status)}.`;
+            const topology = topologyStatusForManifest(manifest);
+            status.textContent = `Topology: ${topology.display} (Status: ${configurationStatusLabel(topology.status)}).`;
             status.style.color = manifest.runnable ? "#374151" : "#b45309";
         }
         renderFrameworkDiagnosticsPanel();

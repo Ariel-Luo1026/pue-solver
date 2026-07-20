@@ -1,12 +1,19 @@
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from configuration_library_loader import build_solver_input_from_library
 from configuration_library_scanner import scan_single_configuration
 from configuration_validator import (
     validate_configuration_library,
     validate_configuration_manifest,
 )
+from library_solver_adapter import (
+    _build_acc_gas_engine_cdu_solver_input,
+    build_solver_input_from_configuration,
+)
+from solver import compute_pue_project
 
 
 class ConfigurationValidatorTest(unittest.TestCase):
@@ -187,6 +194,71 @@ class ConfigurationValidatorTest(unittest.TestCase):
             {summary["topology_id"] for summary in summaries},
             {"acc", "abs_cooling_tower"},
         )
+
+    def test_valid_acc_runtime_configuration_passes(self):
+        library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+
+        summary = validate_configuration_library(library_input)
+
+        self.assertEqual(summary["status"], "valid")
+        self.assertEqual(summary["configuration_id"], "ACC_1.5MW_GASENGINE_CDU")
+        self.assertEqual(summary["topology"], "acc_gas_engine_cdu")
+        self.assertEqual(summary["missing_roles"], [])
+        self.assertEqual(summary["missing_curves"], [])
+
+    def test_missing_required_runtime_equipment_fails(self):
+        library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        del library_input["selected_curves"]["CHW_PUMP_2"]
+
+        summary = validate_configuration_library(library_input)
+
+        self.assertEqual(summary["status"], "error")
+        self.assertIn("chw_pump", summary["missing_roles"])
+
+    def test_missing_runtime_solver_curve_fails(self):
+        library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        library_input["selected_curves"]["CHW_PUMP_2"] = {
+            "sheet_name": None,
+            "status": "Missing Solver_Curve",
+            "curve": [],
+        }
+
+        summary = validate_configuration_library(library_input)
+
+        self.assertEqual(summary["status"], "error")
+        self.assertIn("chw_pump=CHW_PUMP_2", summary["missing_curves"])
+
+    def test_validation_failure_stops_before_dispatch(self):
+        library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        del library_input["selected_curves"]["CHW_PUMP_2"]
+
+        with self.assertRaisesRegex(ValueError, "Configuration Library validation failed"):
+            build_solver_input_from_configuration(
+                library_input["configuration_manifest"],
+                library_input,
+            )
+
+    def test_unknown_runtime_topology_fails(self):
+        library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+        library_input["configuration_manifest"]["solver_topology"] = "unknown_topology"
+
+        summary = validate_configuration_library(library_input)
+
+        self.assertEqual(summary["status"], "error")
+        self.assertIn("Unknown solver_topology: unknown_topology", summary["warnings"])
+
+    def test_existing_acc_annual_pue_unchanged_by_validation_layer(self):
+        library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
+
+        validated = build_solver_input_from_configuration(
+            library_input["configuration_manifest"],
+            deepcopy(library_input),
+        )
+        previous = _build_acc_gas_engine_cdu_solver_input(deepcopy(library_input))
+
+        validated_pue = compute_pue_project(validated)["annual_results"]["annual_average_PUE"]
+        previous_pue = compute_pue_project(previous)["annual_results"]["annual_average_PUE"]
+        self.assertLess(abs(validated_pue - previous_pue), 1e-9)
 
 
 if __name__ == "__main__":

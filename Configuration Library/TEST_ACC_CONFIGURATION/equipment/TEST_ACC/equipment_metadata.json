@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "TEST_ACC",
+  "equipment_type": "ACC",
+  "display_name": "Test ACC Equipment",
+  "curve_type": "ambient_capacity_power",
+  "unit_system": "SI",
+  "status": "test_only"
+}

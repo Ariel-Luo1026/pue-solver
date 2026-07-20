@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "ENGINE_RADIATOR_1",
+  "equipment_type": "ENGINE_RADIATOR",
+  "display_name": "Engine Radiator 1",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "fan",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve_Normal",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Workbook Metadata status is Preliminary; vendor data is pending."
+}

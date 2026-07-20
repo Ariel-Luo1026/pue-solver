@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "DRYCOOLER_6",
+  "equipment_type": "DRY_COOLER",
+  "display_name": "Dry Cooler 6",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "fan",
+  "curve_type": "ambient_capacity_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "framework_ready_data_missing",
+  "data_status": "prototype",
+  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID_CDU",
+  "notes": "Existing workbook contains dry-cooler performance data. No annual dry-cooler solver path is implemented in Phase 20H-1."
+}

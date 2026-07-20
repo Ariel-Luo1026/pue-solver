@@ -108,6 +108,17 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "equipment_curve_lookup.py",
             "equipment_curve_reader.py",
             "equipment_engine.py",
+            "topology_dispatcher.py",
+            "topology_adapters/__init__.py",
+            "topology_adapters/acc_gas_engine_cdu.py",
+            "topology_adapters/chiller_dry_cooler.py",
+            "equipment_type_registry.py",
+            "equipment_curve_registry.py",
+            "equipment_metadata.py",
+            "equipment_engines/__init__.py",
+            "equipment_engines/equipment_engine_dispatcher.py",
+            "report_profile_registry.py",
+            "report_dispatcher.py",
             "configuration_manifest.py",
             "equipment_role_resolver.py",
             "configuration_library_loader.py",
@@ -129,7 +140,19 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
         ]
         self.assertIn('"configuration_manifest.py"', module_block)
         self.assertIn('"equipment_role_resolver.py"', module_block)
+        self.assertIn('"topology_dispatcher.py"', module_block)
+        self.assertIn('"topology_adapters/__init__.py"', module_block)
+        self.assertIn('"topology_adapters/acc_gas_engine_cdu.py"', module_block)
+        self.assertIn('"topology_adapters/chiller_dry_cooler.py"', module_block)
+        self.assertIn('"equipment_type_registry.py"', module_block)
+        self.assertIn('"equipment_curve_registry.py"', module_block)
+        self.assertIn('"equipment_metadata.py"', module_block)
+        self.assertIn('"equipment_engines/__init__.py"', module_block)
+        self.assertIn('"equipment_engines/equipment_engine_dispatcher.py"', module_block)
+        self.assertIn('"report_profile_registry.py"', module_block)
+        self.assertIn('"report_dispatcher.py"', module_block)
         self.assertIn('"configuration_library_loader.py"', module_block)
+        self.assertIn("ensurePyodideDir(directory)", self._function_source("loadPythonModuleIntoPyodide"))
         self.assertLess(
             module_block.index('"configuration_manifest.py"'),
             module_block.index('"configuration_library_loader.py"'),

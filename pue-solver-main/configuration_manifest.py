@@ -13,6 +13,7 @@ VALID_IMPLEMENTATION_STATUSES = {
     "framework_ready_data_missing",
     "placeholder",
     "disabled",
+    "test_only",
 }
 REQUIRED_FIELDS = (
     "schema_version",
@@ -100,15 +101,14 @@ def validate_configuration_manifest(raw_manifest, manifest_path=None):
     manifest["optional_roles"] = [str(role) for role in manifest["optional_roles"]]
     _validate_topology_compatibility(manifest, manifest_path)
 
-    if status == "implemented":
-        for role in manifest["required_roles"]:
-            equipment_id = manifest["equipment_roles"].get(role)
-            if not equipment_id:
-                raise _error(
-                    configuration_id,
-                    manifest_path,
-                    f"implemented configuration is missing required equipment role: {role}",
-                )
+    for role in manifest["required_roles"]:
+        equipment_id = manifest["equipment_roles"].get(role)
+        if not equipment_id:
+            raise _error(
+                configuration_id,
+                manifest_path,
+                f"missing required equipment role: {role}",
+            )
     if manifest_path:
         manifest["manifest_path"] = str(manifest_path)
     return manifest
@@ -192,6 +192,10 @@ def assert_manifest_executable(manifest):
         raise UnsupportedConfigurationStatusError(
             f"Configuration '{configuration_id}' is disabled and cannot be executed."
         )
+    if status == "test_only":
+        raise UnsupportedConfigurationStatusError(
+            f"Configuration '{configuration_id}' is test-only and cannot be executed."
+        )
     raise UnsupportedConfigurationStatusError(
         f"Configuration '{configuration_id}' has invalid implementation_status: {status}"
     )
@@ -213,6 +217,8 @@ def _validate_topology_compatibility(manifest, manifest_path):
             manifest_path,
             f"unknown solver_topology: {manifest['solver_topology']}",
         )
+    if manifest["implementation_status"] == "test_only":
+        return
     if solver_topology["topology_id"] != cooling_topology["topology_id"]:
         raise _error(
             configuration_id,

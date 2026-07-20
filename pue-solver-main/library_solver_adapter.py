@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from configuration_library_scanner import parse_equipment_folder_name
+from configuration_validator import validate_configuration_library
 from equipment_registry import canonicalize_equipment_id
 from equipment_role_resolver import resolve_equipment_role_id
 
@@ -60,7 +61,7 @@ def _power_curve(rows, curve_id):
     }
 
 
-def convert_library_input_to_solver_input(library_input):
+def _build_acc_gas_engine_cdu_solver_input(library_input):
     """Map library fields to compute_pue_project-compatible input.
 
     Fields that the current solver does not consume are retained under
@@ -212,3 +213,34 @@ def convert_library_input_to_solver_input(library_input):
         "electrical_path": deepcopy(library_input.get("electrical_path")),
         "library_context": library_context,
     }
+
+
+def build_solver_input_from_configuration(manifest, equipment_roles):
+    """Dispatch a Configuration Library input through its manifest topology."""
+    from topology_dispatcher import dispatch_topology
+
+    validation = validate_configuration_library(equipment_roles)
+    if validation.get("status") == "error":
+        raise ValueError(
+            "Configuration Library validation failed: "
+            + "; ".join(
+                [
+                    *(f"missing role {role}" for role in validation.get("missing_roles", [])),
+                    *(f"missing curve {curve}" for curve in validation.get("missing_curves", [])),
+                    *validation.get("warnings", []),
+                ]
+            )
+        )
+    return dispatch_topology(manifest, equipment_roles)
+
+
+def convert_library_input_to_solver_input(library_input):
+    """Compatibility wrapper for existing callers of the Configuration Library adapter."""
+    manifest = library_input.get("configuration_manifest", {}) if isinstance(library_input, dict) else {}
+    dispatched = build_solver_input_from_configuration(manifest, library_input)
+    if isinstance(dispatched, dict) and dispatched.get("status") == "not_implemented":
+        raise ValueError(
+            f"Unsupported solver topology for Configuration Library adapter: {dispatched.get('topology')}. "
+            f"{dispatched.get('reason')}"
+        )
+    return dispatched

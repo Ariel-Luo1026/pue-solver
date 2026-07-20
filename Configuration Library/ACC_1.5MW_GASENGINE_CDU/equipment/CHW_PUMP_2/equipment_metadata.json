@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "CHW_PUMP_2",
+  "equipment_type": "CHW_PUMP",
+  "display_name": "CHW Pump 2",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "pump",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve_Normal",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Workbook Metadata status is Preliminary; workbook contains normal/failure Solver_Curve sheets."
+}
