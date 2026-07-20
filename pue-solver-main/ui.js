@@ -155,6 +155,7 @@ let lastReportContext = null;
 let scenarioResults = [];
 window.scenario_results = scenarioResults;
 let configurationLibraryData = null;
+let configurationLibraryCatalog = [];
 let lastAccCalculationEngineSelection = "acc_v2";
 const equipmentPdfSpecs = {};
 const CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE = "acc_v2_direct_solver_curve_hourly";
@@ -162,6 +163,7 @@ const CONFIGURATION_LIBRARY_ACC_ENGINE = "acc_v2_configuration_library";
 const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
 const ASHRAE_PROXY_URL = "http://127.0.0.1:8011/api/ashrae_design_condition";
 const PHASE19B_TRACE = true;
+const SUPPORTED_CONFIGURATION_TOPOLOGY = "acc_gas_engine_cdu";
 const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "equipment_registry.py",
     "topology_registry.py",
@@ -169,6 +171,7 @@ const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "ashrae_design_conditions.py",
     "ashrae_design_conditions_data.json",
     "configuration_library_scanner.py",
+    "configuration_manifest.py",
     "configuration_library_loader.py",
     "equipment_curve_reader.py",
     "equipment_curve_lookup.py",
@@ -2488,6 +2491,15 @@ function buildHtmlReport(context) {
     const benchmark = output.benchmark_components || {};
     const benchmarkAverage = benchmark.component_average_kW || {};
     const projectInfo = getProjectReportInfo();
+    const manifestRows = context.input?.configuration_id ? [
+        ["Configuration ID", esc(context.input.configuration_id)],
+        ["Configuration Display Name", esc(context.input.configuration_display_name || "N/A")],
+        ["Manifest Schema Version", esc(context.input.configuration_manifest_schema_version || "N/A")],
+        ["Topology ID", esc(context.input.topology_id || "N/A")],
+        ["Implementation Status", esc(context.input.implementation_status || "N/A")],
+        ["Solver Dispatch Key", esc(context.input.solver_dispatch_key || "N/A")],
+        ["Report Profile", esc(context.input.report_profile || "N/A")]
+    ] : [];
     const heatGains = getCoolingLoadHeatGainInput();
     const weather = standardDataFiles.weather || {};
     const weatherData = weather.data || weather.hourly_data || {};
@@ -2754,6 +2766,7 @@ function buildHtmlReport(context) {
     </div>
     <table><tbody>${tableRows([
         ["Site Location", esc(place)],
+        ...manifestRows,
         ...(isBenchmarkMode ? [
             ["Cooling Architecture", "ACC + Gas Engine + CDU"],
             ["Calculation Method", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Annual-equivalent energy performance model")],
@@ -4444,6 +4457,81 @@ function buildStandardSolverInputToTextarea() {
 // from this single root so configuration, scenario, equipment, input, and
 // source files cannot accidentally fall back to the page's own directory.
 const CONFIGURATION_LIBRARY_ROOT_URL = new URL("../Configuration Library/", document.baseURI);
+const CONFIGURATION_LIBRARY_INDEX_URL = new URL("configuration_library_index.json", CONFIGURATION_LIBRARY_ROOT_URL);
+
+function configurationStatusLabel(status) {
+    const labels = {
+        implemented: "Available",
+        framework_ready_data_missing: "Equipment Data Missing",
+        placeholder: "Planned",
+        disabled: "Disabled"
+    };
+    return labels[status] || "Unavailable";
+}
+
+function isConfigurationManifestRunnable(manifest) {
+    return manifest?.implementation_status === "implemented"
+        && manifest?.solver_topology === SUPPORTED_CONFIGURATION_TOPOLOGY;
+}
+
+async function loadConfigurationLibraryCatalog() {
+    const status = document.getElementById("configurationLibraryStatus");
+    const select = document.getElementById("configurationLibrarySelect");
+    try {
+        const response = await fetch(CONFIGURATION_LIBRARY_INDEX_URL, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Could not load ${CONFIGURATION_LIBRARY_INDEX_URL.href} (HTTP ${response.status}).`);
+        const index = await response.json();
+        const entries = Array.isArray(index.configurations) ? index.configurations : [];
+        configurationLibraryCatalog = await Promise.all(entries.map(async entry => {
+            const manifestPath = entry.manifest_path || `${entry.configuration_id}/configuration_manifest.json`;
+            const manifestUrl = new URL(configurationLibraryFetchPath(manifestPath), CONFIGURATION_LIBRARY_ROOT_URL);
+            const manifestResponse = await fetch(manifestUrl, { cache: "no-store" });
+            if (!manifestResponse.ok) throw new Error(`Could not load ${manifestUrl.href} (HTTP ${manifestResponse.status}).`);
+            const manifest = await manifestResponse.json();
+            return {
+                ...manifest,
+                manifest_path: manifestPath,
+                runnable: isConfigurationManifestRunnable(manifest)
+            };
+        }));
+        renderConfigurationLibraryCatalog();
+        if (status && configurationLibraryCatalog.length) {
+            status.textContent = `Configuration Library catalog loaded: ${configurationLibraryCatalog.length} manifest(s).`;
+            status.style.color = "#374151";
+        }
+    } catch (error) {
+        configurationLibraryCatalog = [];
+        if (select) {
+            select.innerHTML = `<option value="">Configuration catalog unavailable</option>`;
+        }
+        if (status) {
+            status.textContent = `Configuration Library catalog load failed: ${String(error.message || error)}`;
+            status.style.color = "#dc2626";
+        }
+    }
+}
+
+function renderConfigurationLibraryCatalog() {
+    const select = document.getElementById("configurationLibrarySelect");
+    if (!select) return;
+    if (!configurationLibraryCatalog.length) {
+        select.innerHTML = `<option value="">No Configuration Library manifests found</option>`;
+        return;
+    }
+    select.innerHTML = configurationLibraryCatalog.map(manifest => {
+        const statusLabel = configurationStatusLabel(manifest.implementation_status);
+        const label = `${manifest.display_name || manifest.configuration_id} — ${statusLabel}`;
+        return `<option value="${esc(manifest.configuration_id)}" ${manifest.runnable ? "" : "disabled"}>${esc(label)}</option>`;
+    }).join("");
+    const firstRunnable = configurationLibraryCatalog.find(item => item.runnable);
+    if (firstRunnable) select.value = firstRunnable.configuration_id;
+}
+
+function selectedConfigurationManifest() {
+    const select = document.getElementById("configurationLibrarySelect");
+    const configurationId = select?.value || "";
+    return configurationLibraryCatalog.find(item => item.configuration_id === configurationId) || null;
+}
 
 async function fetchConfigurationWorkbook(relativePath) {
     const workbookUrl = new URL(relativePath, CONFIGURATION_LIBRARY_ROOT_URL);
@@ -4666,6 +4754,11 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         scenarioNameOverride,
         existing_data_path: data?.configuration_path
     });
+    const manifest = data?.configuration_manifest || {};
+    const topologyId = manifest.solver_topology || data?.topology_id || data?.solver_dispatch_key;
+    if (topologyId !== SUPPORTED_CONFIGURATION_TOPOLOGY) {
+        throw new Error(`Unsupported solver topology for Configuration Library direct mode: ${topologyId || "missing"}.`);
+    }
     const projectInfo = getProjectReportInfo();
     const totalCapacityMw = projectInfo.capacityMw;
     if (!(Number(totalCapacityMw) > 0)) return null;
@@ -4714,7 +4807,18 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         };
     };
     const electricalPath = data.equipment.ELECTRICAL_DISTRIBUTION_2?.electrical_path || null;
+    const manifestMetadata = {
+        configuration_id: manifest.configuration_id || data.configuration_id || data.configuration_name,
+        configuration_display_name: manifest.display_name || data.configuration_display_name || data.configuration_name,
+        configuration_manifest_schema_version: manifest.schema_version || data.configuration_manifest_schema_version || null,
+        manifest_cooling_system_type: manifest.cooling_system_type || data.manifest_cooling_system_type || topologyId,
+        topology_id: topologyId,
+        implementation_status: manifest.implementation_status || data.implementation_status,
+        solver_dispatch_key: manifest.solver_topology || data.solver_dispatch_key || topologyId,
+        report_profile: manifest.report_profile || data.report_profile || topologyId
+    };
     return {
+        ...manifestMetadata,
         configuration_name: data.configuration_name,
         configuration_path: data.configuration_path || data.configuration_name,
         cooling_system_type: data.cooling_system_type,
@@ -4795,7 +4899,8 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             ashrae_design_conditions_url: libraryAshraeUrl
         },
         other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
-        selected_curves: selectedCurves
+        selected_curves: selectedCurves,
+        configuration_manifest: JSON.parse(JSON.stringify(manifest))
     };
 }
 
@@ -4806,6 +4911,10 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         configuration_path: libraryInput?.configuration_path,
         scenario_name: libraryInput?.scenario_name
     });
+    const topologyId = libraryInput?.topology_id || libraryInput?.solver_dispatch_key || libraryInput?.configuration_manifest?.solver_topology;
+    if (topologyId !== SUPPORTED_CONFIGURATION_TOPOLOGY) {
+        throw new Error(`Unsupported solver topology for ACC adapter: ${topologyId || "missing"}.`);
+    }
     const clone = value => JSON.parse(JSON.stringify(value));
     const project = clone(libraryInput.project);
     const hourlyIt = project.it_load.hourly_it_load_kW;
@@ -4857,6 +4966,13 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         }
     };
     return {
+        configuration_id: libraryInput.configuration_id,
+        configuration_display_name: libraryInput.configuration_display_name,
+        configuration_manifest_schema_version: libraryInput.configuration_manifest_schema_version,
+        topology_id: topologyId,
+        implementation_status: libraryInput.implementation_status,
+        solver_dispatch_key: libraryInput.solver_dispatch_key,
+        report_profile: libraryInput.report_profile,
         configuration_name: libraryInput.configuration_name,
         configuration_path: libraryInput.configuration_path || libraryInput.configuration_name,
         cooling_system_type: libraryInput.cooling_system_type,
@@ -4908,6 +5024,13 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         },
         electrical_path: clone(libraryInput.electrical_path),
         library_context: {
+            configuration_id: libraryInput.configuration_id,
+            configuration_display_name: libraryInput.configuration_display_name,
+            configuration_manifest_schema_version: libraryInput.configuration_manifest_schema_version,
+            topology_id: topologyId,
+            implementation_status: libraryInput.implementation_status,
+            solver_dispatch_key: libraryInput.solver_dispatch_key,
+            report_profile: libraryInput.report_profile,
             scenario_name: libraryInput.scenario_name,
             required_units: project.required_units,
             installed_units: project.installed_units,
@@ -4935,8 +5058,24 @@ async function runUsingConfigurationLibrary() {
         if (status) status.textContent = "Load Configuration Library first.";
         return;
     }
+    if (configurationLibraryData.topology_id !== SUPPORTED_CONFIGURATION_TOPOLOGY || configurationLibraryData.implementation_status !== "implemented") {
+        if (status) {
+            status.textContent = `${configurationLibraryData.configuration_display_name || configurationLibraryData.configuration_name} is not an implemented ACC Configuration Library topology.`;
+            status.style.color = "#dc2626";
+        }
+        return;
+    }
     const calculationMode = CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE;
-    const libraryInput = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+    let libraryInput;
+    try {
+        libraryInput = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+    } catch (error) {
+        if (status) {
+            status.textContent = String(error.message || error);
+            status.style.color = "#dc2626";
+        }
+        return;
+    }
     phase19bTrace("runUsingConfigurationLibrary:libraryInput built", {
         ashrae_top: libraryInput?.ashrae_design_conditions_url,
         ashrae_project: libraryInput?.project?.ashrae_design_conditions_url,
@@ -5044,6 +5183,12 @@ function renderConfigurationLibrarySummary(data) {
     const engineRadiatorMaxPower = firstAvailableResultField(annualElectrical, ["max_engine_radiator_power_kW"])
         ?? maxHourlyResultField(hourlyElectrical, ["engine_radiator_power_kW"]);
     const values = [
+        ["Configuration ID", data.configuration_id || data.configuration_name],
+        ["Configuration Display Name", data.configuration_display_name || data.configuration_name],
+        ["Topology ID", data.topology_id || "Not available"],
+        ["Implementation Status", data.implementation_status || "Not available"],
+        ["Solver Dispatch Key", data.solver_dispatch_key || "Not available"],
+        ["Report Profile", data.report_profile || "Not available"],
         ["Loaded configuration name", data.configuration_name],
         ["Cooling unit capacity", `${data.cooling_unit_capacity_mw} MW`],
         ["Equipment count", data.equipment_count],
@@ -5138,7 +5283,22 @@ async function loadSelectedConfigurationLibrary() {
     const select = document.getElementById("configurationLibrarySelect");
     const status = document.getElementById("configurationLibraryStatus");
     const button = document.getElementById("btnLoadConfigurationLibrary");
-    const configurationName = select?.value || "ACC_1.5MW_GASENGINE_CDU";
+    const selectedManifest = selectedConfigurationManifest();
+    const configurationName = selectedManifest?.configuration_id || select?.value || "";
+    if (!selectedManifest) {
+        if (status) {
+            status.textContent = "No Configuration Library manifest is selected.";
+            status.style.color = "#dc2626";
+        }
+        return;
+    }
+    if (!selectedManifest.runnable) {
+        if (status) {
+            status.textContent = `${selectedManifest.display_name || configurationName} is ${configurationStatusLabel(selectedManifest.implementation_status)} and cannot be run.`;
+            status.style.color = "#b45309";
+        }
+        return;
+    }
     if (status) status.textContent = `Loading ${configurationName}...`;
     if (button) button.disabled = true;
     try {
@@ -5217,6 +5377,15 @@ async function loadSelectedConfigurationLibrary() {
         standardSolverInput = null;
         preferStandardFiles = true;
         configurationLibraryData = {
+            configuration_id: selectedManifest.configuration_id,
+            configuration_display_name: selectedManifest.display_name,
+            configuration_manifest_schema_version: selectedManifest.schema_version,
+            topology_id: selectedManifest.solver_topology,
+            implementation_status: selectedManifest.implementation_status,
+            solver_dispatch_key: selectedManifest.solver_topology,
+            report_profile: selectedManifest.report_profile,
+            manifest_cooling_system_type: selectedManifest.cooling_system_type,
+            configuration_manifest: selectedManifest,
             configuration_name: parameters["Configuration Name"] || configurationName,
             cooling_system_type: parameters["Cooling System Type"],
             cooling_unit_capacity_mw: Number(parameters["Cooling Unit Capacity"]),
@@ -5232,6 +5401,12 @@ async function loadSelectedConfigurationLibrary() {
         );
         configurationLibraryData.library_bound_input = {
             configuration: {
+                configuration_id: configurationLibraryData.configuration_id,
+                configuration_display_name: configurationLibraryData.configuration_display_name,
+                topology_id: configurationLibraryData.topology_id,
+                implementation_status: configurationLibraryData.implementation_status,
+                solver_dispatch_key: configurationLibraryData.solver_dispatch_key,
+                report_profile: configurationLibraryData.report_profile,
                 configuration_name: configurationLibraryData.configuration_name,
                 cooling_system_type: configurationLibraryData.cooling_system_type,
                 cooling_unit_capacity_mw: configurationLibraryData.cooling_unit_capacity_mw,
@@ -5289,10 +5464,22 @@ async function loadSelectedConfigurationLibrary() {
 
 function initStandardDataInputs() {
     initCoolingSystemSelection();
+    loadConfigurationLibraryCatalog();
     const libraryButton = document.getElementById("btnLoadConfigurationLibrary");
     if (libraryButton) libraryButton.addEventListener("click", loadSelectedConfigurationLibrary);
     const librarySelect = document.getElementById("configurationLibrarySelect");
-    if (librarySelect) librarySelect.addEventListener("change", renderFrameworkDiagnosticsPanel);
+    if (librarySelect) librarySelect.addEventListener("change", () => {
+        configurationLibraryData = null;
+        const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
+        if (runLibraryButton) runLibraryButton.disabled = true;
+        const manifest = selectedConfigurationManifest();
+        const status = document.getElementById("configurationLibraryStatus");
+        if (status && manifest) {
+            status.textContent = `${manifest.display_name || manifest.configuration_id}: ${configurationStatusLabel(manifest.implementation_status)}.`;
+            status.style.color = manifest.runnable ? "#374151" : "#b45309";
+        }
+        renderFrameworkDiagnosticsPanel();
+    });
     const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
     if (runLibraryButton) runLibraryButton.addEventListener("click", runUsingConfigurationLibrary);
     ["unitQuantityMode", "unitRedundancyMode", "manualInstalledUnits", "manualRunningUnits", "manualStandbyUnits"].forEach((id) => {

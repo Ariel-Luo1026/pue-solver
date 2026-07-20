@@ -597,5 +597,19 @@
     "confidence": "high",
     "already_cached": false,
     "master_index_records": 97487
+  },
+  {
+    "query_location": "JUNO",
+    "project_latitude": 64.8378,
+    "project_longitude": -147.7164,
+    "matched_station": "Ft.Wainwright-Ladd.AAF",
+    "distance_km": 4.7,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_4_North_and_Central_America/USA_United_States_of_America/AK_Alaska/USA_AK_Ft.Wainwright-Ladd.AAF.702615_TMYx.2011-2025.zip",
+    "epw_file": "USA_AK_Ft.Wainwright-Ladd.AAF.702615_TMYx.2011-2025.epw",
+    "downloaded_at": "2026-07-16T06:56:10.543487+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
   }
 ]

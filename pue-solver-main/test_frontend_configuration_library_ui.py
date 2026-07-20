@@ -250,6 +250,35 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("verifyConfigurationLibrarySynced(configurationPath)", sync_block)
         self.assertIn("workbook_paths: workbookPaths", sync_block)
 
+    def test_configuration_library_options_are_manifest_discovered(self):
+        self.assertNotIn('<option value="ACC_1.5MW_GASENGINE_CDU">ACC_1.5MW_GASENGINE_CDU</option>', self.index)
+        self.assertIn("configuration_library_index.json", self.ui)
+        self.assertIn("function loadConfigurationLibraryCatalog", self.ui)
+        self.assertIn("function renderConfigurationLibraryCatalog", self.ui)
+        self.assertIn("configuration_manifest.json", self.ui)
+        self.assertIn("configurationStatusLabel", self.ui)
+        self.assertIn("Available", self.ui)
+        self.assertIn("Equipment Data Missing", self.ui)
+        init_block = self._function_source("initStandardDataInputs")
+        self.assertIn("loadConfigurationLibraryCatalog()", init_block)
+
+    def test_unavailable_configuration_cannot_run_frontend_direct_mode(self):
+        run_block = self._function_source("runUsingConfigurationLibrary")
+        self.assertIn('configurationLibraryData.implementation_status !== "implemented"', run_block)
+        self.assertIn("SUPPORTED_CONFIGURATION_TOPOLOGY", run_block)
+        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        self.assertIn("Unsupported solver topology for Configuration Library direct mode", builder_block)
+        adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
+        self.assertIn("Unsupported solver topology for ACC adapter", adapter_block)
+
+    def test_selected_configuration_manifest_is_passed_to_adapter(self):
+        load_block = self._function_source("loadSelectedConfigurationLibrary")
+        self.assertIn("const selectedManifest = selectedConfigurationManifest()", load_block)
+        self.assertIn("configuration_manifest: selectedManifest", load_block)
+        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        self.assertIn("configuration_manifest: JSON.parse(JSON.stringify(manifest))", builder_block)
+        self.assertIn("configuration_id: manifest.configuration_id", builder_block)
+
     def test_configuration_library_sync_plan_uses_direct_mode_equipment_paths(self):
         plan_block = self._function_source("buildConfigurationLibraryWorkbookSyncPlan")
         self.assertIn("DIRECT_MODE_EQUIPMENT_ORDER.map", plan_block)

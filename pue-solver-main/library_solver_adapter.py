@@ -67,6 +67,18 @@ def convert_library_input_to_solver_input(library_input):
     """
     if not isinstance(library_input, dict):
         raise TypeError("library_input must be a dictionary")
+    manifest = library_input.get("configuration_manifest", {})
+    topology_id = (
+        library_input.get("topology_id")
+        or library_input.get("solver_dispatch_key")
+        or library_input.get("configuration_library", {}).get("topology_id")
+        or (manifest.get("solver_topology") if isinstance(manifest, dict) else None)
+    )
+    if topology_id and topology_id != "acc_gas_engine_cdu":
+        raise ValueError(
+            f"Unsupported solver topology for ACC adapter: {topology_id}. "
+            "Only acc_gas_engine_cdu can use the current ACC Configuration Library path."
+        )
     project_source = library_input.get("project", {})
     it_source = project_source.get("it_load", {})
     hourly_it = list(it_source.get("hourly_it_load_kW", []))
@@ -126,6 +138,13 @@ def convert_library_input_to_solver_input(library_input):
     project["indoor_active_units"] = indoor_active_units
 
     library_context = {
+        "configuration_id": library_input.get("configuration_id") or library_input.get("configuration_library", {}).get("configuration_id"),
+        "configuration_display_name": library_input.get("configuration_display_name") or library_input.get("configuration_library", {}).get("configuration_display_name"),
+        "configuration_manifest_schema_version": library_input.get("configuration_manifest_schema_version") or library_input.get("configuration_library", {}).get("configuration_manifest_schema_version"),
+        "topology_id": topology_id or "acc_gas_engine_cdu",
+        "implementation_status": library_input.get("implementation_status") or library_input.get("configuration_library", {}).get("implementation_status"),
+        "solver_dispatch_key": library_input.get("solver_dispatch_key") or library_input.get("configuration_library", {}).get("solver_dispatch_key") or "acc_gas_engine_cdu",
+        "report_profile": library_input.get("report_profile") or library_input.get("configuration_library", {}).get("report_profile") or "acc_gas_engine_cdu",
         "configuration_name": library_input.get("configuration_library", {}).get("configuration_name"),
         "scenario_name": library_input.get("scenario_name"),
         "acc_curve": {
@@ -145,6 +164,13 @@ def convert_library_input_to_solver_input(library_input):
         "adapter_assumptions": weather.get("metadata", {}),
     }
     return {
+        "configuration_id": library_context["configuration_id"],
+        "configuration_display_name": library_context["configuration_display_name"],
+        "configuration_manifest_schema_version": library_context["configuration_manifest_schema_version"],
+        "topology_id": library_context["topology_id"],
+        "implementation_status": library_context["implementation_status"],
+        "solver_dispatch_key": library_context["solver_dispatch_key"],
+        "report_profile": library_context["report_profile"],
         "cooling_system_type": library_input.get("cooling_system_type"),
         "cooling_unit_capacity_mw": library_input.get("cooling_unit_capacity_mw"),
         "power_source": library_input.get("power_source"),

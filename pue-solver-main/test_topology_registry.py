@@ -15,21 +15,28 @@ class TopologyRegistryTest(unittest.TestCase):
         self.assertEqual(
             set(TOPOLOGY_REGISTRY),
             {
-                "acc",
+                "acc_gas_engine_cdu",
                 "chiller_dry_cooler",
+                "water_cooled_chiller",
                 "chiller_cooling_tower",
+                "liquid_cooling",
                 "abs_dry_cooler",
                 "abs_cooling_tower",
             },
         )
-        self.assertEqual(len(list_topologies()), 5)
+        self.assertEqual(len(list_topologies()), 7)
 
     def test_acc_topology_is_implemented(self):
-        self.assertEqual(get_topology("acc")["calculation_status"], "implemented")
+        self.assertEqual(get_topology("acc_gas_engine_cdu")["implementation_status"], "implemented")
+        self.assertEqual(get_topology("acc")["implementation_status"], "implemented")
 
-    def test_non_acc_topologies_are_placeholders(self):
-        for topology_id in set(TOPOLOGY_REGISTRY) - {"acc"}:
-            self.assertEqual(get_topology(topology_id)["calculation_status"], "placeholder")
+    def test_non_acc_topologies_are_not_implemented(self):
+        self.assertEqual(
+            get_topology("chiller_dry_cooler")["implementation_status"],
+            "framework_ready_data_missing",
+        )
+        for topology_id in set(TOPOLOGY_REGISTRY) - {"acc_gas_engine_cdu", "chiller_dry_cooler"}:
+            self.assertEqual(get_topology(topology_id)["implementation_status"], "placeholder")
 
     def test_acc_heat_flow_path_contains_required_steps(self):
         heat_flow_path = get_topology("acc")["heat_flow_path"]
@@ -53,9 +60,10 @@ class TopologyRegistryTest(unittest.TestCase):
         topology = get_topology_by_cooling_type("Chiller + Cooling Tower")
         self.assertIsNotNone(topology)
         self.assertEqual(topology["topology_id"], "chiller_cooling_tower")
+        self.assertEqual(get_topology_by_cooling_type("ACC")["topology_id"], "acc")
 
     def test_lookup_results_are_copies(self):
-        topology = get_topology("acc")
+        topology = get_topology("acc_gas_engine_cdu")
         topology["heat_flow_path"].append("Mutation")
         self.assertNotIn("Mutation", get_topology("acc")["heat_flow_path"])
 
@@ -73,7 +81,7 @@ class TopologyRegistryTest(unittest.TestCase):
                 self.assertTrue(equipment_ids_equivalent(record["equipment_id"], expected_id))
 
     def test_acc_topology_includes_current_acc_equipment_references(self):
-        equipment_ids = set(get_topology("acc")["equipment_ids"])
+        equipment_ids = set(get_topology("acc_gas_engine_cdu")["equipment_ids"])
         for equipment_id in ("acc_unit", "cdu", "pump", "gas_engine"):
             self.assertIn(equipment_id, equipment_ids)
 

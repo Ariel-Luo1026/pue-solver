@@ -104,6 +104,20 @@ class LibrarySolverAdapterTest(unittest.TestCase):
                 with self.subTest(scenario=library_input["scenario_name"], equipment_id=equipment_id):
                     self.assertNotEqual(selected["status"], "Missing Curve")
 
+    def test_manifest_metadata_survives_adapter_conversion(self):
+        self.assertEqual(self.normal["configuration_id"], "ACC_1.5MW_GASENGINE_CDU")
+        self.assertEqual(self.normal["topology_id"], "acc_gas_engine_cdu")
+        self.assertEqual(self.normal["implementation_status"], "implemented")
+        self.assertEqual(self.normal["solver_dispatch_key"], "acc_gas_engine_cdu")
+        self.assertEqual(self.normal["report_profile"], "acc_gas_engine_cdu")
+        self.assertEqual(self.normal["library_context"]["configuration_id"], "ACC_1.5MW_GASENGINE_CDU")
+
+    def test_non_acc_topology_cannot_use_acc_adapter(self):
+        library_input = deepcopy(self.normal_library)
+        library_input["topology_id"] = "chiller_cooling_tower"
+        with self.assertRaisesRegex(ValueError, "Unsupported solver topology"):
+            convert_library_input_to_solver_input(library_input)
+
 
 if __name__ == "__main__":
     unittest.main()

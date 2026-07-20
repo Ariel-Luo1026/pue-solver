@@ -108,6 +108,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "equipment_curve_lookup.py",
             "equipment_curve_reader.py",
             "equipment_engine.py",
+            "configuration_manifest.py",
             "configuration_library_loader.py",
             "equipment_registry.py",
             "acc_v2_curve_lookup.py",
@@ -119,6 +120,18 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             self.assertIn(f'"{module_name}"', self.ui)
         self.assertLess(ensure_block.index("DIRECT_MODE_PYTHON_MODULES"), ensure_block.index('fetch("./solver.py", { cache: "no-store" })'))
         self.assertLess(ensure_block.index("await loadPythonModuleIntoPyodide(moduleName)"), ensure_block.index("await pyodide.runPythonAsync(pyText)"))
+
+    def test_pyodide_loads_configuration_manifest_before_configuration_library_loader(self):
+        module_block = self.ui[
+            self.ui.index("const DIRECT_MODE_PYTHON_MODULES"):
+            self.ui.index("function log")
+        ]
+        self.assertIn('"configuration_manifest.py"', module_block)
+        self.assertIn('"configuration_library_loader.py"', module_block)
+        self.assertLess(
+            module_block.index('"configuration_manifest.py"'),
+            module_block.index('"configuration_library_loader.py"'),
+        )
 
     def test_frontend_result_area_reports_acc_engine_used(self):
         self.assertIn("function getAccEngineUsedLabel", self.ui)

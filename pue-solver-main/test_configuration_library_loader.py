@@ -9,6 +9,7 @@ from configuration_library_loader import (
     calculate_running_units,
     calculate_unit_requirements,
     build_solver_input_from_library,
+    discover_configuration_library,
     load_configuration_library,
     load_equipment_packages,
     load_equipment_aliases,
@@ -26,10 +27,20 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
 
     def test_configuration_workbook(self):
         self.assertEqual(self.loaded["configuration_name"], "ACC_1.5MW_GASENGINE_CDU")
+        self.assertEqual(self.loaded["configuration_id"], "ACC_1.5MW_GASENGINE_CDU")
+        self.assertEqual(self.loaded["topology_id"], "acc_gas_engine_cdu")
+        self.assertEqual(self.loaded["implementation_status"], "implemented")
         self.assertEqual(self.loaded["cooling_system_type"], "ACC")
         self.assertEqual(self.loaded["cooling_unit_capacity_mw"], 1.5)
         self.assertEqual(self.loaded["power_source"], "Gas Engine")
         self.assertTrue(self.loaded["equipment_per_cooling_unit"])
+
+    def test_discovery_uses_configuration_manifests(self):
+        discovered = discover_configuration_library()
+        by_id = {item["configuration_id"]: item for item in discovered}
+        self.assertIn("ACC_1.5MW_GASENGINE_CDU", by_id)
+        self.assertEqual(by_id["ACC_1.5MW_GASENGINE_CDU"]["implementation_status"], "implemented")
+        self.assertEqual(by_id["ACC_1.5MW_GASENGINE_CDU"]["solver_topology"], "acc_gas_engine_cdu")
 
     def test_scenario_workbook_and_dynamic_unit_rules(self):
         scenarios = {item["scenario"]: item for item in self.loaded["scenarios"]}
@@ -192,6 +203,11 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertAlmostEqual(solver_input["electrical_path"]["mep_efficiency"], 0.9959)
         self.assertEqual(solver_input["selected_curves"]["CHW_PUMP_2"]["sheet_name"], "Solver_Curve_Normal")
         self.assertEqual(solver_input["selected_curves"]["CDU_2"]["sheet_name"], "Solver_Curve")
+        self.assertEqual(solver_input["configuration_id"], "ACC_1.5MW_GASENGINE_CDU")
+        self.assertEqual(solver_input["topology_id"], "acc_gas_engine_cdu")
+        self.assertEqual(solver_input["implementation_status"], "implemented")
+        self.assertEqual(solver_input["report_profile"], "acc_gas_engine_cdu")
+        self.assertEqual(solver_input["cooling_system_type"], "ACC")
 
     def test_phase8_failure_standardized_solver_input(self):
         solver_input = build_solver_input_from_library(

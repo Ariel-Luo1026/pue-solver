@@ -11,10 +11,14 @@ from re import match
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
+from configuration_manifest import (
+    assert_manifest_executable,
+    discover_configuration_manifests,
+    load_configuration_manifest,
+)
 from configuration_library_scanner import parse_equipment_folder_name
 from equipment_registry import canonicalize_equipment_id
 
-SUPPORTED_CONFIGURATIONS = {"ACC_1.5MW_GASENGINE_CDU"}
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
 # Resolved Configuration Library path: project root / "Configuration Library".
 SHARED_ALIAS_PATH = DEFAULT_LIBRARY_ROOT / "equipment_aliases.json"
@@ -374,22 +378,38 @@ def calculate_running_units(installed_units, running_unit_formula):
     raise ValueError(f"Unsupported running unit formula: {running_unit_formula}")
 
 
+def discover_configuration_library(library_root=None, include_invalid=False):
+    """Return manifest metadata for Configuration Library folders."""
+    root = Path(library_root) if library_root else DEFAULT_LIBRARY_ROOT
+    return discover_configuration_manifests(root, include_invalid=include_invalid)
+
+
 def load_configuration_library(configuration_name, library_root=None, total_it_capacity_mw=None):
-    if configuration_name not in SUPPORTED_CONFIGURATIONS:
-        raise ValueError(f"Unsupported configuration: {configuration_name}")
     root = Path(library_root) if library_root else DEFAULT_LIBRARY_ROOT
     configuration_dir = root / configuration_name
     if not configuration_dir.is_dir():
         raise FileNotFoundError(configuration_dir)
+    manifest = load_configuration_manifest(configuration_dir)
+    assert_manifest_executable(manifest)
     configuration = load_configuration_workbook(configuration_dir)
     scenarios = load_scenario_workbook(configuration_dir)
     it_profile = load_it_profile(configuration_dir)
     equipment = load_equipment_packages(configuration_dir, configuration["equipment_per_cooling_unit"])
+    _validate_manifest_equipment_roles(manifest, equipment)
     library_bound_input = build_library_bound_input(
         configuration, scenarios, equipment, it_profile, total_it_capacity_mw
     )
+    manifest_metadata = _manifest_metadata(manifest)
     return {
         **configuration,
+        "configuration_id": manifest["configuration_id"],
+        "configuration_display_name": manifest["display_name"],
+        "configuration_manifest": manifest,
+        "configuration_manifest_metadata": manifest_metadata,
+        "topology_id": manifest["solver_topology"],
+        "implementation_status": manifest["implementation_status"],
+        "solver_dispatch_key": manifest["solver_topology"],
+        "report_profile": manifest["report_profile"],
         "scenarios": scenarios,
         "it_load": it_profile,
         "equipment": equipment,
@@ -400,6 +420,7 @@ def load_configuration_library(configuration_name, library_root=None, total_it_c
             "power_source": configuration["power_source"],
             "project": {"it_load": it_profile},
             "configuration_library": {
+                **manifest_metadata,
                 "configuration_name": configuration_name,
                 "equipment_per_cooling_unit": configuration["equipment_per_cooling_unit"],
                 "scenarios": scenarios,
@@ -414,6 +435,40 @@ def load_configuration_library(configuration_name, library_root=None, total_it_c
                 },
             },
         },
+    }
+
+
+def _validate_manifest_equipment_roles(manifest, equipment_packages):
+    missing = []
+    aliases = load_equipment_aliases()
+    available_ids = set(equipment_packages)
+    resolved_available_ids = {
+        resolve_equipment_alias(equipment_id, aliases)
+        for equipment_id in available_ids
+    }
+    for role in manifest.get("required_roles", []):
+        equipment_id = manifest.get("equipment_roles", {}).get(role)
+        resolved_equipment_id = resolve_equipment_alias(equipment_id, aliases)
+        if equipment_id and equipment_id not in available_ids and equipment_id not in resolved_available_ids and resolved_equipment_id not in available_ids:
+            missing.append(f"{role}={equipment_id}")
+    if missing:
+        configuration_id = manifest.get("configuration_id", "<unknown>")
+        raise ValueError(
+            f"Configuration '{configuration_id}' manifest references equipment IDs missing from configuration.xlsx/equipment packages: "
+            + ", ".join(missing)
+        )
+
+
+def _manifest_metadata(manifest):
+    return {
+        "configuration_id": manifest.get("configuration_id"),
+        "configuration_display_name": manifest.get("display_name"),
+        "configuration_manifest_schema_version": manifest.get("schema_version"),
+        "manifest_cooling_system_type": manifest.get("cooling_system_type"),
+        "topology_id": manifest.get("solver_topology"),
+        "implementation_status": manifest.get("implementation_status"),
+        "solver_dispatch_key": manifest.get("solver_topology"),
+        "report_profile": manifest.get("report_profile"),
     }
 
 
@@ -487,6 +542,14 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         "cooling_unit_capacity_mw": loaded["cooling_unit_capacity_mw"],
         "power_source": loaded["power_source"],
         "scenario_name": scenario["scenario"],
+        "configuration_id": loaded["configuration_id"],
+        "configuration_display_name": loaded["configuration_display_name"],
+        "configuration_manifest_schema_version": loaded["configuration_manifest_metadata"]["configuration_manifest_schema_version"],
+        "topology_id": loaded["topology_id"],
+        "implementation_status": loaded["implementation_status"],
+        "solver_dispatch_key": loaded["solver_dispatch_key"],
+        "report_profile": loaded["report_profile"],
+        "configuration_manifest": loaded["configuration_manifest"],
         "project": {
             "name": loaded["configuration_name"],
             "calculation_mode": "project_8760",
@@ -515,6 +578,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         "electrical_path": electrical_path,
         "selected_curves": selected_curves,
         "configuration_library": {
+            **loaded["configuration_manifest_metadata"],
             "configuration_name": loaded["configuration_name"],
             "library_bound_input": loaded["library_bound_input"],
         },

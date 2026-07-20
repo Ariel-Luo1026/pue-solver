@@ -649,6 +649,33 @@
     "lon": -96.85111
   },
   {
+    "city": "Ft Wainwright",
+    "country": "United States",
+    "aliases": [
+      "Ft Wainwright-Ladd AAF",
+      "Ft Wainwright",
+      "United States Ft Wainwright-Ladd AAF",
+      "702615",
+      "SRC-TMYx",
+      "USA AK",
+      "USA AK Ft",
+      "USA AK Ft Wainwright-Ladd AAF 702615 TMYx 2011-2025",
+      "USA_AK_Ft Wainwright-Ladd AAF 702615_TMYx 2011-2025",
+      "USA_AK_Ft-Wainwright-Ladd-AAF-702615_TMYx-2011-2025",
+      "USA_AK_Ft.Wainwright-Ladd.AAF.702615_TMYx.2011-2025",
+      "JUNO",
+      "Ft.Wainwright-Ladd.AAF",
+      "Ft Wainwright-Ladd AAF AK USA"
+    ],
+    "station": "Ft Wainwright-Ladd AAF",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/USA_AK_Ft.Wainwright-Ladd.AAF.702615_TMYx.2011-2025.epw",
+    "epw_file": "USA_AK_Ft.Wainwright-Ladd.AAF.702615_TMYx.2011-2025.epw",
+    "wmo": "702615",
+    "lat": 64.833,
+    "lon": -147.617
+  },
+  {
     "city": "New York",
     "country": "United States",
     "aliases": [
