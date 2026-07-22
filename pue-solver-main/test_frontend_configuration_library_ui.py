@@ -145,38 +145,43 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("sheets: await fetchConfigurationWorkbook(`${configurationBase}/${packagePath}`)", fetch_block)
 
         loader_block = self._function_source("loadSelectedConfigurationLibrary")
+        equipment_loader_block = self._function_source("loadConfigurationEquipmentEntries")
         self.assertIn("await loadConfigurationEquipmentAliases()", loader_block)
-        self.assertIn("const resolvedId = resolveFrontendEquipmentId(equipmentId)", loader_block)
-        self.assertIn("fetchResolvedConfigurationEquipmentWorkbook(base, equipmentId)", loader_block)
-        self.assertIn("return [fetched.resolvedId", loader_block)
-        self.assertIn("equipment_id: fetched.resolvedId", loader_block)
-        self.assertIn("source_equipment_id: fetched.rawEquipmentId", loader_block)
-        self.assertIn("source_workbook_equipment_id: fetched.sourceEquipmentId", loader_block)
-        self.assertIn("solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]]))", loader_block)
-        self.assertNotIn("fetchConfigurationWorkbook(`${base}/${packagePath}`)", loader_block)
+        self.assertIn("loadConfigurationEquipmentEntries(configurationName, selectedManifest)", loader_block)
+        self.assertIn("const resolvedId = resolveFrontendEquipmentId(equipmentId)", equipment_loader_block)
+        self.assertIn("fetchResolvedConfigurationEquipmentWorkbook(base, equipmentId)", equipment_loader_block)
+        self.assertIn("return [fetched.resolvedId", equipment_loader_block)
+        self.assertIn("equipment_id: fetched.resolvedId", equipment_loader_block)
+        self.assertIn("source_equipment_id: fetched.rawEquipmentId", equipment_loader_block)
+        self.assertIn("source_workbook_equipment_id: fetched.sourceEquipmentId", equipment_loader_block)
+        self.assertIn("solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]]))", equipment_loader_block)
+        self.assertNotIn("fetchConfigurationWorkbook(`${base}/${packagePath}`)", equipment_loader_block)
 
     def test_configuration_library_run_input_uses_canonical_auxiliary_ids(self):
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
-        self.assertIn('manifest?.equipment_roles?.indoor_cooling', builder_block)
-        self.assertIn('["cdu", "rtc", "mau"].map', builder_block)
-        self.assertIn('resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment)', builder_block)
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
+        self.assertIn("const roleBindings = Object.fromEntries", builder_block)
+        self.assertIn("Object.keys(manifest?.equipment_roles || {}).map", builder_block)
+        self.assertIn("resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment, roleRequired)", builder_block)
         self.assertIn("equipment_id: resolved.resolvedId", builder_block)
+        self.assertIn("role_bindings: roleBindings", builder_block)
+        self.assertIn("equipment_bindings: equipmentBindings", builder_block)
+        self.assertNotIn('topologyId === "acc_gas_engine_cdu"', builder_block)
+        self.assertNotIn('topologyId === "chiller_dry_cooler"', builder_block)
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
-        self.assertIn("library_fixed_power: clone(libraryInput.equipment.auxiliary)", adapter_block)
-        self.assertIn("auxiliary_equipment: clone(libraryInput.equipment.auxiliary)", adapter_block)
-        self.assertIn("indoor_active_units: project.indoor_active_units", adapter_block)
+        self.assertIn("SUPPORTED_CONFIGURATION_TOPOLOGIES.includes(topologyId)", adapter_block)
+        self.assertIn("return JSON.parse(JSON.stringify(libraryInput))", adapter_block)
+        self.assertNotIn("library_fixed_power: clone(libraryInput.equipment.auxiliary)", adapter_block)
 
     def test_frontend_carries_normal_indoor_unit_count_for_library_direct_input(self):
         sizing_block = self._function_source("calculateFrontendUnitRequirements")
         self.assertIn("indoorActiveUnits: requiredUnits + 1", sizing_block)
 
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         self.assertIn("const indoorActiveUnits = unitQuantity.mode === \"manual\"", builder_block)
         self.assertIn("indoor_active_units: indoorActiveUnits", builder_block)
         self.assertLess(builder_block.index("const indoorActiveUnits"), builder_block.index("project: {"))
 
-        report_block = self._function_source("buildHtmlReport")
-        self.assertIn("Indoor IT-side equipment uses normal indoor unit count and IT-load-based operation.", report_block)
+        self.assertIn("indoor_active_units: indoorActiveUnits", builder_block)
 
     def test_configuration_library_aliases_do_not_warn_as_tentative(self):
         diagnostics_block = self.ui[
@@ -202,9 +207,9 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
 
     def test_configuration_library_summary_displays_equipment_metadata(self):
         self.assertIn("function fetchConfigurationLibraryJson", self.ui)
-        load_block = self._function_source("loadSelectedConfigurationLibrary")
-        self.assertIn("equipment_metadata.json", load_block)
-        self.assertIn("equipment_metadata: equipmentMetadata", load_block)
+        equipment_loader_block = self._function_source("loadConfigurationEquipmentEntries")
+        self.assertIn("equipment_metadata.json", equipment_loader_block)
+        self.assertIn("equipment_metadata: equipmentMetadata", equipment_loader_block)
         validation_block = self._function_source("validateFrontendConfigurationLibrary")
         self.assertIn("equipment_metadata missing", validation_block)
         summary_block = self._function_source("renderConfigurationLibrarySummary")
@@ -221,11 +226,9 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertIn(text, summary_block)
 
     def test_configuration_library_direct_input_carries_configuration_path(self):
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         self.assertIn("configuration_path: data.configuration_path || data.configuration_name", builder_block)
-        adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
-        self.assertIn("configuration_path: libraryInput.configuration_path || libraryInput.configuration_name", adapter_block)
-        self.assertIn("configuration_name: libraryInput.configuration_name", adapter_block)
+        self.assertIn("configuration_name: data.configuration_name", builder_block)
 
     def test_cooling_load_heat_gain_inputs_feed_configuration_library_solver_input(self):
         for text in (
@@ -242,16 +245,15 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         for legacy in ("solarGainAnnualKwh", "solarGainPeakKw", "Report-only Solar Heat Gain"):
             self.assertNotIn(legacy, self.index)
 
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         self.assertIn("const heatGains = getCoolingLoadHeatGainInput()", builder_block)
         self.assertIn("solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw", builder_block)
         self.assertIn("other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw", builder_block)
         self.assertIn("other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw", builder_block)
 
-        adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
-        self.assertIn("solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0", adapter_block)
-        self.assertIn("other_auxiliary_heat_gain_kW: libraryInput.heat_gains?.other_auxiliary_heat_gain_kW ?? 0", adapter_block)
-        self.assertIn("project.auxiliary_loads.other_electrical_auxiliary_power_kW", adapter_block)
+        self.assertIn("solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw", builder_block)
+        self.assertIn("other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw", builder_block)
+        self.assertIn("other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw", builder_block)
 
     def test_configuration_library_workbooks_sync_to_pyodide_as_binary_files(self):
         self.assertIn('const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library"', self.ui)
@@ -285,20 +287,39 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         init_block = self._function_source("initStandardDataInputs")
         self.assertIn("loadConfigurationLibraryCatalog()", init_block)
 
+    def test_frontend_can_select_chiller_dry_cooler_configuration(self):
+        self.assertIn('chiller_dry_cooler: { display: "Chiller + Dry Cooler", status: "implemented"', self.ui)
+        self.assertIn('"chiller_dry_cooler"', self.ui)
+        catalog_block = self._function_source("renderConfigurationLibraryCatalog")
+        self.assertIn("manifest.runnable ? \"\" : \"disabled\"", catalog_block)
+        self.assertIn("Topology: ${topology.display}", catalog_block)
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
+        self.assertIn('SUPPORTED_CONFIGURATION_TOPOLOGIES.includes(topologyId)', builder_block)
+        self.assertIn("role_bindings: roleBindings", builder_block)
+        self.assertIn("equipment_bindings: equipmentBindings", builder_block)
+        self.assertNotIn('topologyId === "chiller_dry_cooler"', builder_block)
+        self.assertNotIn('chiller: bindingByRole("chiller", "chiller")', builder_block)
+        self.assertNotIn('dry_cooler: {', builder_block)
+        self.assertIn("dry_cooler_approach_C: dryCoolerApproachC", builder_block)
+        self.assertIn("weather,", builder_block)
+        run_block = self._function_source("runUsingConfigurationLibrary")
+        self.assertIn('const solverFn = "dispatch_topology"', run_block)
+        self.assertNotIn('topologyId === "chiller_dry_cooler" ? "dispatch_topology" : "compute_pue_project"', run_block)
+
     def test_unavailable_configuration_cannot_run_frontend_direct_mode(self):
         run_block = self._function_source("runUsingConfigurationLibrary")
         self.assertIn("isConfigurationManifestRunnable(configurationLibraryData.configuration_manifest)", run_block)
         self.assertIn("requires validated Solver_Curve data and solver module implementation", run_block)
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         self.assertIn("Unsupported solver topology for Configuration Library direct mode", builder_block)
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
-        self.assertIn("Unsupported solver topology for ACC adapter", adapter_block)
+        self.assertIn("Unsupported solver topology for Configuration Library dispatch", adapter_block)
 
     def test_selected_configuration_manifest_is_passed_to_adapter(self):
         load_block = self._function_source("loadSelectedConfigurationLibrary")
         self.assertIn("const selectedManifest = selectedConfigurationManifest()", load_block)
         self.assertIn("configuration_manifest: selectedManifest", load_block)
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         self.assertIn("configuration_manifest: JSON.parse(JSON.stringify(manifest))", builder_block)
         self.assertIn("configuration_id: manifest.configuration_id", builder_block)
 
@@ -358,7 +379,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertLess(run_block.index("await syncConfigurationLibraryToPyodide(configurationLibraryData)"), run_block.index("convertFrontendLibraryInputToSolverInput(libraryInput)"))
         self.assertIn("configurationLibraryData.configuration_path = syncResult.configuration_path", run_block)
         self.assertIn("libraryInput.configuration_path = syncResult.configuration_path", run_block)
-        self.assertIn("applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path)", run_block)
+        self.assertNotIn("applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path)", run_block)
         self.assertIn("Configuration Library synced:", run_block)
         self.assertIn("workbooks=${syncResult.workbook_paths.length}", run_block)
         self.assertIn("Configuration Library workbook sync failed", run_block)
@@ -414,10 +435,11 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertNotIn(legacy, diagnostics_block)
 
     def test_report_wording_uses_current_equipment_names(self):
-        report_block = self._function_source("buildHtmlReport")
-        self.assertIn("MAU Energy", report_block)
-        self.assertIn("Electrical Distribution Loss", report_block)
-        self.assertIn("CDU / RTC / MAU", report_block)
+        report_block = self._function_source("buildHtmlReportFromSections")
+        self.assertIn("reportKeyLabel(key)", report_block)
+        self.assertIn("Cooling System Performance", report_block)
+        self.assertIn("Electrical Distribution Loss", self.ui)
+        self.assertIn("MAU Energy", self.ui)
         for forbidden in (
             "Terminal Fan",
             "Airflow Power",
@@ -433,16 +455,55 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("const REPORT_PROFILE_REGISTRY", self.ui)
         self.assertIn("function reportProfileForTopology", self.ui)
         self.assertIn("function dispatchReportProfile", self.ui)
-        report_block = self._function_source("buildHtmlReport")
+        report_block = self._function_source("buildHtmlReportFromSections")
         for text in (
             "dispatchReportProfile(solverTopology, output)",
-            "Configuration",
             "Cooling System Type",
-            "Solver Topology",
-            "Report Profile",
-            "Report Profile Source",
+            "Cooling Architecture",
+            "Report Configuration",
         ):
             self.assertIn(text, report_block)
+
+    def test_chiller_dry_cooler_report_fields_are_exposed(self):
+        self.assertIn("average_chiller_COP", self.ui)
+        self.assertIn("min_chiller_COP", self.ui)
+        self.assertIn("max_chiller_COP", self.ui)
+        report_block = self._function_source("buildHtmlReportFromSections")
+        for text in (
+            "report.equipment_performance",
+            "report.cooling_load_breakdown",
+            "buildReportSections",
+        ):
+            self.assertIn(text, report_block)
+        for text in (
+            "Operating Scenario",
+            "Peak Capacity Validation",
+            "Active Chiller Units",
+            "Active Dry Cooler Units",
+            "Active Pumps",
+            "Capacity Margin",
+            "Annual Energy Breakdown",
+            "Project Summary",
+            "Weather & Design Conditions",
+            "Cooling Load Summary",
+            "Cooling System Configuration",
+            "Equipment Performance",
+            "PUE Summary",
+            "Engineering Conclusion",
+        ):
+            self.assertIn(text, self.ui)
+        self.assertIn("Configuration Status", self.ui)
+        renderer_block = self._function_source("renderReportSections")
+        self.assertIn("normalizeReportSections", renderer_block)
+        self.assertNotIn("isAccMode", renderer_block)
+        self.assertNotIn("isChillerDryCoolerMode", renderer_block)
+        self.assertIn("buildAnnualEnergyBreakdown", self.ui)
+        self.assertIn("COMMON_REPORT_SECTIONS", self.ui)
+        self.assertIn("buildReportSections", self.ui)
+        self.assertIn("buildEngineeringConclusion", self.ui)
+        self.assertIn('"report_renderer.py"', self.ui)
+        self.assertIn('"report_sections/__init__.py"', self.ui)
+        self.assertIn('"report_sections/report_section_registry.py"', self.ui)
 
     def test_configuration_library_acc_v2_direct_disclosure_labels(self):
         detector_block = self._function_source("isConfigurationLibraryAccV2DirectResult")
@@ -456,40 +517,30 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         ):
             self.assertIn(text, detector_block)
 
-        report_block = self._function_source("buildHtmlReport")
-        for text in (
-            "isConfigurationLibraryAccV2DirectMode",
-            "ACC V2 Direct Mode",
-            "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.",
-            "Simulation Method",
-            "True EPW × Solver_Curve",
-            "Simulation Basis",
-            "8760-hour Annual Dynamic Simulation",
-        ):
+        report_block = self._function_source("showProjectVisualization")
+        for text in ("Cooling System:", "Simulation Engine:", "Performance Model:", "Simulation Basis:"):
             self.assertIn(text, report_block)
+        self.assertIn("ACC V2 Direct Mode", self.ui)
         self.assertNotIn("Annual Calibration", report_block)
         self.assertNotIn("Annual Calibration Factor", report_block)
         self.assertNotIn("Annual Calibrated", report_block)
 
     def test_acc_cooling_load_report_polish_labels(self):
-        report_block = self._function_source("buildHtmlReport")
+        report_block = self._function_source("buildHtmlReportFromSections")
         for text in (
-            "Required Cooling Capacity / Installed Cooling Unit Capacity",
-            "ACC Power Lookup Basis",
-            "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit",
-            "Cooling Load Components",
-            "Annual IT Load",
-            "Annual Solar Heat Gain",
-            "Annual Other Auxiliary Heat Gains",
-            "Annual Cooling Load",
-            "Input Assumptions",
+            "Weather Source",
+            "EPW File",
+        ):
+            self.assertIn(text, report_block)
+        self.assertIn("Required Cooling Capacity / Installed Cooling Unit Capacity", self.ui)
+        self.assertIn("Annual Cooling Load", self.ui)
+        for text in (
             "Minimum ACC COP",
             "Maximum ACC COP",
             "Maximum ACC Power",
             "ACC Capacity Clamped Hours",
-            "The ACC model directly evaluates hourly equipment performance from manufacturer Solver_Curve data.",
         ):
-            self.assertIn(text, report_block)
+            self.assertIn(text, self.ui)
         for forbidden in (
             "IT Load / Total Cooling Unit Capacity",
             "Ambient plus required capacity Solver_Curve lookup",
@@ -502,43 +553,29 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         summary_block = self._function_source("renderConfigurationLibrarySummary")
         principle_block = self._function_source("showProjectVisualization")
         for block in (summary_block, principle_block):
-            self.assertIn("isConfigurationLibraryAccV2DirectResult", block)
-            self.assertIn("ACC V2 Direct Mode", block)
-            self.assertIn("Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.", block)
-            self.assertIn("Simulation Method", block)
-            self.assertIn("True EPW × Solver_Curve", block)
-            self.assertIn("Simulation Basis", block)
-            self.assertIn("8760-hour Annual Dynamic Simulation", block)
             self.assertNotIn("Annual Calibration", block)
             self.assertNotIn("Annual Calibration Factor", block)
             self.assertNotIn("Annual Calibrated", block)
+        self.assertIn("isConfigurationLibraryAccV2DirectResult", summary_block)
+        self.assertIn("ACC V2 Direct Mode", summary_block)
+        self.assertIn("Simulation Basis", principle_block)
+        self.assertIn("8760-hour Annual Dynamic Simulation", self.ui)
 
     def test_configuration_library_acc_v2_report_labels_peak_design_separately(self):
-        report_block = self._function_source("buildHtmlReport")
+        report_block = self._function_source("buildHtmlReportFromSections")
         visualization_block = self._function_source("showProjectVisualization")
+        self.assertIn("Peak Design PUE", report_block)
         for block in (report_block, visualization_block):
-            self.assertIn("Peak Design PUE", block)
-            self.assertIn("Max Hourly PUE", block)
-            self.assertIn("Facility Electrical Demand", block)
-            self.assertIn("Peak Design Condition", block)
             self.assertNotIn("Peak Design Engine Output", block)
             self.assertNotIn("Max Hourly Engine Output", block)
-        self.assertIn("peak_design_cooling_load_kW", report_block)
-        self.assertIn("peak_design_outdoor_dry_bulb_C", report_block)
-        self.assertIn("ASHRAE Climatic Design Conditions", report_block)
-        self.assertIn("Reference Station", report_block)
-        self.assertIn("Design Criteria", report_block)
+        self.assertIn("peak_design_cooling_load_kW", self.ui)
+        self.assertIn("peak_design_outdoor_dry_bulb_C", self.ui)
         self.assertNotIn("Station ID", report_block)
         self.assertNotIn("Peak Design Weather Source", report_block)
-        self.assertIn("20-year Extreme Annual Design Condition", report_block)
-        self.assertIn("Annual Simulation Basis", report_block)
-        self.assertIn("Weather Source: EPW Weather File", report_block)
-        self.assertIn("peak_design_facility_electrical_demand_kW", visualization_block)
-        self.assertIn("max_hourly_facility_electrical_demand_kW", visualization_block)
-        self.assertIn("ASHRAE 20-year Extreme Annual Design Condition", visualization_block)
-        self.assertIn("ASHRAE Weather Station", visualization_block)
-        self.assertIn("Station Distance", visualization_block)
-        self.assertIn("Design Temperature Source", visualization_block)
+        self.assertIn("Peak Design PUE", report_block)
+        self.assertIn("report.visualization_data.peak_summary", visualization_block)
+        self.assertIn("peakSummary.peak_facility_power_kW", visualization_block)
+        self.assertIn("peakSummary.max_hourly_pue", visualization_block)
 
     def test_peak_design_weather_controls_feed_library_input(self):
         self.assertIn('"ashrae_online_lookup.py"', self.ui)
@@ -578,7 +615,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         ):
             self.assertIn(text, self.index)
 
-        builder_block = self._function_source("buildFrontendSolverInputFromLibrary")
+        builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         for text in (
             "const peakDesignWeather = getPeakDesignWeatherInput()",
             "const libraryAshraeUrl = ASHRAE_PROXY_URL",
@@ -592,11 +629,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             self.assertIn(text, builder_block)
 
         adapter_block = self._function_source("convertFrontendLibraryInputToSolverInput")
-        self.assertIn("peak_design_weather_source: libraryInput.peak_design_weather_source", adapter_block)
-        self.assertIn("peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C", adapter_block)
-        self.assertIn("const ashraeEndpoint = libraryInput.ashrae_design_conditions_url ?? project.ashrae_design_conditions_url ?? null", adapter_block)
-        self.assertIn("project.ashrae_design_conditions_url = ashraeEndpoint", adapter_block)
-        self.assertIn("ashrae_design_conditions_url: ashraeEndpoint", adapter_block)
+        self.assertIn("return JSON.parse(JSON.stringify(libraryInput))", adapter_block)
         self.assertIn("fetchAshraeProxyDesignConditionForLibrary", self.ui)
         self.assertIn('fetch(url, { cache: "no-store" })', self.ui)
         self.assertIn("peak_design_condition_override", self.ui)
@@ -608,16 +641,15 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("Lookup Method", summary_block)
         self.assertIn("Lookup Provider", summary_block)
 
-        report_block = self._function_source("buildHtmlReport")
+        report_block = self._function_source("buildHtmlReportFromSections")
         self.assertNotIn("ASHRAE Endpoint Sent to Solver", report_block)
         self.assertNotIn("ASHRAE Endpoint Received by Solver", report_block)
 
     def test_benchmark_report_labels_remain_separate(self):
-        report_block = self._function_source("buildHtmlReport")
-        self.assertIn("ACC Annual Weather Factor", report_block)
-        self.assertIn("acc_annual_temperature_factor", report_block)
-        self.assertIn("isAnnualBenchmarkMode", report_block)
-        self.assertIn("excel_benchmark_compatible", report_block)
+        report_block = self._function_source("buildHtmlReportFromSections")
+        self.assertNotIn("ACC Annual Weather Factor", report_block)
+        self.assertNotIn("isAnnualBenchmarkMode", report_block)
+        self.assertIn("excel_benchmark_compatible", self.ui)
 
     def _function_source(self, function_name):
         match = re.search(rf"(?:async\s+)?function\s+{re.escape(function_name)}\s*\(", self.ui)

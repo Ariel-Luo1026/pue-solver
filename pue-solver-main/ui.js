@@ -163,22 +163,40 @@ const CONFIGURATION_LIBRARY_ACC_ENGINE = "acc_v2_configuration_library";
 const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library";
 const ASHRAE_PROXY_URL = "http://127.0.0.1:8011/api/ashrae_design_condition";
 const PHASE19B_TRACE = true;
+const SUPPORTED_CONFIGURATION_TOPOLOGIES = Object.freeze(["acc_gas_engine_cdu", "chiller_dry_cooler"]);
 const SUPPORTED_CONFIGURATION_TOPOLOGY = "acc_gas_engine_cdu";
 const CONFIGURATION_TOPOLOGY_STATUS = Object.freeze({
     acc_gas_engine_cdu: { display: "ACC Gas Engine CDU", status: "implemented", adapter: "acc_gas_engine_cdu" },
-    chiller_dry_cooler: { display: "Chiller + Dry Cooler", status: "framework_ready_data_missing", adapter: "chiller_dry_cooler" },
+    chiller_dry_cooler: { display: "Chiller + Dry Cooler", status: "implemented", adapter: "chiller_dry_cooler" },
     water_cooled_chiller: { display: "Water-Cooled Chiller", status: "placeholder", adapter: null },
     chiller_cooling_tower: { display: "Chiller + Cooling Tower", status: "placeholder", adapter: null },
     liquid_cooling: { display: "Liquid Cooling", status: "placeholder", adapter: null },
     abs_dry_cooler: { display: "ABS + Dry Cooler", status: "placeholder", adapter: null },
     abs_cooling_tower: { display: "ABS + Cooling Tower", status: "placeholder", adapter: null }
 });
+const COMMON_REPORT_SECTIONS = Object.freeze([
+    "Project Summary",
+    "Weather & Design Conditions",
+    "Cooling Load Summary",
+    "Cooling System Configuration",
+    "Operating Scenario",
+    "Peak Capacity Validation",
+    "Equipment Performance",
+    "Annual Energy Breakdown",
+    "PUE Summary",
+    "Engineering Conclusion"
+]);
 const REPORT_PROFILE_REGISTRY = Object.freeze({
     acc_gas_engine_cdu: {
         profile_id: "acc_gas_engine_cdu",
         display_name: "ACC Gas Engine CDU Report",
         cooling_system_type: "ACC + Gas Engine + CDU",
         topology: "acc_gas_engine_cdu",
+        simulation_engine: "ACC V2 Configuration Library Engine",
+        performance_model: "ACC V2 Direct Mode: Configuration Library Solver_Curve hourly simulation",
+        simulation_basis: "8760-hour Annual Dynamic Simulation",
+        common_sections: COMMON_REPORT_SECTIONS,
+        topology_specific_sections: ["ACC COP", "ACC Power"],
         fields: [
             "annual_average_PUE",
             "annual_IT_energy_kWh",
@@ -197,14 +215,34 @@ const REPORT_PROFILE_REGISTRY = Object.freeze({
         display_name: "Chiller + Dry Cooler Report",
         cooling_system_type: "Chiller + Dry Cooler",
         topology: "chiller_dry_cooler",
-        configuration_status: "Framework Ready / Data Missing",
-        fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
+        configuration_status: "Implemented",
+        simulation_engine: "Topology Dispatcher Runtime",
+        performance_model: "Configuration Library Solver_Curve hourly simulation",
+        simulation_basis: "8760-hour Annual Dynamic Simulation",
+        common_sections: COMMON_REPORT_SECTIONS,
+        topology_specific_sections: ["Chiller COP", "Dry Cooler Performance"],
+        fields: [
+            "annual_average_PUE",
+            "annual_IT_energy_kWh",
+            "annual_facility_energy_kWh",
+            "annual_chiller_energy_kWh",
+            "annual_dry_cooler_energy_kWh",
+            "annual_pump_energy_kWh",
+            "annual_electrical_loss_kWh",
+            "average_chiller_COP",
+            "min_chiller_COP",
+            "max_chiller_COP",
+            "dry_cooler_capacity_kW",
+            "configuration_status"
+        ]
     },
     water_cooled_chiller: {
         profile_id: "water_cooled_chiller",
         display_name: "Water-Cooled Chiller Report",
         cooling_system_type: "Water-Cooled Chiller",
         topology: "water_cooled_chiller",
+        common_sections: COMMON_REPORT_SECTIONS,
+        topology_specific_sections: [],
         fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
     },
     liquid_cooling: {
@@ -212,6 +250,8 @@ const REPORT_PROFILE_REGISTRY = Object.freeze({
         display_name: "Liquid Cooling Report",
         cooling_system_type: "Liquid Cooling",
         topology: "liquid_cooling",
+        common_sections: COMMON_REPORT_SECTIONS,
+        topology_specific_sections: [],
         fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
     }
 });
@@ -220,6 +260,11 @@ const GENERIC_REPORT_PROFILE = Object.freeze({
     display_name: "Generic PUE Summary",
     cooling_system_type: "Unknown Cooling System",
     topology: "unknown",
+    simulation_engine: "Topology Dispatcher Runtime",
+    performance_model: "Standardized hourly simulation",
+    simulation_basis: "Annual Dynamic Simulation",
+    common_sections: COMMON_REPORT_SECTIONS,
+    topology_specific_sections: [],
     fields: ["annual_average_PUE", "annual_IT_energy_kWh", "annual_facility_energy_kWh"]
 });
 const EQUIPMENT_CURVE_SCHEMA_REGISTRY = Object.freeze({
@@ -270,34 +315,55 @@ function equipmentCurveSchema(equipmentType, curveType) {
 }
 const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "equipment_registry.py",
-    "topology_registry.py",
-    "topology_dispatcher.py",
-    "topology_adapters/__init__.py",
-    "topology_adapters/acc_gas_engine_cdu.py",
-    "topology_adapters/chiller_dry_cooler.py",
     "equipment_type_registry.py",
     "equipment_curve_registry.py",
     "equipment_metadata.py",
-    "equipment_engines/__init__.py",
-    "equipment_engines/equipment_engine_dispatcher.py",
-    "report_profile_registry.py",
-    "report_dispatcher.py",
-    "ashrae_online_lookup.py",
-    "ashrae_design_conditions.py",
-    "ashrae_design_conditions_data.json",
     "configuration_library_scanner.py",
     "configuration_manifest.py",
     "equipment_role_resolver.py",
+    "unit_scenario_manager.py",
     "configuration_library_loader.py",
+    "configuration_validator.py",
     "equipment_curve_reader.py",
     "equipment_curve_lookup.py",
     "equipment_engine.py",
     "unit_quantity.py",
     "configuration_direct_mode_audit.py",
+    "cooling_load_model.py",
+    "ashrae_online_lookup.py",
+    "ashrae_design_conditions.py",
+    "ashrae_design_conditions_data.json",
     "acc_v2_curve_lookup.py",
     "acc_v2_curve_reader.py",
     "acc_v2_diagnostics.py",
-    "acc_v2_engine.py"
+    "acc_v2_engine.py",
+    "equipment_engines/__init__.py",
+    "equipment_engines/chiller.py",
+    "equipment_engines/dry_cooler.py",
+    "equipment_engines/equipment_engine_dispatcher.py",
+    "equipment_performance/__init__.py",
+    "equipment_performance/performance_result.py",
+    "equipment_performance/acc_adapter.py",
+    "equipment_performance/chiller_adapter.py",
+    "equipment_performance/dry_cooler_adapter.py",
+    "equipment_performance/performance_dispatcher.py",
+    "energy_aggregation/__init__.py",
+    "energy_aggregation/energy_result.py",
+    "energy_aggregation/annual_energy_aggregator.py",
+    "capacity_validation.py",
+    "report_renderer.py",
+    "report_sections/__init__.py",
+    "report_sections/report_section_registry.py",
+    "report_profile_registry.py",
+    "report_dispatcher.py",
+    "solver.py",
+    "library_solver_adapter.py",
+    "topology_adapters/__init__.py",
+    "topology_adapters/acc_gas_engine_cdu.py",
+    "topology_adapters/chiller_dry_cooler_runtime.py",
+    "topology_adapters/chiller_dry_cooler.py",
+    "topology_registry.py",
+    "topology_dispatcher.py"
 ]);
 
 function log(msg) { elLog.textContent = msg; }
@@ -310,11 +376,355 @@ function reportProfileForTopology(topologyId) {
 function dispatchReportProfile(topologyId, solverResult = {}) {
     const profile = reportProfileForTopology(topologyId);
     const annual = solverResult?.annual_results || {};
+    const hourly = Array.isArray(solverResult?.hourly_results) ? solverResult.hourly_results : [];
+    const performanceValue = (row, resultKey, field, fallback) => row?.[resultKey]?.performance?.[field] ?? fallback;
+    const chillerCops = hourly.map(row => Number(performanceValue(row, "chiller_performance_result", "COP", row?.chiller_COP))).filter(Number.isFinite);
+    const dryCoolerCapacities = hourly.map(row => Number(performanceValue(row, "dry_cooler_performance_result", "capacity_kW", row?.dry_cooler_capacity_kW))).filter(Number.isFinite);
+    const derived = {
+        average_chiller_COP: chillerCops.length ? chillerCops.reduce((sum, value) => sum + value, 0) / chillerCops.length : null,
+        min_chiller_COP: chillerCops.length ? Math.min(...chillerCops) : null,
+        max_chiller_COP: chillerCops.length ? Math.max(...chillerCops) : null,
+        dry_cooler_capacity_kW: dryCoolerCapacities.length ? Math.max(...dryCoolerCapacities) : null,
+        configuration_status: solverResult?.implementation_status || null
+    };
     const summary = {};
     for (const field of profile.fields || []) {
-        summary[field] = annual[field] ?? null;
+        summary[field] = annual[field] ?? derived[field] ?? null;
     }
-    return { ...profile, summary, dispatch_status: REPORT_PROFILE_REGISTRY[topologyId] ? "matched" : "generic" };
+    const operatingScenario = buildOperatingScenarioSummary(solverResult);
+    const capacityValidation = buildCapacityValidationSummary(topologyId, solverResult, operatingScenario);
+    const annualEnergyBreakdown = buildAnnualEnergyBreakdown(solverResult);
+    const reportSections = buildReportSections(topologyId, solverResult, profile, operatingScenario, capacityValidation, annualEnergyBreakdown);
+    const visualizationData = buildReportVisualizationData(hourly);
+    const equipmentCurveRegister = buildEquipmentCurveRegister(solverResult);
+    const equipmentPerformance = buildEquipmentPerformance(annualEnergyBreakdown, { ...annual, ...derived });
+    const coolingLoadBreakdown = buildCoolingLoadBreakdown(annual);
+    return { ...profile, summary, operating_scenario: operatingScenario, capacity_validation: capacityValidation, annual_energy_breakdown: annualEnergyBreakdown, report_sections: reportSections, visualization_data: visualizationData, equipment_curve_register: equipmentCurveRegister, equipment_performance: equipmentPerformance, cooling_load_breakdown: coolingLoadBreakdown, dispatch_status: REPORT_PROFILE_REGISTRY[topologyId] ? "matched" : "generic" };
+}
+
+function buildReportVisualizationData(hourlyRows = []) {
+    const number = (row, keys) => {
+        for (const key of keys) {
+            const value = Number(row?.[key]);
+            if (Number.isFinite(value)) return value;
+        }
+        return null;
+    };
+    const normalized = (hourlyRows || []).filter(row => row && typeof row === "object").map((row, index) => ({
+        row,
+        hour: number(row, ["hour_index", "hour"]) ?? index + 1,
+        temperature_C: number(row, ["dry_bulb_C", "outdoor_dry_bulb_C", "outdoor_temp_C", "weather_dry_bulb_C", "dry_bulb", "ambient_dry_bulb_C"]),
+        pue: number(row, ["pue", "hourly_PUE", "PUE"]),
+        facility_power_kW: number(row, ["facility_power_kW", "total_facility_power_kW"]),
+        it_load_kW: number(row, ["it_load_kW", "IT_load_kW"])
+    }));
+    const temperatureVsPue = normalized
+        .filter(row => row.temperature_C !== null && row.pue !== null)
+        .map(row => ({ temperature_C: row.temperature_C, pue: row.pue }));
+    const peakFacility = normalized.filter(row => row.facility_power_kW !== null)
+        .reduce((peak, row) => !peak || row.facility_power_kW > peak.facility_power_kW ? row : peak, null);
+    const maxPue = normalized.filter(row => row.pue !== null)
+        .reduce((peak, row) => !peak || row.pue > peak.pue ? row : peak, null);
+    return {
+        temperature_vs_pue: temperatureVsPue,
+        monthly_pue: buildMonthlyPueData(normalized),
+        peak_summary: {
+            peak_facility_hour: peakFacility?.hour ?? null,
+            peak_pue: peakFacility?.pue ?? null,
+            peak_facility_power_kW: peakFacility?.facility_power_kW ?? null,
+            peak_it_load_kW: peakFacility?.it_load_kW ?? null,
+            peak_outdoor_dry_bulb_C: peakFacility?.temperature_C ?? null,
+            max_hourly_pue: maxPue?.pue ?? null,
+            max_hourly_pue_hour: maxPue?.hour ?? null
+        }
+    };
+}
+
+function buildMonthlyPueData(normalizedRows = []) {
+    const monthHours = [744, 672, 744, 720, 744, 720, 744, 744, 720, 744, 720, 744];
+    const monthly = [];
+    let offset = 0;
+    monthHours.forEach((hours, index) => {
+        const rows = normalizedRows.slice(offset, offset + hours);
+        offset += hours;
+        const facilityEnergy = rows.reduce((sum, row) => sum + (Number.isFinite(row.facility_power_kW) ? row.facility_power_kW : 0), 0);
+        const itEnergy = rows.reduce((sum, row) => sum + (Number.isFinite(row.it_load_kW) ? row.it_load_kW : 0), 0);
+        if (itEnergy > 0) monthly.push({ month: index + 1, average_pue: facilityEnergy / itEnergy });
+    });
+    return monthly;
+}
+
+function buildEquipmentCurveRegister(solverResult = {}) {
+    const selectedCurves = solverResult?.library_context?.selected_curves || solverResult?.selected_curves || {};
+    return Object.entries(selectedCurves).flatMap(([equipmentId, curve]) => {
+        if (!curve || typeof curve !== "object") return [];
+        const sheet = curve.sheet_name || curve.selected_curve_sheet;
+        const metadata = curve.equipment_metadata || {};
+        const curveType = metadata.curve_type || curve.curve_type || sheet;
+        if (!sheet && !curve.electrical_path && !curveType) return [];
+        const variables = Array.isArray(metadata.independent_variables) ? metadata.independent_variables : [];
+        const modelBasis = variables.length
+            ? `Hourly ${variables.join(" and ")} lookup`
+            : (curve.electrical_path ? "Hourly electrical path efficiency lookup" : "Hourly temperature and load lookup");
+        return [{
+            equipment_id: equipmentId,
+            curve_source: "Configuration Library Solver_Curve",
+            curve_type: curveType || "Equipment Performance Curve",
+            model_basis: modelBasis
+        }];
+    });
+}
+
+function buildEquipmentPerformance(annualEnergyBreakdown = {}, summary = {}) {
+    const normalizedSummary = Object.fromEntries(Object.entries(summary).map(([key, value]) => [String(key).toLowerCase(), value]));
+    return Object.entries(annualEnergyBreakdown.components || {}).flatMap(([equipment, component]) => {
+        const energy = Number(component?.energy_kWh);
+        if (!Number.isFinite(energy)) return [];
+        const metricValue = Number(normalizedSummary[`average_${String(equipment).toLowerCase()}_cop`]);
+        return [{
+            equipment,
+            annual_energy_kWh: energy,
+            performance_metric: Number.isFinite(metricValue) ? "Average COP" : null,
+            metric_value: Number.isFinite(metricValue) ? metricValue : null
+        }];
+    });
+}
+
+function buildCoolingLoadBreakdown(annual = {}) {
+    const numberOrNull = value => Number.isFinite(Number(value)) ? Number(value) : null;
+    return {
+        annual_it_load_kWh: numberOrNull(annual.annual_IT_energy_kWh),
+        annual_solar_heat_gain_kWh: numberOrNull(annual.annual_solar_heat_gain_kWh),
+        annual_other_auxiliary_heat_gain_kWh: numberOrNull(annual.annual_other_auxiliary_heat_gain_kWh),
+        annual_cooling_load_kWh: numberOrNull(annual.annual_cooling_load_kWh)
+    };
+}
+
+function buildAnnualEnergyBreakdown(solverResult = {}) {
+    if (solverResult?.standard_annual_energy) return solverResult.standard_annual_energy;
+    const annual = solverResult?.annual_results || {};
+    const components = {};
+    const add = (key, value) => {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) components[key] = { energy_kWh: numeric, sources: ["annual_results"] };
+    };
+    add("ACC", annual.annual_acc_energy_kWh);
+    add("CHILLER", annual.annual_chiller_energy_kWh);
+    add("DRY_COOLER", annual.annual_dry_cooler_energy_kWh);
+    add("CHW_PUMP", annual.annual_pump_energy_kWh);
+    add("INDOOR_EQUIPMENT", annual.annual_white_space_equipment_energy_kWh ?? annual.annual_indoor_equipment_energy_kWh);
+    add("ENGINE", annual.annual_engine_energy_kWh);
+    add("ENGINE_RADIATOR", annual.annual_engine_radiator_energy_kWh);
+    add("ELECTRICAL_LOSS", annual.annual_electrical_loss_kWh);
+    const cooling = ["ACC", "CHILLER", "DRY_COOLER", "CHW_PUMP", "ENGINE_RADIATOR"].reduce((sum, key) => sum + Number(components[key]?.energy_kWh || 0), 0);
+    return {
+        annual_it_energy_kWh: annual.annual_IT_energy_kWh,
+        annual_facility_energy_kWh: annual.annual_facility_energy_kWh,
+        annual_cooling_energy_kWh: cooling,
+        components,
+        PUE: annual.annual_average_PUE,
+        warnings: []
+    };
+}
+
+function buildOperatingScenarioSummary(solverResult = {}) {
+    const project = solverResult?.project || {};
+    const unitScenario = solverResult?.library_context?.runtime_assumptions?.unit_scenario || {};
+    const roleQuantities = unitScenario.role_quantities || {};
+    const firstRow = Array.isArray(solverResult?.hourly_results) ? solverResult.hourly_results.find(Boolean) || {} : {};
+    const numberOrNull = value => Number.isFinite(Number(value)) ? Number(value) : null;
+    const summary = {
+        scenario_name: unitScenario.scenario_name || solverResult?.scenario_name || project.scenario_name || null,
+        redundancy_mode: unitScenario.redundancy_mode || project.redundancy_strategy || null,
+        installed_units: numberOrNull(unitScenario.installed_units ?? project.installed_units),
+        required_units: numberOrNull(unitScenario.required_units ?? project.required_units),
+        active_units: numberOrNull(unitScenario.active_units ?? project.active_units),
+        standby_units: numberOrNull(unitScenario.standby_units ?? project.standby_units),
+        failed_units: numberOrNull(unitScenario.failed_units)
+    };
+    const roleValue = (role, key, fallback) => numberOrNull(roleQuantities?.[role]?.[key] ?? fallback);
+    const activeChiller = roleValue("chiller_units", "active_units", firstRow.active_chiller_units);
+    const activeDryCooler = roleValue("dry_cooler_units", "active_units", firstRow.active_dry_cooler_units);
+    const activePump = roleValue("pump_units", "active_units", firstRow.active_pump_units);
+    if (activeChiller !== null) summary.active_chiller_units = activeChiller;
+    if (activeDryCooler !== null) summary.active_dry_cooler_units = activeDryCooler;
+    if (activePump !== null) summary.active_pump_units = activePump;
+    return summary;
+}
+
+function buildCapacityValidationSummary(topologyId, solverResult = {}, operatingScenario = {}) {
+    if (solverResult?.capacity_validation) return solverResult.capacity_validation;
+    const peak = solverResult?.peak_results || {};
+    const project = solverResult?.project || {};
+    const hourly = Array.isArray(solverResult?.hourly_results) ? solverResult.hourly_results : [];
+    const firstRow = hourly.find(Boolean) || {};
+    const peakCoolingLoad = Number(peak.peak_design_cooling_load_kW ?? Math.max(...hourly.map(row => Number(row?.cooling_load_kW)).filter(Number.isFinite)));
+    const unitCapacity = Number(project.cooling_unit_capacity_kW ?? firstRow.cooling_unit_capacity_kW ?? firstRow.chiller_unit_capacity_kW);
+    const installedUnits = Number(operatingScenario.installed_units);
+    const activeUnits = Number(operatingScenario.active_units);
+    const installedCapacity = Number.isFinite(unitCapacity) && Number.isFinite(installedUnits) ? unitCapacity * installedUnits : null;
+    const activeCapacity = Number.isFinite(unitCapacity) && Number.isFinite(activeUnits) ? unitCapacity * activeUnits : null;
+    const margin = Number.isFinite(activeCapacity) && Number.isFinite(peakCoolingLoad) ? activeCapacity - peakCoolingLoad : null;
+    const warnings = [];
+    if (!Number.isFinite(peakCoolingLoad)) warnings.push("Peak design cooling load is unavailable.");
+    if (!Number.isFinite(activeCapacity)) warnings.push("Active capacity is unavailable.");
+    return {
+        status: margin !== null && margin < 0 ? "error" : (warnings.length ? "warning" : "valid"),
+        topology: topologyId || "unknown",
+        scenario_name: operatingScenario.scenario_name || null,
+        redundancy_mode: operatingScenario.redundancy_mode || null,
+        peak_cooling_load_kW: Number.isFinite(peakCoolingLoad) ? peakCoolingLoad : null,
+        installed_capacity_kW: installedCapacity,
+        active_capacity_kW: activeCapacity,
+        capacity_margin_kW: margin,
+        capacity_margin_percent: margin !== null && peakCoolingLoad ? margin / peakCoolingLoad * 100 : null,
+        failed_units: operatingScenario.failed_units ?? null,
+        warnings
+    };
+}
+
+function buildReportSections(topologyId, solverResult = {}, profile = {}, operatingScenario = {}, capacityValidation = {}, annualEnergyBreakdown = {}) {
+    const annual = solverResult?.annual_results || {};
+    const peak = solverResult?.peak_results || {};
+    const project = solverResult?.project || {};
+    const hourly = Array.isArray(solverResult?.hourly_results) ? solverResult.hourly_results : [];
+    const summary = profile.summary || {};
+    const row = (label, value) => ({ label, value });
+    const section = (id, title, rows = [], status = null) => {
+        const payload = { id, title, rows: rows.filter(item => item && item.value !== undefined && item.value !== null && item.value !== "") };
+        if (status) payload.status = status;
+        return payload;
+    };
+    const scenarioRows = Object.entries({
+        "Scenario": operatingScenario.scenario_name,
+        "Redundancy Mode": operatingScenario.redundancy_mode,
+        "Required Units": operatingScenario.required_units,
+        "Installed Units": operatingScenario.installed_units,
+        "Active Units": operatingScenario.active_units,
+        "Standby Units": operatingScenario.standby_units,
+        "Failed Units": operatingScenario.failed_units,
+        "Active Chiller Units": operatingScenario.active_chiller_units,
+        "Active Dry Cooler Units": operatingScenario.active_dry_cooler_units,
+        "Active Pumps": operatingScenario.active_pump_units
+    }).map(([label, value]) => row(label, value));
+    const capacityRows = Object.entries({
+        "Peak Cooling Load": capacityValidation.peak_cooling_load_kW,
+        "Installed Capacity": capacityValidation.installed_capacity_kW,
+        "Active Capacity": capacityValidation.active_capacity_kW,
+        "Capacity Margin": capacityValidation.capacity_margin_kW,
+        "Margin Percentage": capacityValidation.capacity_margin_percent,
+        "Validation Status": capacityValidation.status
+    }).map(([label, value]) => row(label, value));
+    const energyComponents = annualEnergyBreakdown.components || {};
+    const energyRows = [
+        row("IT Energy", annualEnergyBreakdown.annual_it_energy_kWh),
+        ...Object.entries(energyComponents).map(([key, value]) => row(reportKeyLabel(key), value?.energy_kWh)),
+        row("Cooling Energy", annualEnergyBreakdown.annual_cooling_energy_kWh),
+        row("Facility Energy", annualEnergyBreakdown.annual_facility_energy_kWh),
+        row("PUE", annualEnergyBreakdown.PUE)
+    ];
+    const performanceRows = [];
+    const seen = new Set();
+    for (const hourlyRow of hourly) {
+        if (!hourlyRow || typeof hourlyRow !== "object") continue;
+        for (const [key, value] of Object.entries(hourlyRow)) {
+            if (!key.endsWith("_performance_result") || !value || typeof value !== "object") continue;
+            const uniqueKey = `${value.equipment_id || key}:${value.equipment_type || "UNKNOWN"}`;
+            if (seen.has(uniqueKey)) continue;
+            seen.add(uniqueKey);
+            const performance = value.performance || {};
+            performanceRows.push({
+                equipment: value.equipment_id || key,
+                equipment_type: value.equipment_type || "UNKNOWN",
+                power_kW: performance.power_kW,
+                COP: performance.COP,
+                load_ratio: performance.load_ratio,
+                capacity_ratio: performance.capacity_ratio,
+                diagnostics: value.diagnostics || {}
+            });
+        }
+    }
+    if (!performanceRows.length && (annual.average_acc_cop != null || annual.max_acc_power_kW != null)) {
+        performanceRows.push(
+            row("Average ACC COP", annual.average_acc_cop),
+            row("Minimum ACC COP", annual.min_acc_cop),
+            row("Maximum ACC COP", annual.max_acc_cop),
+            row("Maximum ACC Power", annual.max_acc_power_kW),
+            row("ACC Capacity Clamped Hours", annual.acc_capacity_clamped_hours)
+        );
+    }
+    const summaryRows = Object.entries(summary).map(([key, value]) => row(reportKeyLabel(key), value));
+    return {
+        common: [
+            section("project_summary", "Project Summary", [
+                row("Configuration", solverResult.configuration_id || project.configuration_id),
+                row("Cooling System Type", profile.cooling_system_type || solverResult.cooling_system_type),
+                row("Solver Topology", topologyId),
+                row("Report Profile", profile.profile_id),
+                row("Implementation Status", solverResult.implementation_status || profile.status)
+            ]),
+            section("weather_design_conditions", "Weather & Design Conditions", [
+                row("Weather Source", peak.peak_design_weather_source || project.weather_source),
+                row("EPW Location", project.location || project.site_location),
+                row("Simulation Hours", hourly.length || null),
+                row("Peak Dry Bulb", peak.peak_design_outdoor_dry_bulb_C),
+                row("Peak Cooling Design Point", peak.peak_design_cooling_load_kW)
+            ]),
+            section("cooling_load_summary", "Cooling Load Summary", [
+                row("Design IT Load", peak.peak_design_it_load_kW || project.design_it_load_kW),
+                row("Annual IT Energy", annual.annual_IT_energy_kWh || annualEnergyBreakdown.annual_it_energy_kWh),
+                row("Solar Heat Gain", annual.annual_solar_heat_gain_kWh),
+                row("Other Auxiliary Heat Gain", annual.annual_other_auxiliary_heat_gain_kWh),
+                row("Peak Cooling Load", peak.peak_design_cooling_load_kW),
+                row("Annual Cooling Load", annual.annual_cooling_load_kWh)
+            ]),
+            section("cooling_system_configuration", "Cooling System Configuration", [
+                row("Cooling System Type", profile.cooling_system_type || solverResult.cooling_system_type),
+                row("Solver Topology", topologyId),
+                row("Configuration Status", solverResult.implementation_status || profile.configuration_status),
+                ...summaryRows
+            ]),
+            section("operating_scenario", "Operating Scenario", scenarioRows),
+            section("peak_capacity_validation", "Peak Capacity Validation", capacityRows, capacityValidation.status),
+            section("equipment_performance", "Equipment Performance", performanceRows),
+            section("annual_energy_breakdown", "Annual Energy Breakdown", energyRows),
+            section("pue_summary", "PUE Summary", [
+                row("Annual PUE", annualEnergyBreakdown.PUE ?? annual.annual_average_PUE),
+                row("Annual IT Energy", annualEnergyBreakdown.annual_it_energy_kWh ?? annual.annual_IT_energy_kWh),
+                row("Annual Facility Energy", annualEnergyBreakdown.annual_facility_energy_kWh ?? annual.annual_facility_energy_kWh)
+            ]),
+            section("engineering_conclusion", "Engineering Conclusion", [
+                row("Conclusion", buildEngineeringConclusion(capacityValidation).text)
+            ], buildEngineeringConclusion(capacityValidation).status)
+        ],
+        topology_specific: (profile.topology_specific_sections || []).map(title => ({ title, rows: [] })),
+        engineering_conclusion: buildEngineeringConclusion(capacityValidation),
+        topology: topologyId || "unknown",
+        annual_energy_breakdown: annualEnergyBreakdown,
+        operating_scenario: operatingScenario,
+        capacity_validation: capacityValidation
+    };
+}
+
+function buildEngineeringConclusion(capacityValidation = {}) {
+    const status = String(capacityValidation.status || "warning").toLowerCase();
+    const marginPercent = Number(capacityValidation.capacity_margin_percent);
+    if (status === "error") {
+        return {
+            status: "FAIL",
+            text: "Available cooling capacity is insufficient for peak design demand."
+        };
+    }
+    if (status === "valid" && (!Number.isFinite(marginPercent) || marginPercent >= 10)) {
+        return {
+            status: "PASS",
+            text: "Cooling system satisfies peak design cooling demand under selected operating scenario."
+        };
+    }
+    return {
+        status: "WARNING",
+        text: "Cooling capacity margin is limited under failure scenario."
+    };
 }
 
 function phase19bTrace(label, data = null) {
@@ -1889,6 +2299,59 @@ function tableRows(rows) {
     return rows.map(([label, value]) => `<tr><th>${esc(label)}</th><td>${value}</td></tr>`).join("");
 }
 
+function renderReportSections(reportSections) {
+    const sections = normalizeReportSections(reportSections);
+    if (!sections.length) return `<div class="empty">No structured report sections were provided.</div>`;
+    return sections.map(section => renderReportSection(section)).join("");
+}
+
+function normalizeReportSections(reportSections) {
+    if (Array.isArray(reportSections)) {
+        return reportSections.filter(section => section && typeof section === "object");
+    }
+    if (!reportSections || typeof reportSections !== "object") return [];
+    return ["common", "topology_specific"]
+        .flatMap(key => Array.isArray(reportSections[key]) ? reportSections[key] : [])
+        .filter(section => section && typeof section === "object");
+}
+
+function renderReportSection(section) {
+    const title = section.title || section.id || "Report Section";
+    const rows = Array.isArray(section.rows) ? section.rows : [];
+    const status = section.status ? `<div class="note">Status: ${esc(section.status)}</div>` : "";
+    const body = rows.length ? renderReportSectionRows(rows) : `<div class="empty">No rows reported.</div>`;
+    return `<div class="card reportSection" data-section="${esc(section.id || "")}"><h3>${esc(title)}</h3>${status}${body}</div>`;
+}
+
+function renderReportSectionRows(rows) {
+    const normalizedRows = rows
+        .filter(row => row !== null && row !== undefined)
+        .map(row => (row && typeof row === "object" && !Array.isArray(row)) ? row : { value: row });
+    if (!normalizedRows.length) return `<div class="empty">No rows reported.</div>`;
+    const allKeySet = new Set(normalizedRows.flatMap(row => Object.keys(row)));
+    const allKeys = Array.from(allKeySet);
+    if (allKeys.every(key => key === "label" || key === "value")) {
+        return `<table><tbody>${normalizedRows.map(row => `<tr><th>${renderReportCell(row.label)}</th><td>${renderReportCell(row.value)}</td></tr>`).join("")}</tbody></table>`;
+    }
+    return `<table><thead><tr>${allKeys.map(key => `<th>${esc(reportKeyLabel(key))}</th>`).join("")}</tr></thead><tbody>${
+        normalizedRows.map(row => `<tr>${allKeys.map(key => `<td>${renderReportCell(row[key])}</td>`).join("")}</tr>`).join("")
+    }</tbody></table>`;
+}
+
+function renderReportCell(value) {
+    if (value === null || value === undefined || value === "") return "N/A";
+    if (Array.isArray(value)) return esc(value.join(", "));
+    if (typeof value === "object") return esc(JSON.stringify(value));
+    if (typeof value === "number") return esc(Number.isInteger(value) ? String(value) : value.toFixed(3));
+    return esc(value);
+}
+
+function reportKeyLabel(key) {
+    return String(key || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, char => char.toUpperCase());
+}
+
 function buildPueContributionSummary(annual = {}) {
     const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
     const annualPue = Number(annual.annual_average_PUE) || 0;
@@ -2591,8 +3054,8 @@ function formulasHtml() {
         ["Facility Power Balance", `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>chiller,h</sub> + <i>P</i><sub>drycooler,h</sub> + <i>P</i><sub>pump,h</sub> + <i>P</i><sub>fan,h</sub> + <i>P</i><sub>aux,h</sub></span>`],
         ["UPS Efficiency Loss", `<span class="math"><i>P</i><sub>UPS,loss</sub> = <i>P</i><sub>IT</sub> · (η<sub>UPS</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
         ["Transformer Loss", `<span class="math"><i>P</i><sub>TR,loss</sub> = <i>P</i><sub>out</sub> · (η<sub>TR</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
-        ["Thermal Load Assembly", `<span class="math"><i>Q</i><sub>cooling,h</sub> = <i>Q</i><sub>IT,h</sub> + <i>Q</i><sub>pump,h</sub> + <i>Q</i><sub>airflow,h</sub> + <i>Q</i><sub>aux,h</sub></span>`],
-        ["Chiller Power", `<span class="math"><i>P</i><sub>chiller,h</sub> = <span class="frac"><span><i>Q</i><sub>cooling,h</sub></span><span><i>COP</i>(<i>T</i><sub>cond,in,h</sub>, <i>PLR</i><sub>h</sub>)</span></span></span>`],
+        ["Cooling Load Assembly", `<span class="math"><i>Q</i><sub>cooling,h</sub> = <i>Q</i><sub>IT,h</sub> + <i>Q</i><sub>solar,h</sub> + <i>Q</i><sub>other_aux,h</sub></span>`],
+        ["Equipment Performance Lookup", `<span class="math"><i>P</i><sub>equipment,h</sub> = <i>f</i>(<i>T</i><sub>outdoor,h</sub>, <i>load</i><sub>h</sub>, <i>Solver_Curve</i>)</span>`],
         ["Dry Cooler Leaving Water", `<span class="math"><i>T</i><sub>LWT,h</sub> = <i>T</i><sub>OA,h</sub> + Δ<i>T</i><sub>approach</sub></span>`],
         ["Affinity Law", `<span class="math"><i>P</i><sub>variable</sub> = <i>P</i><sub>rated</sub> · <i>s</i><sup>3</sup></span>`],
         ["Peak Facility Hour", `<span class="math"><i>h</i><sub>peak</sub> = arg max<sub>h</sub>(<i>P</i><sub>facility,h</sub>)</span>`]
@@ -2608,185 +3071,73 @@ function formulasHtml() {
 const SKYVAULT_REPORT_LOGO = `data:image/png;base64,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`;
 
 function buildHtmlReport(context) {
+    return buildHtmlReportFromSections(context);
+}
+
+function buildHtmlReportFromSections(context) {
     const output = context.output || {};
-    const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
     const annual = output.annual_results || {};
     const peak = output.peak_results || {};
+    const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
     const manifest = context.input?.configuration_manifest || {};
     const solverTopology = context.input?.topology_id || context.input?.solver_dispatch_key || manifest.solver_topology || "unknown";
-    const reportProfile = dispatchReportProfile(solverTopology, output);
-    const topologyDisplay = CONFIGURATION_TOPOLOGY_STATUS[solverTopology]?.display || reportProfile.cooling_system_type || "N/A";
-    const coolingSystemDisplay = reportProfile.cooling_system_type || context.input?.cooling_system_type || "N/A";
-    const isAnnualBenchmarkMode = output.calculation_mode === "excel_benchmark_compatible" || annual.calculation_mode === "excel_benchmark_compatible";
-    const isExcelReplicatedHourlyMode = output.calculation_mode === "excel_replicated_hourly" || annual.calculation_mode === "excel_replicated_hourly";
-    const isExperimentalHourlyMode = output.calculation_mode === "experimental_acc_hourly_shape" || annual.calculation_mode === "experimental_acc_hourly_shape";
-    const isConfigurationLibraryAccV2DirectMode = isConfigurationLibraryAccV2DirectResult(output, context.input);
-    const isBenchmarkMode = isAnnualBenchmarkMode || isExcelReplicatedHourlyMode || isExperimentalHourlyMode;
-    const hasExperimentalPeakWarning = isExperimentalHourlyMode && annual.acc_peak_power_warning === true;
-    const isAccV2DirectMode = (isExperimentalHourlyMode && annual.acc_direct_solver_curve === true) || isConfigurationLibraryAccV2DirectMode;
-    const isAccMode = isBenchmarkMode || context.input?.cooling_system_type === "ACC" || annual.annual_acc_energy_kWh != null;
-    const benchmark = output.benchmark_components || {};
-    const benchmarkAverage = benchmark.component_average_kW || {};
+    const report = dispatchReportProfile(solverTopology, output);
+    const reportSections = report.report_sections || buildReportSections(
+        solverTopology,
+        output,
+        report,
+        report.operating_scenario || {},
+        report.capacity_validation || {},
+        report.annual_energy_breakdown || {}
+    );
     const projectInfo = getProjectReportInfo();
-    const manifestRows = context.input?.configuration_id ? [
-        ["Configuration", esc(context.input.configuration_display_name || context.input.configuration_id || "N/A")],
-        ["Cooling System Type", esc(coolingSystemDisplay)],
-        ["Solver Topology", esc(solverTopology)],
-        ["Report Profile", esc(reportProfile.profile_id || context.input.report_profile || "generic_pue")],
-        ["Configuration ID", esc(context.input.configuration_id)],
-        ["Configuration Display Name", esc(context.input.configuration_display_name || "N/A")],
-        ["Manifest Schema Version", esc(context.input.configuration_manifest_schema_version || "N/A")],
-        ["Topology ID", esc(topologyDisplay)],
-        ["Implementation Status", esc(context.input.implementation_status || "N/A")],
-        ["Solver Dispatch Key", esc(context.input.solver_dispatch_key || "N/A")],
-        ["Report Profile Source", esc(context.input.report_profile || reportProfile.profile_id || "N/A")]
-    ] : [];
-    const heatGains = getCoolingLoadHeatGainInput();
     const weather = standardDataFiles.weather || {};
     const weatherData = weather.data || weather.hourly_data || {};
     const weatherSource = getWeatherSourceMetadata(weather);
-    const it = standardDataArray(standardDataFiles.itLoad || {}, [["data", "hourly_it_load_kW"], ["hourly_it_load_kW"], ["project", "it_load", "hourly_it_load_kW"]], ["data", "hourly_profile"], "IT_load_kW");
     const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"], ["weather", "hourly_data", "dry_bulb_C"]]);
-    const pueSeries = hourly.map(row => Number(row.hourly_PUE)).filter(Number.isFinite);
-    const facilitySeries = hourly.map(row => Number(row.total_facility_power_kW)).filter(Number.isFinite);
-    const monthlyPue = groupHourlyByMonth(hourly, row => Number(row.hourly_PUE));
+    const pueSeries = hourly.map(row => pickHourlyValue(row, ["pue", "hourly_PUE", "PUE"])).filter(Number.isFinite);
+    const facilitySeries = hourly.map(row => pickHourlyValue(row, ["facility_power_kW", "total_facility_power_kW"])).filter(Number.isFinite);
+    const facilityVsIt = hourly.map(row => [
+        pickHourlyValue(row, ["it_load_kW", "IT_load_kW"]),
+        pickHourlyValue(row, ["facility_power_kW", "total_facility_power_kW"])
+    ]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+    const monthlyPue = report.visualization_data.monthly_pue;
     const reportCurves = collectReportCurves();
     const curveGroups = groupReportCurves(reportCurves);
-    const drySummary = summarizeNumericArray(dry);
     const tempDistribution = buildTemperatureDistribution(weatherData);
-    const hasTemperatureBins = Boolean(tempDistribution?.rows?.length);
-    const weatherPeriod = getWeatherPeriod(weather);
-    const itSummary = summarizeNumericArray(it);
-    const ghiSummary = summarizeNumericArray(weatherData.global_horizontal_radiation_Wh_m2);
-    const windSummary = summarizeNumericArray(weatherData.wind_speed_m_s);
-    const rhSummary = summarizeNumericArray(weatherData.relative_humidity_percent);
-    const place = projectInfo.location || [weather.location?.city, weather.location?.state_or_region, weather.location?.country].filter(Boolean).join(", ") || "N/A";
-    const projectLat = weatherSource.project_latitude ?? projectInfo.latitude;
-    const projectLon = weatherSource.project_longitude ?? projectInfo.longitude;
-    const projectCoordinates = Number.isFinite(Number(projectLat)) && Number.isFinite(Number(projectLon))
-        ? `${fmtNumber(Number(projectLat), 4)}, ${fmtNumber(Number(projectLon), 4)}`
-        : "N/A";
+    const drySummary = summarizeNumericArray(dry);
+    const annualEnergyBreakdown = report.annual_energy_breakdown || {};
+    const energyRows = [
+        ["IT Energy", annualEnergyBreakdown.annual_it_energy_kWh ?? annual.annual_IT_energy_kWh],
+        ...Object.entries(annualEnergyBreakdown.components || {}).map(([key, data]) => [reportKeyLabel(key), data?.energy_kWh]),
+        ["Facility Energy", annualEnergyBreakdown.annual_facility_energy_kWh ?? annual.annual_facility_energy_kWh]
+    ].filter(([, value]) => Number(value) > 0);
+    const energyChart = energyRows.length ? svgBarChart(energyRows.map(([label, value]) => ({
+        label: label.replace(" Energy", "").replace("Electrical ", "Elec "),
+        value: Number(value) / 1000,
+        color: reportEnergyColor(label)
+    })), { yLabel: "MWh", showValueLabels: true, valueLabelDigits: 0 }) : "";
+    const annualResultCharts = [
+        ...(energyChart ? [["Annual Energy Breakdown", energyChart]] : []),
+        ...(monthlyPue.length ? [["Monthly Average PUE", svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.average_pue, color: REPORT_COLORS.pueLine })), { yLabel: "PUE", yTickCount: 5, yTickDigits: 2, barWidthScale: 0.86 })]] : [])
+    ];
+    const operatingCharts = [
+        ...(pueSeries.length > 1 ? [["PUE Hourly Profile", svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year", color: REPORT_COLORS.pueLine })]] : []),
+        ...(facilityVsIt.length > 1 ? [["Facility Power vs IT Load", svgXYLineChart(facilityVsIt, { xLabel: "IT Load (kW)", yLabel: "Facility Power (kW)", color: REPORT_COLORS.coolingEnergy })]] : []),
+        ...(report.visualization_data.temperature_vs_pue.length > 1 ? [["Outdoor Temperature vs PUE", svgXYLineChart(
+            report.visualization_data.temperature_vs_pue.map(row => [row.temperature_C, row.pue]),
+            { xLabel: "Outdoor Dry Bulb (deg C)", yLabel: "PUE", color: REPORT_COLORS.pueLine }
+        )]] : [])
+    ];
     const reportTitle = "Annual Data Center PUE Performance Assessment";
-    const reportScenario = String(benchmark.scenario || output.project?.scenario_name || "Normal").toLowerCase().includes("fail")
-        ? "Failure"
-        : "Normal";
-    const peakHourlyPue = !isAnnualBenchmarkMode && Number.isFinite(Number(annual.max_hourly_PUE))
-        ? Number(annual.max_hourly_PUE)
-        : null;
-    const peakDesignPue = !isAnnualBenchmarkMode && Number.isFinite(Number(peak.peak_PUE))
-        ? Number(peak.peak_PUE)
-        : null;
-    const peakDesignDemandKw = peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW ?? peak.peak_total_facility_power_kW;
-    const maxHourlyDemandKw = peak.max_hourly_facility_electrical_demand_kW ?? peak.max_hourly_total_facility_power_kW;
-    const peakDesignWeatherSource = peak.peak_design_weather_source || "ASHRAE_local_cache";
-    const peakDesignWeatherStation = peak.peak_design_weather_station || "N/A";
-    const peakDesignWeatherStationId = peak.peak_design_weather_station_id || "N/A";
-    const peakDesignWeatherStationDistance = peak.peak_design_weather_station_distance_km;
-    const peakDesignTemperatureBasis = peak.peak_design_temperature_basis || "ASHRAE_20_year_extreme_annual_design_condition";
-    const peakDesignDisplaySource = peakDesignWeatherSource === "manual" || peakDesignWeatherSource === "User Defined Design Condition"
-        ? "User Defined Design Condition"
-        : "ASHRAE Climatic Design Conditions";
-    const peakDesignDisplayBasis = peakDesignTemperatureBasis === "User Defined Design Condition"
-        ? "User Defined Design Condition"
-        : "20-year Extreme Annual Design Condition";
-    const peakPueMetricHtml = isConfigurationLibraryAccV2DirectMode
-        ? `<div class="metric"><div class="label">Peak Design PUE</div><div class="value">${reportValue(peakDesignPue, "", 3)}</div>${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`
-        : `<div class="metric"><div class="label">Peak Hourly PUE</div><div class="value">${isAnnualBenchmarkMode ? "N/A" : reportValue(peakHourlyPue, "", 3)}</div>${isAnnualBenchmarkMode ? `<div class="subtitle">Annual-equivalent assessment uses average equipment values.</div>` : ""}${hasExperimentalPeakWarning ? `<div class="subtitle">Review against design intent.</div>` : ""}</div>`;
     const generated = new Date().toISOString();
-    const hasAnnualField = (key) => annual[key] !== null && annual[key] !== undefined;
-    const accPerformanceRows = [
-        ["average_acc_cop", "Average ACC COP", "", 3],
-        ["min_acc_cop", "Minimum ACC COP", "", 3],
-        ["max_acc_cop", "Maximum ACC COP", "", 3],
-        ["max_acc_power_kW", "Maximum ACC Power", " kW", 1],
-        ["acc_capacity_clamped_hours", "ACC Capacity Clamped Hours", " h", 0]
-    ]
-        .filter(([key]) => hasAnnualField(key))
-        .map(([key, label, suffix, digits]) => [label, reportValue(annual[key], suffix, digits)]);
-    const energyRows = (isAccMode ? [
-        ["IT Energy", annual.annual_IT_energy_kWh],
-        ["ACC Energy", annual.annual_acc_energy_kWh],
-        ["Pump Energy", annual.annual_pump_energy_kWh || 0],
-        ["Indoor Equipment Energy", annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh],
-        ["Engine Radiator Energy", annual.annual_engine_radiator_energy_kWh],
-        ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh],
-        ...(Number(annual.annual_terminal_fan_energy_kWh) > 0 ? [["MAU Energy", annual.annual_terminal_fan_energy_kWh]] : []),
-        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [["Other Electrical Auxiliary Energy", annual.annual_auxiliary_energy_kWh]] : [])
-    ] : [
-        ["IT Energy", annual.annual_IT_energy_kWh],
-        [annual.annual_acc_energy_kWh > 0 ? "ACC Energy" : "Chiller Energy", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh || annual.annual_cooling_energy_kWh],
-        ["Dry Cooler Energy", annual.annual_dry_cooler_energy_kWh],
-        ["Pump Energy", annual.annual_pump_energy_kWh || 0],
-        ["MAU Energy", annual.annual_terminal_fan_energy_kWh],
-        ["White Space Equipment Energy", annual.annual_white_space_equipment_energy_kWh],
-        ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh],
-        ["Other Electrical Auxiliary Energy", annual.annual_auxiliary_energy_kWh]
-    ]).filter(([, value]) => Number(value) > 0);
-    const energyChart = svgBarChart(energyRows.map(([label, value]) => {
-        const shortLabel = label.replace(" Energy", "").replace("Electrical ", "Elec ");
-        return { label: shortLabel, value: Number(value) / 1000, color: reportEnergyColor(label) };
-    }), { yLabel: "MWh", showValueLabels: true, valueLabelDigits: 0 });
-    const monthlyChart = svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.value, color: REPORT_COLORS.pueLine })), { yLabel: "PUE", yTickCount: 5, yTickDigits: 2, barWidthScale: 0.86 });
-    const contributionSummary = buildPueContributionSummary(annual);
-    const coolingUnitInfo = buildCoolingUnitArchitectureInfo(output);
-    const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
-    const pueContribution = (value) => itEnergy > 0 ? (Number(value) || 0) / itEnergy : null;
-    const pueContributionText = (value, signed = true) => {
-        if (value === null || value === undefined) return "N/A";
-        if (!Number.isFinite(Number(value))) return "N/A";
-        const formatted = reportValue(value, "", 3);
-        return signed && Number(value) >= 0 ? `+${formatted}` : formatted;
-    };
-    const pueContributionRows = isAccMode ? [
-        { label: "IT Base", value: 1, css: "base", signed: false },
-        { label: "ACC pPUE", value: pueContribution(annual.annual_acc_energy_kWh), css: "", signed: true },
-        { label: "Pump pPUE", value: pueContribution(annual.annual_pump_energy_kWh), css: "", signed: true },
-        { label: "Indoor Equipment pPUE", value: pueContribution(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh), css: "", signed: true },
-        { label: "Engine Radiator pPUE", value: pueContribution(annual.annual_engine_radiator_energy_kWh), css: "", signed: true },
-        { label: "Electrical Distribution Loss pPUE", value: pueContribution(annual.annual_electrical_loss_kWh), css: "", signed: true },
-        ...(Number(annual.annual_auxiliary_energy_kWh) > 0 ? [{ label: "Other Electrical Auxiliary pPUE", value: pueContribution(annual.annual_auxiliary_energy_kWh), css: "", signed: true }] : []),
-        { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
-    ] : [
-        { label: "IT Base", value: 1, css: "base", signed: false },
-        { label: "Cooling System pPUE", value: contributionSummary.coolingPPUE, css: "", signed: true },
-        { label: "├─ Chiller", value: pueContribution(annual.annual_chiller_energy_kWh), css: "child", signed: true },
-        { label: "├─ Dry Cooler", value: pueContribution(annual.annual_dry_cooler_energy_kWh), css: "child", signed: true },
-        { label: "├─ Pump", value: pueContribution(annual.annual_pump_energy_kWh), css: "child", signed: true },
-        { label: "MAU", value: pueContribution(annual.annual_terminal_fan_energy_kWh), css: "child", signed: true },
-        { label: "Electrical Distribution Loss pPUE", value: contributionSummary.electricalPPUE, css: "", signed: true },
-        { label: "Other Electrical Auxiliary pPUE", value: contributionSummary.auxiliaryPPUE, css: "", signed: true },
-        { label: "Annual PUE", value: Number(annual.annual_average_PUE), css: "total", signed: false }
-    ];
-    const benchmarkComponentRows = isBenchmarkMode ? [
-        ["IT Load", benchmarkAverage.IT, annual.annual_IT_energy_kWh],
-        ["ACC Power", benchmarkAverage.ACC, annual.annual_acc_energy_kWh],
-        ["CHW Pump Power", benchmarkAverage.pump, annual.annual_pump_energy_kWh],
-        ["Indoor CDU / RTC / MAU Equivalent", benchmarkAverage.indoor_CDU_RTC_MAU_equivalent, annual.annual_indoor_equipment_energy_kWh],
-        ["Engine Radiator Power", benchmarkAverage.engine_radiator, annual.annual_engine_radiator_energy_kWh],
-        ["IT Electrical Distribution Loss", benchmarkAverage.IT_electrical_loss, annual.annual_it_electrical_loss_kWh],
-        ["MEP Electrical Distribution Loss", benchmarkAverage.MEP_electrical_loss, annual.annual_mep_electrical_loss_kWh],
-        ["Facility Power", benchmarkAverage.facility, annual.annual_facility_energy_kWh]
-    ] : [];
-    const benchmarkPowerItems = isBenchmarkMode ? [
-        { label: "IT Load", value: benchmarkAverage.IT },
-        { label: "ACC Power", value: benchmarkAverage.ACC },
-        { label: "Pump Power", value: benchmarkAverage.pump },
-        { label: "Indoor Equipment", value: benchmarkAverage.indoor_CDU_RTC_MAU_equivalent },
-        { label: "Engine Radiator", value: benchmarkAverage.engine_radiator },
-        { label: "Electrical Distribution Loss", value: (Number(benchmarkAverage.IT_electrical_loss) || 0) + (Number(benchmarkAverage.MEP_electrical_loss) || 0) },
-        { label: "Facility Power", value: benchmarkAverage.facility }
-    ].filter(item => Number.isFinite(Number(item.value))) : [];
-    const benchmarkPowerChart = benchmarkPowerItems.length ? svgBarChart(benchmarkPowerItems.map(item => ({ ...item, color: reportEnergyColor(item.label) })), { yLabel: "Average kW" }) : "";
-    const resultChartCards = isAnnualBenchmarkMode ? [
-        ...(benchmarkPowerItems.length ? [["Cooling System Component Average Power", benchmarkPowerChart]] : []),
-        ...(energyRows.length ? [["Annual Energy Breakdown", energyChart]] : [])
-    ] : [
-        ...(pueSeries.length > 1 ? [["8760 Annual PUE Timeseries", svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year", color: REPORT_COLORS.pueLine })]] : []),
-        ...(facilitySeries.length > 1 ? [["Facility Power Timeseries", svgLineChart(facilitySeries, { yLabel: "kW", xLabel: "Hour of Year", color: REPORT_COLORS.coolingEnergy })]] : []),
-        ...(energyRows.length ? [["Annual Energy Breakdown", energyChart]] : []),
-        ...(monthlyPue.length ? [["Monthly Average PUE", monthlyChart]] : [])
-    ];
-    const curveRegisterRows = reportCurves.map(curve => [
+    const coolingSystemDisplay = report.cooling_system_type || context.input?.cooling_system_type || "N/A";
+    const scenarioName = output.project?.scenario_name || report.operating_scenario?.scenario_name || "Normal";
+    const peakSummary = report.visualization_data.peak_summary;
+    const peakMetric = Number.isFinite(Number(peak.peak_PUE))
+        ? ["Peak Design PUE", peak.peak_PUE]
+        : ["Peak Hourly PUE", peakSummary.peak_pue];
+    const importedCurveRows = reportCurves.map(curve => [
         curve.category,
         esc(curve.curveId),
         esc(curve.sourceFile),
@@ -2795,6 +3146,36 @@ function buildHtmlReport(context) {
             : `${esc(curve.xAxis)} ${reportValue(curve.xMin, "", 2)}-${reportValue(curve.xMax, "", 2)}; ${esc(curve.yAxis)} ${reportValue(curve.yMin, "", 2)}-${reportValue(curve.yMax, "", 2)}`,
         esc(curve.pointCount)
     ]);
+    const libraryCurveRows = report.equipment_curve_register.map(curve => [
+        esc(curve.equipment_id),
+        esc(curve.curve_source),
+        esc(curve.curve_type),
+        esc(curve.model_basis)
+    ]);
+    const performanceRows = report.equipment_performance || [];
+    const coolingLoad = report.cooling_load_breakdown || {};
+    const performanceCards = performanceRows.map(row => {
+        const key = String(row.equipment || "").toLowerCase();
+        const matchingCurve = (report.equipment_curve_register || []).find(curve => equipmentRoleFamily(curve.equipment_id) === equipmentRoleFamily(row.equipment));
+        const modelDescription = matchingCurve && /ambient.*capacity/i.test(String(matchingCurve.curve_type || ""))
+            ? "Ambient temperature and capacity lookup"
+            : matchingCurve?.model_basis;
+        const details = [
+            ["Annual Energy", reportValue(row.annual_energy_kWh, " kWh", 0)],
+            ...(row.performance_metric ? [[row.performance_metric, reportValue(row.metric_value, "", 3)]] : []),
+            ...(Number.isFinite(Number(report.summary?.[`min_${key}_COP`])) ? [["Minimum COP", reportValue(report.summary[`min_${key}_COP`], "", 3)]] : []),
+            ...(Number.isFinite(Number(report.summary?.[`max_${key}_COP`])) ? [["Maximum COP", reportValue(report.summary[`max_${key}_COP`], "", 3)]] : []),
+            ...(modelDescription ? [["Performance Model", esc(modelDescription)]] : [])
+        ];
+        return `<div class="card"><h3>${esc(reportKeyLabel(row.equipment))} Performance</h3><table><tbody>${tableRows(details)}</tbody></table></div>`;
+    });
+    const pueContributionText = (value, signed = true) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "N/A";
+        const formatted = reportValue(numeric, "", 3);
+        return signed && numeric >= 0 ? `+${formatted}` : formatted;
+    };
+    const engineeringConclusion = report.engineering_conclusion || buildEngineeringConclusion(report.capacity_validation || {});
 
     return `<!doctype html>
 <html lang="en">
@@ -2803,455 +3184,128 @@ function buildHtmlReport(context) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(reportTitle)}</title>
 <style>
-    :root { --ink:#222222; --muted:#555555; --line:#D8D8D8; --soft:#F7F7F7; --accent:#7A7A7A; --green:#555555; --red:#555555; --violet:#555555; }
+    :root { --ink:#222222; --muted:#555555; --line:#D8D8D8; --soft:#F7F7F7; --accent:#7A7A7A; }
     body { margin:0; font-family: Inter, "Times New Roman", Georgia, serif; color:var(--ink); background:#fff; }
     .page { max-width: 1260px; margin: 0 auto; padding: 28px 24px 46px; }
     header { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 18px; }
-    .reportHeaderTop { display:block; }
-    .reportLogo { display:block; width:210px; height:auto; object-fit:contain; margin-bottom:0; }
-    .reportHeaderText { flex:1 1 auto; min-width:0; }
-    .pageHeaderLine { color:var(--muted); font-size:13px; letter-spacing:.035em; text-transform:uppercase; margin-bottom:8px; font-family: Arial, sans-serif; }
     h1 { margin:0 0 8px; font-size: 30px; line-height:1.15; letter-spacing: 0; font-weight:760; }
     h2 { margin:24px 0 10px; font-size: 19px; border-bottom: 1px solid var(--line); padding-bottom: 6px; font-weight:760; }
     h3 { margin:12px 0 8px; font-size: 15px; font-weight:740; }
     p { line-height: 1.65; color: var(--muted); text-align: justify; }
-    code { font-family: "Courier New", monospace; font-size: 12.5px; }
-    .subtitle { color:var(--muted); font-size: 14px; line-height:1.45; }
-    .meta { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-    .metric { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--soft); }
-    .metric .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; font-family: Arial, sans-serif; }
-    .metric .value { font-size:21px; font-weight:760; margin-top:4px; color:var(--ink); }
-    table { width:100%; border-collapse:collapse; margin:8px 0 12px; font-size: 12.5px; }
-    th, td { border:1px solid var(--line); padding:6px 8px; vertical-align:top; }
-    th { width:32%; text-align:left; background:#F3F3F3; }
-    .mini { margin: 4px 0 10px; font-size: 12px; }
-    .mini th { width: 28%; }
-    .grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; align-items:start; }
-    .curveGrid { display:grid; grid-template-columns: 1fr; gap:14px; }
-    .card { border:1px solid var(--line); border-radius:8px; padding:10px; break-inside: avoid; background:#fff; }
-    .chartCard { break-inside:avoid; page-break-inside:avoid; break-before:auto; }
-    .chart { width:100%; height:auto; background:#fff; border:1px solid var(--line); border-radius:8px; }
-    .axis { stroke:#BDBDBD; stroke-width:1; }
-    .gridLine { stroke:#ECECEC; stroke-width:1; }
-    .traceLine { stroke:#A35A2A; stroke-width:1; stroke-dasharray:4 4; }
-    .tracePoint { fill:#FFFFFF; stroke:#A35A2A; stroke-width:1.8; }
-    .traceLabel { fill:#A35A2A; font: 11px Arial, sans-serif; }
-    .line { fill:none; stroke:#4E5D6C; stroke-width:1.8; }
-    .bar { fill:#4E5D6C; }
-    .tick { fill:#666666; font-size:11px; font-family: Arial, sans-serif; }
-    .legend { color:var(--muted); font-size:11.5px; margin-top:6px; line-height:1.5; display:flex; flex-wrap:wrap; gap:8px 14px; }
-    .legendItem { white-space:nowrap; }
-    .note { background:#F5F5F5; border-left:4px solid var(--accent); padding:8px 10px; color:#222222; }
-    .empty { border:1px dashed var(--line); border-radius:8px; padding:18px; color:var(--muted); text-align:center; }
-    .caption { font-size:12px; color:#333; text-align:center; margin-top:8px; font-style:italic; }
-    .specBlock { margin-top:10px; padding:8px 10px; border-left:3px solid var(--accent); background:#F7F7F7; font-size:12.5px; color:#555555; }
-    .formulaGrid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; margin:10px 0 12px; }
-    .formulaBox { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fff; min-height:68px; }
-    .formulaName { font: 700 12px Arial, sans-serif; color:var(--muted); text-transform:uppercase; letter-spacing:.035em; margin-bottom:8px; }
-    .math { font-family: "Times New Roman", Georgia, serif; font-size:18px; color:#222222; }
-    .math i { font-style: italic; }
-    .breakdown { font-size: 13px; }
-    .breakdown th { width:auto; }
-    .breakdown td:last-child { text-align:right; font-variant-numeric: tabular-nums; font-weight:700; }
-    .breakdown .base td { background:#F7F7F7; font-weight:700; }
-    .breakdown .child td:first-child { padding-left:24px; color:var(--muted); }
-    .breakdown .total td { border-top:2px solid var(--ink); font-size:14px; background:#F7F7F7; }
-    .frac { display:inline-flex; flex-direction:column; vertical-align:middle; text-align:center; line-height:1.12; margin:0 4px; }
-    .frac span:first-child { border-bottom:1px solid #222222; padding:0 5px 2px; }
-    .frac span:last-child { padding-top:2px; }
-    @media (max-width: 900px) { .grid, .meta, .formulaGrid { grid-template-columns: 1fr; } .reportLogo { width:150px; margin-bottom:14px; } }
-    @media print {
-        .page { max-width:none; padding:12mm; }
-        .card, .chart { break-inside: avoid; }
-        .page:not(.benchmark-report) table { break-inside:avoid; }
-        .benchmark-report { height:auto; min-height:0; }
-        .benchmark-report section, .benchmark-report .grid, .benchmark-report .card, .benchmark-report table { height:auto; min-height:0; }
-        .benchmark-report .grid { display:block; }
-        .benchmark-report .card { margin:0 0 12px; break-inside:auto; }
-        .benchmark-report table { break-inside:auto; }
-        .chartCard, .benchmark-report .chartCard { break-inside:avoid; page-break-inside:avoid; break-before:auto; }
-    }
+    table { border-collapse: collapse; width:100%; margin:8px 0 14px; font-size: 13px; }
+    th, td { border:1px solid var(--line); padding:7px 8px; vertical-align:top; text-align:left; }
+    th { background:var(--soft); font-weight:700; width:34%; }
+    .meta, .grid, .curveGrid, .formulaGrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+    .metric, .card, .formulaBox { border:1px solid var(--line); padding:12px; background:#fff; }
+    .label, .subtitle, .caption, .note, .empty { color:var(--muted); font-size:12px; }
+    .value { font-size:22px; font-weight:760; margin-top:4px; }
+    .note, .empty { border-left:3px solid var(--accent); background:var(--soft); padding:10px 12px; margin:8px 0 12px; }
+    .chart { width:100%; height:auto; }
+    .axis, .gridline { stroke:#999; stroke-width:1; }
+    .tick { fill:#666; font-size:10px; }
+    .reportLogo { display:block; width:210px; height:auto; object-fit:contain; margin-bottom:0; }
 </style>
 </head>
 <body>
-<main class="page${isBenchmarkMode ? " benchmark-report" : ""}">
+<main class="page">
 <header>
     <div class="reportHeaderTop">
-        <div class="reportHeaderText">
-            <div class="pageHeaderLine">JUNO | ACC Cooling System | Annual PUE Assessment</div>
-            <h1>${esc(reportTitle)}</h1>
-            <div class="subtitle">Project: JUNO</div>
-            <div class="subtitle">Cooling Architecture: ACC + Gas Engine + CDU</div>
-            <div class="subtitle">Scenario: ${esc(reportScenario)}</div>
-            <div class="subtitle">Generated · ${esc(generated)}</div>
-        </div>
+        <img class="reportLogo" src="${SKYVAULT_REPORT_LOGO}" alt="SkyVault" />
     </div>
+    <div class="pageHeaderLine">JUNO | Cooling System | Annual PUE Assessment</div>
+    <h1>${esc(reportTitle)}</h1>
+    <div class="subtitle">Project: JUNO</div>
+    <div class="subtitle">Cooling Architecture: ${esc(coolingSystemDisplay)}</div>
+    <div class="subtitle">Scenario: ${esc(scenarioName)}</div>
+    <div class="subtitle">Generated: ${esc(generated)}</div>
 </header>
-
 <section>
     <h2>1. Executive Summary</h2>
-    ${isBenchmarkMode ? `<p>This assessment evaluates the annual operating performance of the JUNO data center using an hourly weather-driven simulation with the project-specific ACC cooling architecture.</p>` : ""}
-    ${isAccV2DirectMode ? `<div class="note"><b>ACC V2 Direct Mode</b><br>Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` : ""}
-    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Simulation Method</b><br>True EPW × Solver_Curve<br><b>Simulation Basis</b><br>8760-hour Annual Dynamic Simulation</div>` : ""}
-    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Peak Design Condition</b><br>Outdoor Design Dry Bulb: ${reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)}<br>Source: ${esc(peakDesignDisplaySource)}<br>Reference Station: ${esc(peakDesignWeatherStation)}<br>Design Criteria: ${esc(peakDesignDisplayBasis)}</div>` : ""}
-    ${hasExperimentalPeakWarning ? `<div class="note" style="background:#F5F5F5;border-left-color:#7A7A7A;color:#222222;"><b>Warning:</b> Direct hourly ACC power exceeds scenario peak ACC power by more than 10%. Peak Hourly PUE should be reviewed against design intent.</div>` : ""}
-    ${isAnnualBenchmarkMode ? `<div class="note">Peak hourly PUE is not reported for this annual-equivalent assessment because equipment powers are represented as annual-average values rather than hourly dispatch.</div>` : ""}
+    <p>This assessment evaluates annual operating performance using the selected cooling configuration, weather data, equipment curves, and structured report sections returned by the report dispatcher.</p>
     <div class="meta">
         <div class="metric"><div class="label">Annual Average PUE</div><div class="value">${reportValue(annual.annual_average_PUE, "", 3)}</div></div>
-        ${peakPueMetricHtml}
-        ${isConfigurationLibraryAccV2DirectMode ? `<div class="metric"><div class="label">Max Hourly PUE</div><div class="value">${reportValue(peakHourlyPue, "", 3)}</div></div>` : ""}
-        <div class="metric"><div class="label">${isConfigurationLibraryAccV2DirectMode ? "Peak Design Facility Electrical Demand" : "Peak Facility Power"}</div><div class="value">${reportValue(isConfigurationLibraryAccV2DirectMode ? peakDesignDemandKw : peak.peak_total_facility_power_kW, " kW", 0)}</div></div>
-        ${isConfigurationLibraryAccV2DirectMode ? `<div class="metric"><div class="label">Max Hourly Facility Electrical Demand</div><div class="value">${reportValue(maxHourlyDemandKw, " kW", 0)}</div></div>` : ""}
-        <div class="metric"><div class="label">IT Energy</div><div class="value">${reportValue((annual.annual_IT_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
-        <div class="metric"><div class="label">Facility Energy</div><div class="value">${reportValue((annual.annual_facility_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
+        <div class="metric"><div class="label">${esc(peakMetric[0])}</div><div class="value">${reportValue(peakMetric[1], "", 3)}</div></div>
+        <div class="metric"><div class="label">Annual Facility Energy</div><div class="value">${reportValue((annual.annual_facility_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
     </div>
     <table><tbody>${tableRows([
-        ["Site Location", esc(place)],
-        ...manifestRows,
-        ...(isBenchmarkMode ? [
-            ["Cooling Architecture", "ACC + Gas Engine + CDU"],
-            ["Calculation Method", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Annual-equivalent energy performance model")],
-            ...(isExperimentalHourlyMode ? [
-                ["Maximum ACC Power", reportValue(annual.max_acc_power_kW, " kW", 1)],
-                ["Scenario Peak ACC Power", reportValue(annual.scenario_peak_acc_power_kW, " kW", 1)],
-                ["ACC Peak / Scenario Peak", reportValue(annual.acc_peak_to_scenario_peak_ratio, "×", 3)]
-            ] : []),
-            ["Scenario", esc(benchmark.scenario || output.project?.scenario_name || "N/A")],
-            ["Active Energy Modules / Engines", esc(output.project?.active_units ?? "N/A")],
-            ["Annual IT Load Factor", reportValue(benchmark.it_annual_load_factor, "", 3)],
-            ...(isExperimentalHourlyMode ? [
-                ["ACC Curve Source", esc(annual.acc_curve_source || benchmark.acc_curve_source || "N/A")],
-                ["External Annual Adjustment Applied", annual.acc_annual_calibration_applied === false ? "No" : "N/A"]
-            ] : (isConfigurationLibraryAccV2DirectMode ? [
-                ["ACC V2 Direct Mode", "Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup."],
-                ["Simulation Method", "True EPW × Solver_Curve"],
-                ["Simulation Basis", "8760-hour Annual Dynamic Simulation"],
-                ["ACC Curve Source", esc(annual.acc_curve_source || "N/A")]
-            ] : [["ACC Annual Weather Factor", reportValue(benchmark.acc_annual_temperature_factor, "", 9)]])),
-            ["IT Efficiency", percentText(benchmark.it_efficiency, 4)],
-            ["MEP Efficiency", percentText(benchmark.mep_efficiency, 4)]
-        ] : []),
-        ["Design IT Load", projectInfo.capacityMw !== null ? `${reportValue(projectInfo.capacityMw, " MW", 1)}` : "N/A"],
-        ["Project Stage", esc(projectInfo.stage || "N/A")],
-        ["Minimum Hourly PUE", reportValue(annual.min_hourly_PUE, "", 3)],
-        ["Maximum Hourly PUE", reportValue(annual.max_hourly_PUE, "", 3)],
-        ...(isConfigurationLibraryAccV2DirectMode ? [
-            ["Peak Design PUE", reportValue(peak.peak_PUE, "", 3)],
-            ["Peak Design Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
-            ["Max Hourly Facility Electrical Demand", reportValue(maxHourlyDemandKw, " kW", 0)],
-            ["Peak Design Condition", esc(peakDesignDisplaySource)],
-            ["Reference Station", esc(peakDesignWeatherStation)],
-            ["Peak Design Temperature Basis", esc(peakDesignDisplayBasis)],
-            ["Peak Design Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " deg C", 1)],
-            ["Peak Design IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
-            ["Peak Design Cooling Load", reportValue(peak.peak_design_cooling_load_kW, " kW", 1)]
-        ] : []),
-        ...(isConfigurationLibraryAccV2DirectMode ? [] : [["Peak Facility Hour", esc(peak.peak_hour_index ?? "N/A")]])
+        ["Site Location", esc(projectInfo.location || weatherSource.project_location || "N/A")],
+        ["Cooling System Type", esc(coolingSystemDisplay)],
+        ["Cooling Architecture", esc(solverTopology)],
+        ["Report Configuration", esc(report.profile_id || "generic_pue")],
+        ["Weather Source", esc(weatherSource.source || "N/A")]
     ])}</tbody></table>
 </section>
-
 <section>
-    <h2>2. Climate Data</h2>
-    ${isAnnualBenchmarkMode ? `<div class="note">For this annual-equivalent assessment, the weather profile is represented through an annual weather factor rather than direct hourly dispatch.</div>` : ""}
-    ${isExcelReplicatedHourlyMode ? `<div class="note">Hourly dry-bulb temperature is evaluated using the project-specific ACC hourly performance model.</div>` : ""}
-    ${isExperimentalHourlyMode ? `<div class="note">Hourly outdoor dry-bulb temperature and hourly load ratio are applied directly to the ACC Solver_Curve.</div>` : ""}
-    ${isConfigurationLibraryAccV2DirectMode ? `<div class="note"><b>Annual Simulation Basis</b><br>Weather Source: EPW Weather File<br>Simulation Method: True EPW × Solver_Curve<br>Simulation Basis: 8760-hour Annual Dynamic Simulation</div>` : ""}
+    <h2>2. Weather and Input Data</h2>
     <div class="grid">
+        <div class="card"><h3>Weather Summary</h3><table><tbody>${tableRows([
+            ["Dry Bulb Average", reportValue(drySummary?.avg, " deg C", 1)],
+            ["Dry Bulb Peak", reportValue(drySummary?.max, " deg C", 1)],
+            ["Dry Bulb Minimum", reportValue(drySummary?.min, " deg C", 1)]
+        ])}</tbody></table></div>
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
-            ["Project Location", esc(weatherSource.project_location || projectInfo.location || "N/A")],
-            ["Project Coordinates", esc(projectCoordinates)],
-            ["Weather Source", esc(weatherSource.source || "N/A")],
-            ["Weather Station", esc(weatherSource.matched_station || weatherSource.station || "N/A")],
-            ["Distance to Weather Station", weatherSource.distance_km !== null && weatherSource.distance_km !== undefined ? `${reportValue(weatherSource.distance_km, " km", 1)}` : "N/A"],
-            ["Weather Data Period", esc(weatherSource.weather_period || weatherPeriod || "N/A")],
-            ["EPW File", esc(weatherSource.epw_file || "N/A")],
-            ["Location", esc(weatherSource.location || "N/A")],
-            ["Weather Hours", esc(weatherSource.weather_hours ?? "N/A")]
-        ])}</tbody></table></div>
-        ${isConfigurationLibraryAccV2DirectMode ? `<div class="card"><h3>Peak Design Condition</h3><table><tbody>${tableRows([
-            ["Outdoor Dry Bulb", reportValue(peak.peak_design_outdoor_dry_bulb_C, " °C", 1)],
-            ["Source", esc(peakDesignDisplaySource)],
-            ["Reference Station", esc(peakDesignWeatherStation)],
-            ["Design Criteria", esc(peakDesignDisplayBasis)],
-            ["IT Load", reportValue(peak.peak_design_it_load_kW, " kW", 0)],
-            ["Facility Electrical Demand", reportValue(peakDesignDemandKw, " kW", 0)],
-            ["Peak Design PUE", reportValue(peak.peak_PUE, "", 3)]
-        ])}</tbody></table></div>` : ""}
-    </div>
-</section>
-
-<section>
-    <h2>3. Climate Temperature Profile</h2>
-    ${tempDistribution ? `
-        <div class="grid">
-            <div class="card"><h3>Dry Bulb Summary</h3><table><tbody>${tableRows([
-                ["Minimum Dry Bulb", reportValue(tempDistribution.minTemp, " °C", 1)],
-                ["Average Dry Bulb", reportValue(tempDistribution.avgTemp, " °C", 1)],
-                ["Maximum Dry Bulb", reportValue(tempDistribution.maxTemp, " °C", 1)],
-                ["Peak Dry Bulb Time", esc(tempDistribution.peakTime.label)],
-                ["Peak Dry Bulb Hour of Year", esc(tempDistribution.hourOfYear)],
-                ["Distribution Total Hours", esc(tempDistribution.totalHours)]
-            ])}</tbody></table></div>
-            ${hasTemperatureBins ? `<div class="card"><h3>Temperature Bin Hours</h3>${temperatureDistributionTableHtml(tempDistribution)}</div>` : ""}
-        </div>
-    ` : `<div class="empty">Temperature distribution unavailable: weather data not loaded.</div>`}
-</section>
-
-<section>
-    <h2>4. Methodology</h2>
-    ${isBenchmarkMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The assessment uses an hourly weather-driven simulation. Outdoor dry-bulb temperature is applied to the project-specific ACC hourly performance model, while scenario equipment powers and electrical losses are evaluated consistently across the annual operating profile." : (isAccV2DirectMode ? "The assessment uses Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup. The simulation method is True EPW × Solver_Curve and the simulation basis is an 8760-hour Annual Dynamic Simulation." : "The annual assessment uses scenario equipment powers, annual weather factors, and project electrical path efficiencies to evaluate annual facility energy performance.")}</p>
-        <div class="card">
-            <h3>ACC Unit Architecture</h3>
-            <p><b>${esc(output.project?.active_units ?? "N/A")} active energy modules / ACC units</b> support the ${esc(reportScenario)} scenario. ${isExcelReplicatedHourlyMode ? "Hourly ACC operation follows the project-specific weather-driven performance model." : (isAccV2DirectMode ? "ACC operation follows direct Configuration Library Solver_Curve lookup for every hour. Indoor IT-side equipment uses normal indoor unit count and IT-load-based operation." : "The annual-equivalent case uses scenario equipment powers and annual factors rather than detailed hourly dispatch.")}</p>
-            <table><tbody>${tableRows([
-                ["ACC Unit Capacity", `${reportValue(context.input?.cooling_unit_capacity_mw, " MW", 1)}`],
-                ["Active ACC Units", esc(output.project?.active_units ?? "N/A")],
-            ["Calculation Method", isAccV2DirectMode ? "Configuration Library Solver_Curve direct hourly simulation" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : "Annual-equivalent energy performance model")],
-                ["Hourly Dispatch", isAnnualBenchmarkMode ? "Not applied in annual-equivalent assessment" : "Hourly weather-driven simulation"]
-            ])}</tbody></table>
-        </div>
-        <h3>Calculation Methodology</h3>
-        <table><tbody>${tableRows([
-            ["ACC Average Power", isExcelReplicatedHourlyMode ? "<code>Hourly ACC performance profile integrated over the annual weather year</code>" : (isAccV2DirectMode ? "<code>sum(hourly ACC Solver_Curve power) / annual hours</code>" : "<code>Scenario peak ACC power × annual weather factor</code>")],
-            ["Other Equipment", "<code>Scenario equipment power × annual IT load factor</code>"],
-            ["Electrical Distribution Loss", "<code>Load / path efficiency - load</code>"],
-            ["Annual PUE", "<code>Average facility power / Average IT power</code>"]
-        ])}</tbody></table>
-    ` : `
-    <p>${isConfigurationLibraryAccV2DirectMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines Total Cooling Load, EPW dry-bulb temperature, Configuration Library Solver_Curve ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses in an 8760-hour Annual Dynamic Simulation." : (isAccMode ? "The dynamic ACC calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, ACC power, CHW pump power, CDU / RTC / MAU equipment power, engine radiator power, and electrical distribution losses." : "The annual calculation uses <code>compute_pue_project(dc)</code>. Each hour combines IT load, outdoor dry bulb temperature, equipment curves, electrical distribution losses, cooling power, pump/MAU power, and RTC / CDU / equipment load where configured.")}</p>
-    <div class="note">Solar Heat Gain and Other Auxiliary Heat Gains are included in Total Cooling Load for Configuration Library ACC V2 direct runs.</div>
-    ${coolingUnitInfo ? `
-        <div class="card">
-            <h3>${isAccMode ? "ACC Unit Architecture" : "Cooling Unit Architecture"}</h3>
-            <p>${isAccMode ? `The model uses <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} ACC units` : "N/A")}</b>. Dynamic mode evaluates ACC operation hour by hour from ambient dry-bulb temperature and required cooling capacity per ACC unit.` : `The model assumes <b>${esc(coolingUnitInfo.count !== null && coolingUnitInfo.capacityKw !== null ? `${fmtInteger(coolingUnitInfo.count)} × ${mwTextFromKw(coolingUnitInfo.capacityKw)} cooling units (total cooling capacity = ${mwTextFromKw(coolingUnitInfo.totalCapacityKw)})` : "N/A")}</b>. All chiller and dry cooler units are assumed to run throughout the year with equal load sharing. Unit load ratio is calculated as required cooling capacity divided by installed cooling unit capacity. N+1 or staged dispatch control is not included in this version.`}</p>
-            <table><tbody>${tableRows([
-                [isAccMode ? "ACC Unit Capacity" : "Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.capacityKw))],
-                [isAccMode ? "ACC Unit Count" : "Cooling Unit Count", coolingUnitInfo.count !== null ? esc(fmtInteger(coolingUnitInfo.count)) : "N/A"],
-                [isAccMode ? "Total ACC Capacity" : "Total Cooling Unit Capacity", esc(mwTextFromKw(coolingUnitInfo.totalCapacityKw))],
-                ["Dispatch Strategy", "All units running"],
-                ["Load Sharing", "Equal load sharing across all cooling units"],
-                ["Unit Load Ratio", "<code>Required Cooling Capacity / Installed Cooling Unit Capacity</code>"],
-                ...(isAccMode ? [["ACC Power Lookup Basis", "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit"]] : []),
-                ["N+1 / Staged Dispatch", "Not included"]
-            ])}</tbody></table>
-        </div>
-    ` : ""}
-    <h3>Mathematical Framework</h3>
-    ${isAccMode ? `<table><tbody>${tableRows([
-        ["Annual PUE", "<code>Annual facility energy / Annual IT energy</code>"],
-        ["ACC Power", "Dynamic hourly ACC model"],
-        ["Electrical Distribution Loss", "<code>Load / path efficiency - load</code>"]
-    ])}</tbody></table>` : `${formulasHtml()}
-    <table><tbody>${tableRows([
-        ["PUE Definition", "<code>PUE = P_facility / P_IT</code>"],
-        ["Cooling Power", "<code>P_cooling = P_chiller + P_dry_cooler</code> plus pump/fan terms reported separately where available"],
-        ["Chiller COP", "<code>COP = Q_cooling / P_compressor</code>"],
-        ["Dry Cooler Approach", "<code>T_LWT = T_ambient + Approach</code> when no explicit leaving-water curve is supplied"],
-        ["Not Currently Modeled", "Cooling mode classification and free-cooling hours"]
-    ])}</tbody></table>`}
-    `}
-</section>
-
-<section>
-    <h2>5. Input Datasets and Weather Analysis</h2>
-    <div class="grid">
-        <div class="card"><h3>IT Load Profile</h3><table><tbody>${tableRows([
-            ["Source File", esc(standardDataFiles.itLoad?.source_file || "N/A")],
-            ["Points", esc(it ? it.length : 0)],
-            ["Average", reportValue(itSummary?.avg, " kW", 0)],
-            ["Peak", reportValue(itSummary?.max, " kW", 0)],
-            ["Minimum", reportValue(itSummary?.min, " kW", 0)]
-        ])}</tbody></table></div>
-        <div class="card"><h3>Weather Profile</h3><table><tbody>${tableRows([
-            ["Source File", esc(weather.source_file || "N/A")],
-            ["Source", esc(weather.source_format || "N/A")],
-            ["Weather Data Period", esc(weatherPeriod || "N/A")],
-            ["Dry Bulb Average", reportValue(drySummary?.avg, " °C", 1)],
-            ["Dry Bulb Peak", reportValue(drySummary?.max, " °C", 1)],
-            ["Dry Bulb Minimum", reportValue(drySummary?.min, " °C", 1)],
-            ["Relative Humidity Average", reportValue(rhSummary?.avg, "%", 0)],
-            ["Annual GHI", ghiSummary ? `${reportValue(ghiSummary.sum / 1000, " kWh/m²", 0)}` : "N/A"],
-            ["Average Wind Speed", reportValue(windSummary?.avg, " m/s", 1)]
+            ["Source", esc(weatherSource.source || "N/A")],
+            ["EPW File", esc(weatherSource.epw_file || weather.source_file || "N/A")],
+            ["Weather Data Period", esc(getWeatherPeriod(weather) || "N/A")]
         ])}</tbody></table></div>
     </div>
-    <h3>Extended EPW Data Views</h3>
+    ${tempDistribution ? temperatureDistributionTableHtml(tempDistribution) : `<div class="empty">Temperature distribution unavailable.</div>`}
     ${epwChartSection(weatherData)}
 </section>
-
 <section>
-    <h2>6. Equipment Curve Register</h2>
-    ${isAccMode ? `
-        <p>${isExcelReplicatedHourlyMode ? "The hourly ACC performance profile is based on the project-specific cooling architecture and annual weather data." : (isAccV2DirectMode ? "ACC Solver_Curve points define direct hourly ACC power from EPW dry-bulb temperature and required cooling capacity per ACC unit." : (isAnnualBenchmarkMode ? "Detailed dynamic equipment-curve plots are not used in the annual-equivalent assessment. ACC power is represented through scenario peak ACC power and the annual weather factor." : "Configuration Library ACC equipment data is used by the dynamic hourly calculation."))}</p>
-        <table><tbody>${tableRows([
-            ["Configuration Source", "Configuration Library — ACC_1.5MW_GASENGINE_CDU"],
-            ["Simulation Method", isAccV2DirectMode ? "True EPW × Solver_Curve" : (isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
-            ["Simulation Basis", isAccV2DirectMode ? "8760-hour Annual Dynamic Simulation" : (isAnnualBenchmarkMode ? "ACC annual weather factor" : "Hourly weather and ACC model")],
-            ["ACC Power Basis", isExcelReplicatedHourlyMode ? "Project-specific hourly ACC performance model" : (isAccV2DirectMode ? "Ambient Dry-Bulb Temperature + Required Cooling Capacity per ACC Unit" : (isAnnualBenchmarkMode ? "Scenario peak ACC power" : "Dynamic ACC calculation"))],
-            ["Weather Representation", isAnnualBenchmarkMode ? "Annualized weather factor" : "Hourly weather data"]
-        ])}</tbody></table>
-    ` : `
-    <p>All imported equipment parameter curves are represented below in a common technical format. These are the curve inputs available to the frontend and solver workflow at report generation time.</p>
-    ${curveRegisterRows.length ? `
-        <table>
-            <thead><tr><th>Category</th><th>Curve ID</th><th>Source File</th><th>Domain / Range</th><th>Points</th></tr></thead>
-            <tbody>${curveRegisterRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
-        </table>
-        <div class="curveGrid">${curveGroups.map((group, index) => `
-            <div class="card">
-                <h3>Figure ${index + 1}. ${esc(group.category)} input curves</h3>
-                ${svgCurveGroupChart(group)}
-                ${equipmentSpecHtml(group.category)}
-                <div class="caption">Input equipment curve set from ${esc(group.sourceFile)}. Curves from the same input table are plotted together.</div>
-            </div>
-        `).join("")}</div>
-    ` : `<div class="empty">No equipment curves were imported.</div>`}
-    `}
+    <h2>3. Cooling System Performance</h2>
+    ${performanceCards.length ? `<h3>Equipment Performance Summary</h3><div class="grid">${performanceCards.join("")}</div>` : ""}
+    <h3>Cooling Load Breakdown</h3>
+    <table><tbody>${tableRows([
+        ["Annual IT Load", reportValue(coolingLoad.annual_it_load_kWh, " kWh", 3)],
+        ["Annual Solar Heat Gain", reportValue(coolingLoad.annual_solar_heat_gain_kWh, " kWh", 3)],
+        ["Annual Other Auxiliary Heat Gain", reportValue(coolingLoad.annual_other_auxiliary_heat_gain_kWh, " kWh", 3)],
+        ["Annual Cooling Load", reportValue(coolingLoad.annual_cooling_load_kWh, " kWh", 3)]
+    ])}</tbody></table>
+    ${annualEnergyBreakdown.warnings?.length ? `<div class="note">${annualEnergyBreakdown.warnings.map(item => esc(item)).join("<br>")}</div>` : ""}
 </section>
-
 <section>
-    <h2>7. Annual Simulation Results</h2>
-    ${isAccMode ? `
-    ${isBenchmarkMode ? `<h3>ACC Cooling System Components</h3>
-    <table>
-        <thead><tr><th>Component</th><th>Average Power (kW)</th><th>Annual Energy (kWh)</th></tr></thead>
-        <tbody>${benchmarkComponentRows.map(([label, averageKw, annualKwh]) => `<tr><td>${esc(label)}</td><td>${reportValue(averageKw, "", 3)}</td><td>${reportValue(annualKwh, "", 0)}</td></tr>`).join("")}</tbody>
-    </table>` : ""}
-    <table><tbody>${tableRows([
-        ["Annual PUE", reportValue(annual.annual_average_PUE, "", 9)],
-        ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
-        ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
-        ["Annual Cooling System Energy", reportValue(annual.annual_total_cooling_system_energy_kWh, " kWh", 0)],
-        ["Annual ACC Energy", reportValue(annual.annual_acc_energy_kWh, " kWh", 0)],
-        ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
-        ["Annual Indoor Equipment Energy", reportValue(annual.annual_indoor_equipment_energy_kWh || annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
-        ["Annual Engine Radiator Energy", reportValue(annual.annual_engine_radiator_energy_kWh, " kWh", 0)],
-        ["Annual IT Electrical Distribution Loss", reportValue(annual.annual_it_electrical_loss_kWh, " kWh", 0)],
-        ["Annual MEP Electrical Distribution Loss", reportValue(annual.annual_mep_electrical_loss_kWh, " kWh", 0)],
-        ...accPerformanceRows
-    ])}</tbody></table>
-    ` : `
-    <table><tbody>${tableRows([
-        ["Annual IT Energy", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
-        ["Annual Facility Energy", reportValue(annual.annual_facility_energy_kWh, " kWh", 0)],
-        ["Annual Cooling System Energy", reportValue(annual.annual_total_cooling_system_energy_kWh || 0, " kWh", 0)],
-        ["Annual Chiller + Dry Cooler Energy", reportValue(annual.annual_chiller_plus_dry_cooler_energy_kWh, " kWh", 0)],
-        ["Annual Chiller Energy", reportValue(annual.annual_chiller_energy_kWh, " kWh", 0)],
-        ["Annual ACC Energy", reportValue(annual.annual_acc_energy_kWh, " kWh", 0)],
-        ...accPerformanceRows,
-        ["ACC Curve Source", esc(annual.acc_curve_source || "N/A")],
-        ["Annual Engine Output", reportValue(annual.annual_engine_output_kWh, " kWh", 0)],
-        ["Annual Engine Fuel Input", reportValue(annual.annual_engine_fuel_input_kWh, " kWh", 0)],
-        ["Annual Engine Waste Heat", reportValue(annual.annual_engine_waste_heat_kWh, " kWh", 0)],
-        ["Average Engine Efficiency", annual.average_engine_efficiency != null ? percentText(annual.average_engine_efficiency) : "N/A"],
-        ["Annual Engine Radiator Energy", reportValue(annual.annual_engine_radiator_energy_kWh, " kWh", 0)],
-        ["Max Engine Radiator Power", reportValue(annual.max_engine_radiator_power_kW, " kW", 1)],
-        ["Radiator Curve Source", esc(annual.engine_radiator_curve_source || "N/A")],
-        ["Annual Dry Cooler Energy", reportValue(annual.annual_dry_cooler_energy_kWh, " kWh", 0)],
-        ["Annual Pump Energy", reportValue(annual.annual_pump_energy_kWh, " kWh", 0)],
-        ["Annual MAU Energy", reportValue(annual.annual_terminal_fan_energy_kWh, " kWh", 0)],
-        ["Annual CDU Energy", reportValue(annual.annual_cdu_energy_kWh, " kWh", 0)],
-        ["Annual RTC Energy", reportValue(annual.annual_rtc_energy_kWh, " kWh", 0)],
-        ["Annual MAU Energy", reportValue(annual.annual_mau_energy_kWh, " kWh", 0)],
-        ["Annual White Space Equipment Energy", reportValue(annual.annual_white_space_equipment_energy_kWh, " kWh", 0)],
-        ["Annual Electrical Distribution Loss", reportValue(annual.annual_electrical_loss_kWh, " kWh", 0)],
-        ["Annual Other Electrical Auxiliary Energy", reportValue(annual.annual_auxiliary_energy_kWh, " kWh", 0)]
-    ])}</tbody></table>
-    `}
+    <h2>4. Simulation Methodology</h2>
+    <p>Hourly cooling loads combine IT load, solar heat gain, and other auxiliary heat gain. Equipment power is obtained from the selected Configuration Library performance lookup, and annual PUE is calculated from annual facility and IT energy.</p>
+    ${formulasHtml()}
+</section>
+<section>
+    <h2>5. Annual Performance Results</h2>
     <div class="grid">
-        <div class="card">
-            <h3>PUE Contribution Breakdown</h3>
-            <table class="breakdown">
-                <thead><tr><th>Component</th><th>pPUE Contribution</th></tr></thead>
-                <tbody>${pueContributionRows.map(row => `
-                    <tr class="${esc(row.css || "")}">
-                        <td>${esc(row.label)}</td>
-                        <td>${pueContributionText(row.value, row.signed)}</td>
-                    </tr>
-                `).join("")}</tbody>
-            </table>
-        </div>
-        <div class="card">
-            <h3>Key Findings</h3>
-            ${isBenchmarkMode ? `
-                <p>${isExcelReplicatedHourlyMode ? "ACC power is calculated hour by hour using the project-specific ACC performance model; supporting equipment follows the selected scenario power basis." : "ACC, CHW pump, CDU / RTC / MAU equipment, and engine radiator energy are calculated from scenario peak values and annual factors."}</p>
-                <p>Electrical losses use the project IT and MEP path efficiencies.</p>
-            ` : `
-                <p>Cooling System contributes <b>${esc(percentText(contributionSummary.coolingShare))}</b> of the non-IT PUE overhead${contributionSummary.largestDriver && contributionSummary.largestDriver.key === "cooling" ? " and is the largest driver of annual PUE" : ""}.</p>
-                <p>Electrical losses contribute <b>${esc(percentText(contributionSummary.electricalShare))}</b> of the non-IT PUE overhead.</p>
-                <p>Other electrical auxiliary loads contribute <b>${esc(percentText(contributionSummary.auxiliaryShare))}</b> of the non-IT PUE overhead.</p>
-            `}
-            <table><tbody>${tableRows([
-                ["Non-IT PUE Overhead", contributionSummary.nonItPue > 0 ? reportValue(contributionSummary.nonItPue, "", 3) : "N/A"],
-                ["Largest PUE Driver", esc(contributionSummary.largestDriver ? contributionSummary.largestDriver.label : "N/A")]
-            ])}</tbody></table>
-        </div>
-        <div class="card">
-            <h3>Breakdown Basis</h3>
-            <table><tbody>${tableRows(isBenchmarkMode ? [
-                ["Base IT PUE", "1.000"],
-                ["ACC pPUE", "<code>annual_acc_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Pump pPUE", "<code>annual_pump_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Indoor Equipment pPUE", "<code>annual_indoor_equipment_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Engine Radiator pPUE", "<code>annual_engine_radiator_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Electrical Distribution Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
-                ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
-            ] : [
-                ["Base IT PUE", "1.000"],
-                ["Cooling System pPUE", "<code>annual_total_cooling_system_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Cooling System Includes", "ACC + CHW Pump + Indoor Equipment + Engine Radiator"],
-                ["Electrical Distribution Loss pPUE", "<code>annual_electrical_loss_kWh / annual_IT_energy_kWh</code>"],
-                ["Other Electrical Auxiliary pPUE", "<code>annual_auxiliary_energy_kWh / annual_IT_energy_kWh</code>"],
-                ["Reported Annual PUE", reportValue(annual.annual_average_PUE, "", 3)]
-            ])}</tbody></table>
-            <div class="note">This section summarizes annual result components without overwriting <code>annual_average_PUE</code>.</div>
-        </div>
+        <div class="card"><h3>PUE Contribution Breakdown</h3><table class="breakdown"><thead><tr><th>Component</th><th>pPUE Contribution</th></tr></thead><tbody>${
+            [["IT Base", 1], ...Object.entries(annualEnergyBreakdown.components || {}).map(([key, data]) => [`${reportKeyLabel(key)} pPUE`, (Number(data?.energy_kWh) || 0) / (Number(annual.annual_IT_energy_kWh) || 1)]), ["Annual PUE", annual.annual_average_PUE]]
+                .map(([label, value]) => `<tr><td>${esc(label)}</td><td>${pueContributionText(value, label !== "IT Base" && label !== "Annual PUE")}</td></tr>`).join("")
+        }</tbody></table></div>
+        <div class="card"><h3>Key Findings</h3><p>Cooling, electrical, auxiliary, and future equipment contributions are derived from reported component rows.</p><table><tbody>${tableRows([
+            ["Non-IT PUE Overhead", reportValue((Number(annual.annual_average_PUE) || 0) - 1, "", 3)],
+            ["Reported Components", esc(Object.keys(annualEnergyBreakdown.components || {}).map(reportKeyLabel).join(", ") || "N/A")]
+        ])}</tbody></table></div>
     </div>
-    ${resultChartCards.length ? `<div class="grid">${resultChartCards.map(([title, chart]) => `
-        <div class="card"><h3>${esc(title)}</h3>${chart}</div>
-    `).join("")}</div>` : ""}
+    ${annualResultCharts.length ? `<div class="grid">${annualResultCharts.map(([title, chart]) => `<div class="card"><h3>${esc(title)}</h3>${chart}</div>`).join("")}</div>` : ""}
 </section>
-
 <section>
-    <h2>8. Engineering Discussion</h2>
-    <p>${isBenchmarkMode
-        ? (isExcelReplicatedHourlyMode
-            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> using the project-specific hourly ACC performance model. Hourly component powers and PUE are derived from the selected scenario equipment powers and electrical-loss methodology.`
-            : (isExperimentalHourlyMode
-            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on direct hourly ACC Solver_Curve lookup using EPW dry-bulb temperature and hourly load ratio. ACC annual energy is calculated as the sum of hourly ACC power with no external annual adjustment.`
-            : (isConfigurationLibraryAccV2DirectMode
-            ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation with an 8760-hour Annual Dynamic Simulation basis.`
-            : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on the annual-equivalent assessment method. ACC power is calculated from scenario peak ACC power multiplied by the annual weather factor. CHW pump, CDU / RTC / MAU equipment, and engine radiator powers are calculated using the same annual-load-factor method. Electrical distribution losses are calculated from the project IT and MEP efficiency assumptions.`)))
-        : (isConfigurationLibraryAccV2DirectMode
-        ? `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b> and is based on True EPW × Solver_Curve ACC calculation with an 8760-hour Annual Dynamic Simulation basis.`
-        : `The computed annual average PUE is <b>${reportValue(annual.annual_average_PUE, "", 3)}</b>. Cooling performance should be interpreted against outdoor dry bulb conditions and the supplied COP/dry-cooler curves. Free-cooling and hybrid-cooling hour counts are not reported as calculated KPIs because the current solver does not explicitly classify operating modes.`)}</p>
-    <h3>Cooling Load Components</h3>
-    <table><tbody>${tableRows([
-        ["Annual IT Load", reportValue(annual.annual_IT_energy_kWh, " kWh", 0)],
-        ["Annual Solar Heat Gain", reportValue(annual.annual_solar_heat_gain_kWh, " kWh", 0)],
-        ["Annual Other Auxiliary Heat Gains", reportValue(annual.annual_other_auxiliary_heat_gain_kWh, " kWh", 0)],
-        ["Annual Cooling Load", reportValue(annual.annual_cooling_load_kWh, " kWh", 0)]
-    ])}</tbody></table>
-    <h3>Input Assumptions</h3>
-    <table><tbody>${tableRows([
-        ["Solar Heat Gain Max", reportValue(heatGains.solarHeatGainMaxKw, " kW", 1)],
-        ["Other Auxiliary Heat Gains", reportValue(heatGains.otherAuxiliaryHeatGainKw, " kW", 1)]
-    ])}</tbody></table>
-    <table><tbody>${tableRows(isBenchmarkMode ? [
-        ["Hourly Dispatch Classification", isExcelReplicatedHourlyMode ? "Hourly weather-driven simulation with derived component powers" : (isExperimentalHourlyMode ? "Configuration Library Solver_Curve direct hourly simulation" : "Not applicable in annual-equivalent assessment")]
-    ] : [
-        ["Free Cooling Hours", "Not modeled in current solver"],
-        ["Mechanical Cooling Hours", "Not modeled in current solver"]
-    ])}</tbody></table>
+    <h2>6. Operating Characteristics</h2>
+    ${operatingCharts.length ? `<div class="grid">${operatingCharts.map(([title, chart]) => `<div class="card"><h3>${esc(title)}</h3>${chart}</div>`).join("")}</div>` : ""}
 </section>
-
 <section>
-    <h2>9. Conclusion</h2>
-    <p>This report provides a transparent annual PUE assessment based on the currently loaded input datasets and solver outputs. The ACC model directly evaluates hourly equipment performance from manufacturer Solver_Curve data. Values that are not produced by the solver are explicitly marked as contextual or not modeled.</p>
+    <h2>7. Engineering Conclusion</h2>
+    <div class="note"><b>${esc(engineeringConclusion.status || "WARNING")}</b><br>${esc(engineeringConclusion.text || "Cooling capacity margin is limited under selected scenario.")}</div>
+    <p>Values not produced by the solver are explicitly marked as contextual or not modeled.</p>
+</section>
+<section>
+    <h2>Appendix A: Equipment Curve Register</h2>
+    <p>Imported equipment parameter curves are retained here for technical traceability.</p>
+    ${libraryCurveRows.length ? `<table><thead><tr><th>Equipment</th><th>Curve Source</th><th>Curve Type</th><th>Model Basis</th></tr></thead><tbody>${libraryCurveRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`
+    : (importedCurveRows.length ? `<table><thead><tr><th>Category</th><th>Curve ID</th><th>Source File</th><th>Domain / Range</th><th>Points</th></tr></thead><tbody>${importedCurveRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "")}
+    ${curveGroups.length ? `<div class="curveGrid">${curveGroups.map((group, index) => `<div class="card"><h3>Figure A-${index + 1}. ${esc(group.category)} input curves</h3>${svgCurveGroupChart(group)}<div class="caption">Input equipment curve set from ${esc(group.sourceFile)}.</div></div>`).join("")}</div>` : ""}
 </section>
 </main>
 </body>
 </html>`;
+}
+
+function buildLegacyHtmlReport(context) {
+    return buildHtmlReportFromSections(context);
 }
 
 function exportHtmlReport() {
@@ -4627,6 +4681,10 @@ function isConfigurationManifestRunnable(manifest) {
         && Boolean(topology.adapter);
 }
 
+function configurationLibraryLoadMode(manifest) {
+    return manifest?.solver_topology === "acc_gas_engine_cdu" ? "legacy" : "manifest";
+}
+
 async function loadConfigurationLibraryCatalog() {
     const status = document.getElementById("configurationLibraryStatus");
     const select = document.getElementById("configurationLibrarySelect");
@@ -4708,7 +4766,10 @@ function roleValueFromManifest(manifest, roleName, required = true) {
 }
 
 function equipmentRoleFamily(equipmentId) {
-    return equipmentCurveFamily(resolveFrontendEquipmentId(equipmentId));
+    const family = equipmentCurveFamily(resolveFrontendEquipmentId(equipmentId));
+    if (family.includes("CHILLER")) return "CHILLER";
+    if (family === "DRYCOOLER" || family.includes("DRY_COOLER")) return "DRY_COOLER";
+    return family;
 }
 
 function resolveEquipmentRoleIdFromMapping(manifest, roleName, mapping, required = true) {
@@ -4898,12 +4959,119 @@ async function fetchResolvedConfigurationEquipmentWorkbook(configurationBase, ra
     throw new Error(errors.join("; "));
 }
 
+async function loadConfigurationEquipmentEntries(configurationName, manifest) {
+    const base = encodeURIComponent(configurationName);
+    const equipmentLoadIds = manifestEquipmentRoleIds(manifest);
+    const equipmentRequests = equipmentLoadIds.map(async equipmentId => {
+        const resolvedId = resolveFrontendEquipmentId(equipmentId);
+        const packagePath = `equipment/${resolvedId}/${resolvedId}.xlsx`;
+        try {
+            const fetched = await fetchResolvedConfigurationEquipmentWorkbook(base, equipmentId);
+            const sheets = fetched.sheets;
+            const equipmentMetadata = await fetchConfigurationLibraryJson(`${configurationName}/equipment/${fetched.sourceEquipmentId}/equipment_metadata.json`).catch(() => null);
+            const curveNames = ["Solver_Curve", "Solver_Curve_Normal", "Solver_Curve_Failure"].filter(name => sheets[name]);
+            const information = librarySheetKeyValues(sheets.Information);
+            const metadata = librarySheetKeyValues(sheets.Metadata);
+            const validation = librarySheetKeyValues(sheets.Validation);
+            const equipmentType = information["Equipment Type"] || metadata.equipment_type || equipmentMetadata?.equipment_type || null;
+            const isElectricalPath = resolvedId.startsWith("ELECTRICAL_DISTRIBUTION") || String(equipmentType || "").toLowerCase() === "electrical distribution";
+            let electricalPath = null;
+            if (isElectricalPath) {
+                const efficiencies = Object.fromEntries((sheets.Solver || []).map(row => [String(row.Path || "").toUpperCase(), Number(row.overall_efficiency)]));
+                electricalPath = {
+                    it_efficiency: Number.isFinite(efficiencies.IT) ? efficiencies.IT : null,
+                    mep_efficiency: Number.isFinite(efficiencies.MEP) ? efficiencies.MEP : null
+                };
+            }
+            const electricalPathFound = electricalPath && electricalPath.it_efficiency !== null && electricalPath.mep_efficiency !== null;
+            return [fetched.resolvedId, {
+                equipment_id: fetched.resolvedId,
+                source_equipment_id: fetched.rawEquipmentId,
+                source_workbook_equipment_id: fetched.sourceEquipmentId,
+                equipment_type: equipmentType,
+                package_path: fetched.packagePath,
+                status: electricalPathFound ? "Electrical Path Found" : "Found",
+                available_sheets: Object.keys(sheets),
+                solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]])),
+                performance_map: sheets.Performance_Map || [],
+                electrical_path: electricalPath,
+                validation_status: validation["Validation Status"] || validation.Status || "Available",
+                equipment_metadata: equipmentMetadata
+            }];
+        } catch (_) {
+            return [resolvedId, {
+                equipment_id: resolvedId, source_equipment_id: equipmentId, equipment_type: null, package_path: packagePath,
+                status: "Missing", available_sheets: [], solver_curves: {}, performance_map: [], electrical_path: null,
+                validation_status: "Missing equipment package",
+                equipment_metadata: null
+            }];
+        }
+    });
+    return Promise.all(equipmentRequests);
+}
+
+function defaultConfigurationLibraryScenarios() {
+    return [
+        { scenario: "Normal", running_unit_formula: "installed_units", description: "Normal operating scenario" },
+        { scenario: "Failure", running_unit_formula: "required_units", description: "Failure operating scenario" }
+    ];
+}
+
+function defaultConfigurationLibraryItLoad(configurationName, hours = 8760) {
+    const percentages = Array(hours).fill(100);
+    const ratios = Array(hours).fill(1);
+    return {
+        standard_file: {
+            schema_version: "pue.timeseries.it_load.v1",
+            type: "annual_it_load",
+            source_file: `${configurationName}/configuration_manifest.json`,
+            units: { hourly_it_load_percent: "%", hourly_it_load_ratio: "fraction" },
+            data: { hourly_it_load_percent: percentages, "hourly_it_load_%": percentages, hourly_it_load_ratio: ratios },
+            hours
+        },
+        payload: { hours, hourly_it_load_percent: percentages, hourly_it_load_ratio: ratios }
+    };
+}
+
+function manifestPowerSource(configurationName, manifest) {
+    const text = `${configurationName || ""} ${manifest?.display_name || ""}`.toUpperCase();
+    return text.includes("GASENGINE") || text.includes("GAS ENGINE") ? "Gas Engine" : "Grid";
+}
+
+function manifestCoolingSystemType(manifest) {
+    return topologyStatusForManifest(manifest).display || manifest?.cooling_system_type || "Configuration Library";
+}
+
+function manifestCoolingUnitCapacityMw(manifest, equipmentEntries) {
+    const equipment = Object.fromEntries(equipmentEntries || []);
+    const priorityRoles = ["primary_cooling", "chiller", "dry_cooler"];
+    for (const roleName of priorityRoles) {
+        let resolvedIds;
+        try {
+            resolvedIds = resolveEquipmentRoleIdFromMapping(manifest, roleName, equipment, false);
+        } catch (_) {
+            resolvedIds = null;
+        }
+        for (const equipmentId of (Array.isArray(resolvedIds) ? resolvedIds : [resolvedIds]).filter(Boolean)) {
+            const metadata = equipment[equipmentId]?.equipment_metadata || {};
+            const capacityKw = Number(metadata.rated_capacity_kW ?? metadata.nominal_capacity_kW ?? metadata.capacity_kW);
+            if (Number.isFinite(capacityKw) && capacityKw > 0) return capacityKw / 1000;
+        }
+    }
+    return DEFAULT_COOLING_UNIT_CAPACITY_MW;
+}
+
 function verifyConfigurationLibrarySynced(configurationPath, selectedConfiguration) {
     const manifest = selectedConfiguration?.configuration_manifest || {};
-    const primaryCoolingId = resolveEquipmentRoleIdFromMapping(manifest, "primary_cooling", selectedConfiguration?.equipment || {});
-    const primaryCoolingPath = `${configurationPath}/equipment/${primaryCoolingId}/${primaryCoolingId}.xlsx`;
+    const firstEquipmentId = manifestEquipmentRoleIds(manifest)[0];
+    if (!firstEquipmentId) {
+        throw new Error("Configuration manifest does not declare any equipment roles.");
+    }
+    const resolved = findLibraryEquipmentPackage(selectedConfiguration, firstEquipmentId);
+    const equipmentId = resolved.resolvedId;
+    const equipmentPath = `${configurationPath}/equipment/${equipmentId}/${equipmentId}.xlsx`;
     try {
-        pyodide.FS.stat(primaryCoolingPath);
+        pyodide.FS.stat(equipmentPath);
     } catch (_) {
         throw new Error("Configuration Library workbooks were not synced into Pyodide runtime. Please reload the Configuration Library.");
     }
@@ -4918,7 +5086,10 @@ async function syncConfigurationLibraryToPyodide(selectedConfiguration) {
 
     const syncedPaths = [];
     const workbookPaths = [];
-    const supportFiles = ["configuration.xlsx", "scenario.xlsx", "input/IT_LOAD_90_PERCENT.xlsx"];
+    const loadMode = selectedConfiguration?.configuration_load_mode || configurationLibraryLoadMode(selectedConfiguration?.configuration_manifest || selectedConfiguration);
+    const supportFiles = loadMode === "legacy"
+        ? ["configuration.xlsx", "scenario.xlsx", "input/IT_LOAD_90_PERCENT.xlsx"]
+        : [];
     for (const relativePath of supportFiles) {
         const arrayBuffer = await fetchConfigurationLibraryArrayBuffer(`${configurationName}/${relativePath}`);
         const pyodidePath = `${configurationPath}/${relativePath}`;
@@ -4944,6 +5115,7 @@ async function syncConfigurationLibraryToPyodide(selectedConfiguration) {
     return {
         configuration_name: configurationName,
         configuration_path: configurationPath,
+        configuration_load_mode: loadMode,
         workbook_paths: workbookPaths,
         synced_paths: syncedPaths
     };
@@ -4966,18 +5138,47 @@ function librarySheetKeyValues(rows) {
 function selectLibrarySolverCurve(equipmentPackage, scenarioName) {
     const electricalPath = equipmentPackage?.electrical_path;
     if (electricalPath && Number.isFinite(Number(electricalPath.it_efficiency)) && Number.isFinite(Number(electricalPath.mep_efficiency))) {
-        return { status: "Electrical Path Found", sheet_name: "Solver", curve: null, electrical_path: electricalPath };
+        return {
+            status: "Electrical Path Found",
+            sheet_name: "Solver",
+            curve: null,
+            electrical_path: electricalPath,
+            equipment_metadata: equipmentPackage?.equipment_metadata || null,
+            equipment_type: equipmentPackage?.equipment_type || equipmentPackage?.equipment_metadata?.equipment_type || null,
+            package_path: equipmentPackage?.package_path || null
+        };
     }
     const curves = equipmentPackage?.solver_curves || {};
     const scenario = String(scenarioName || "").toLowerCase();
     const preferred = scenario === "normal" ? "Solver_Curve_Normal"
         : (["failure", "maintenance"].includes(scenario) ? "Solver_Curve_Failure" : null);
     const selected = [preferred, "Solver_Curve"].find(name => name && Array.isArray(curves[name]) && curves[name].length);
-    if (selected) return { status: "Selected", sheet_name: selected, curve: curves[selected] };
+    if (selected) return {
+        status: "Selected",
+        sheet_name: selected,
+        curve: curves[selected],
+        equipment_metadata: equipmentPackage?.equipment_metadata || null,
+        equipment_type: equipmentPackage?.equipment_type || equipmentPackage?.equipment_metadata?.equipment_type || null,
+        package_path: equipmentPackage?.package_path || null
+    };
     if (String(equipmentPackage?.equipment_id || "").startsWith("ACC_") && equipmentPackage?.performance_map?.length) {
-        return { status: "Selected", sheet_name: "Performance_Map", curve: equipmentPackage.performance_map };
+        return {
+            status: "Selected",
+            sheet_name: "Performance_Map",
+            curve: equipmentPackage.performance_map,
+            equipment_metadata: equipmentPackage?.equipment_metadata || null,
+            equipment_type: equipmentPackage?.equipment_type || equipmentPackage?.equipment_metadata?.equipment_type || null,
+            package_path: equipmentPackage?.package_path || null
+        };
     }
-    return { status: "Missing Solver_Curve", sheet_name: null, curve: null };
+    return {
+        status: "Missing Solver_Curve",
+        sheet_name: null,
+        curve: null,
+        equipment_metadata: equipmentPackage?.equipment_metadata || null,
+        equipment_type: equipmentPackage?.equipment_type || equipmentPackage?.equipment_metadata?.equipment_type || null,
+        package_path: equipmentPackage?.package_path || null
+    };
 }
 
 function librarySelectedCurveType(selected) {
@@ -5019,6 +5220,10 @@ function maxHourlyResultField(hourlyRows, fieldNames) {
 }
 
 function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) {
+    return buildGenericConfigurationLibraryPayload(data, scenarioNameOverride);
+}
+
+function buildGenericConfigurationLibraryPayload(data, scenarioNameOverride = null) {
     phase19bTrace("buildFrontendSolverInputFromLibrary:start", {
         configuration_name: data?.configuration_name,
         scenarioNameOverride,
@@ -5026,7 +5231,7 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     });
     const manifest = data?.configuration_manifest || {};
     const topologyId = manifest.solver_topology || data?.topology_id || data?.solver_dispatch_key;
-    if (topologyId !== SUPPORTED_CONFIGURATION_TOPOLOGY) {
+    if (!SUPPORTED_CONFIGURATION_TOPOLOGIES.includes(topologyId)) {
         throw new Error(`Unsupported solver topology for Configuration Library direct mode: ${topologyId || "missing"}.`);
     }
     const projectInfo = getProjectReportInfo();
@@ -5051,12 +5256,25 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
     const heatGains = getCoolingLoadHeatGainInput();
     const peakDesignWeather = getPeakDesignWeatherInput();
     const libraryAshraeUrl = ASHRAE_PROXY_URL;
+    const dryCoolerApproachC = Number(document.getElementById("dryCoolerApproachC")?.value || 5);
     phase19bTrace("buildFrontendSolverInputFromLibrary:ashrae assignment", {
         peakDesignWeather,
         assigned_ashrae_design_conditions_url: libraryAshraeUrl
     });
     const percentages = data.it_load.hourly_it_load_percent || [];
     const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
+    const hours = hourlyItLoadKw.length;
+    const dryBulbWeather = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"]]);
+    const wetBulbWeather = standardDataArray(standardDataFiles.weather || {}, [["data", "wet_bulb_C"], ["hourly_data", "wet_bulb_C"]]);
+    const hasAnnualWeather = Array.isArray(dryBulbWeather) && dryBulbWeather.length >= hours;
+    const weather = { hourly_data: {
+        hour_index: makeHours(hours),
+        dry_bulb_C: hasAnnualWeather ? dryBulbWeather.slice(0, hours) : Array(hours).fill(25),
+        wet_bulb_C: hasAnnualWeather && wetBulbWeather?.length >= hours ? wetBulbWeather.slice(0, hours) : []
+    }, metadata: hasAnnualWeather
+        ? { source: "loaded_weather" }
+        : { source: "library_solver_adapter_default", assumption: "25 C constant dry bulb" }
+    };
     const selectedCurves = Object.fromEntries(manifestEquipmentRoleIds(manifest).map(equipmentId => {
         const resolved = findLibraryEquipmentPackage(data, equipmentId);
         return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, scenarioName)];
@@ -5073,18 +5291,28 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             package_path: item?.package_path || null,
             selected_curve_sheet: selected?.sheet_name || null,
             selected_curve_status: selected?.status || "Missing Solver_Curve",
-            curve_data: selected?.curve || null
+            curve_data: selected?.curve || null,
+            electrical_path: selected?.electrical_path || item?.electrical_path || null,
+            equipment_type: selected?.equipment_type || item?.equipment_type || item?.equipment_metadata?.equipment_type || null,
+            curve_type: item?.equipment_metadata?.curve_type || null,
+            curve_schema: item?.equipment_metadata?.curve_schema || null,
+            equipment_metadata: selected?.equipment_metadata || item?.equipment_metadata || null
         };
     };
-    const bindingByRole = (roleName, bindingRole, required = true) => {
-        const resolvedId = resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment, required);
-        return resolvedId === null ? null : bindingForResolvedId(resolvedId, bindingRole);
-    };
-    const indoorEquipmentIds = manifest?.equipment_roles?.indoor_cooling
-        ? resolveEquipmentRoleIdFromMapping(manifest, "indoor_cooling", data.equipment)
-        : ["cdu", "rtc", "mau"].map(roleName => resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment));
-    const electricalId = resolveEquipmentRoleIdFromMapping(manifest, "electrical_distribution", data.equipment);
-    const electricalPath = data.equipment[electricalId]?.electrical_path || null;
+    const roleBindings = Object.fromEntries(Object.keys(manifest?.equipment_roles || {}).map(roleName => {
+        const roleRequired = (manifest?.required_roles || []).includes(roleName);
+        const resolvedIds = resolveEquipmentRoleIdFromMapping(manifest, roleName, data.equipment, roleRequired);
+        if (resolvedIds === null) return [roleName, null];
+        const bindings = (Array.isArray(resolvedIds) ? resolvedIds : [resolvedIds])
+            .map(id => bindingForResolvedId(id, roleName));
+        return [roleName, Array.isArray(resolvedIds) ? bindings : bindings[0]];
+    }));
+    const equipmentBindings = Object.fromEntries(Object.values(roleBindings)
+        .flatMap(value => Array.isArray(value) ? value : [value])
+        .filter(Boolean)
+        .map(binding => [binding.equipment_id, binding]));
+    const electricalBinding = roleBindings.electrical_distribution;
+    const electricalPath = (Array.isArray(electricalBinding) ? electricalBinding[0] : electricalBinding)?.electrical_path || null;
     const manifestMetadata = {
         configuration_id: manifest.configuration_id || data.configuration_id || data.configuration_name,
         configuration_display_name: manifest.display_name || data.configuration_display_name || data.configuration_name,
@@ -5132,6 +5360,7 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
             indoor_active_units: indoorActiveUnits,
             running_units: activeUnits,
             standby_units: standbyUnits,
+            dry_cooler_approach_C: dryCoolerApproachC,
             redundancy_strategy: unitQuantity.redundancy === "auto" ? sizing.redundancy : unitQuantity.redundancy,
             unit_quantity: unitQuantity,
             scenario_name: scenarioName,
@@ -5152,18 +5381,13 @@ function buildFrontendSolverInputFromLibrary(data, scenarioNameOverride = null) 
         },
         unit_quantity: unitQuantity,
         equipment: {
-            cooling: {
-                ACC: bindingByRole("primary_cooling", "cooling_equipment"),
-                pumps: Object.fromEntries([
-                    resolveEquipmentRoleIdFromMapping(manifest, "chw_pump", data.equipment)
-                ].map(id => [id, bindingForResolvedId(id, "pump_power")])),
-                engine: bindingByRole("engine", "engine_output_reference"),
-                engine_radiator: bindingByRole("engine_radiator", "engine_radiator_power")
-            },
-            auxiliary: Object.fromEntries(indoorEquipmentIds.map(id => [id, bindingForResolvedId(id, "white_space_auxiliary")])),
+            role_bindings: roleBindings,
+            equipment_bindings: equipmentBindings,
             electrical_path: electricalPath
         },
         electrical_path: electricalPath,
+        weather,
+        dry_cooler_approach_C: dryCoolerApproachC,
         heat_gains: {
             solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw,
             solar_daytime_start_hour: heatGains.solarDaytimeStartHour,
@@ -5192,144 +5416,10 @@ function convertFrontendLibraryInputToSolverInput(libraryInput) {
         scenario_name: libraryInput?.scenario_name
     });
     const topologyId = libraryInput?.topology_id || libraryInput?.solver_dispatch_key || libraryInput?.configuration_manifest?.solver_topology;
-    if (topologyId !== SUPPORTED_CONFIGURATION_TOPOLOGY) {
-        throw new Error(`Unsupported solver topology for ACC adapter: ${topologyId || "missing"}.`);
+    if (!SUPPORTED_CONFIGURATION_TOPOLOGIES.includes(topologyId)) {
+        throw new Error(`Unsupported solver topology for Configuration Library dispatch: ${topologyId || "missing"}.`);
     }
-    const clone = value => JSON.parse(JSON.stringify(value));
-    const project = clone(libraryInput.project);
-    const hourlyIt = project.it_load.hourly_it_load_kW;
-    const hours = hourlyIt.length;
-    const activeUnits = Number(project.active_units);
-    const ashraeEndpoint = libraryInput.ashrae_design_conditions_url ?? project.ashrae_design_conditions_url ?? null;
-    project.ashrae_design_conditions_url = ashraeEndpoint;
-    const peakDesignConditionOverride = libraryInput.peak_design_condition_override ?? project.peak_design_condition_override ?? null;
-    if (peakDesignConditionOverride) project.peak_design_condition_override = peakDesignConditionOverride;
-    phase19bTrace("convertFrontendLibraryInputToSolverInput:ashrae assignment", {
-        ashraeEndpoint,
-        project_ashrae_design_conditions_url: project.ashrae_design_conditions_url,
-        has_peak_design_condition_override: Boolean(peakDesignConditionOverride)
-    });
-    project.auxiliary_loads = project.auxiliary_loads && typeof project.auxiliary_loads === "object" ? project.auxiliary_loads : {};
-    project.auxiliary_loads.other_electrical_auxiliary_power_kW =
-        project.auxiliary_loads.other_electrical_auxiliary_power_kW ?? libraryInput.other_electrical_auxiliary_power_kW ?? 0;
-    project.it_load.cooling_unit_capacity_kW = project.cooling_unit_capacity_kW;
-    project.it_load.cooling_unit_count = activeUnits;
-    project.cooling_unit_count = activeUnits;
-
-    const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"]]);
-    const wet = standardDataArray(standardDataFiles.weather || {}, [["data", "wet_bulb_C"], ["hourly_data", "wet_bulb_C"]]);
-    const hasAnnualWeather = Array.isArray(dry) && dry.length >= hours;
-    const weather = { hourly_data: {
-        hour_index: makeHours(hours),
-        dry_bulb_C: hasAnnualWeather ? dry.slice(0, hours) : Array(hours).fill(25),
-        wet_bulb_C: hasAnnualWeather && wet?.length >= hours ? wet.slice(0, hours) : []
-    }, metadata: hasAnnualWeather
-        ? { source: "loaded_weather" }
-        : { source: "library_solver_adapter_default", assumption: "25 C constant dry bulb" }
-    };
-    const manifest = libraryInput.configuration_manifest || {};
-    const accEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "primary_cooling", libraryInput.selected_curves);
-    const pumpEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "chw_pump", libraryInput.selected_curves);
-    const engineEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "engine", libraryInput.selected_curves);
-    const radiatorEquipmentId = resolveEquipmentRoleIdFromMapping(manifest, "engine_radiator", libraryInput.selected_curves);
-    const accRows = libraryInput.selected_curves[accEquipmentId]?.curve || [];
-    const pumpRows = libraryInput.selected_curves[pumpEquipmentId]?.curve || [];
-    const engineRows = libraryInput.selected_curves[engineEquipmentId]?.curve || [];
-    const radiatorRows = libraryInput.selected_curves[radiatorEquipmentId]?.curve || [];
-    const accCurveId = `${accEquipmentId}_COP`;
-    const pumpCurveId = `${pumpEquipmentId}_power_vs_load`;
-    const curves = {
-        [accCurveId]: {
-            type: "2d_lookup_table", x_axis: "ambient_C", y_axis: "load_ratio", output: "COP", interpolation: "bilinear",
-            data: accRows.filter(row => row.ambient_C != null && row.load_ratio != null && row.COP != null)
-                .map(row => ({ ambient_C: row.ambient_C, load_ratio: row.load_ratio, COP: row.COP }))
-        },
-        [pumpCurveId]: {
-            type: "1d_lookup_table", x_axis: "load_ratio", output: "power_kW", interpolation: "linear",
-            data: pumpRows.filter(row => row.load_ratio != null && row.power_kW != null)
-                .map(row => ({ load_ratio: row.load_ratio, power_kW: row.power_kW }))
-        }
-    };
-    return {
-        configuration_id: libraryInput.configuration_id,
-        configuration_display_name: libraryInput.configuration_display_name,
-        configuration_manifest_schema_version: libraryInput.configuration_manifest_schema_version,
-        topology_id: topologyId,
-        implementation_status: libraryInput.implementation_status,
-        solver_dispatch_key: libraryInput.solver_dispatch_key,
-        report_profile: libraryInput.report_profile,
-        configuration_name: libraryInput.configuration_name,
-        configuration_path: libraryInput.configuration_path || libraryInput.configuration_name,
-        cooling_system_type: libraryInput.cooling_system_type,
-        cooling_unit_capacity_mw: libraryInput.cooling_unit_capacity_mw,
-        power_source: libraryInput.power_source,
-        scenario_name: libraryInput.scenario_name,
-        acc_curve: {
-            equipment_id: accEquipmentId,
-            source_sheet: libraryInput.selected_curves[accEquipmentId]?.sheet_name || null,
-            data: clone(accRows)
-        },
-        engine_curve: {
-            equipment_id: engineEquipmentId,
-            source_sheet: libraryInput.selected_curves[engineEquipmentId]?.sheet_name || null,
-            data: clone(engineRows),
-            default_efficiency: 0.40,
-            default_efficiency_source: "temporary_assumption_pending_vendor_fuel_map"
-        },
-        engine_radiator_curve: {
-            equipment_id: radiatorEquipmentId,
-            source_sheet: libraryInput.selected_curves[radiatorEquipmentId]?.sheet_name || null,
-            data: clone(radiatorRows)
-        },
-        project,
-        peak_design_condition_override: peakDesignConditionOverride,
-        ashrae_proxy_prefetch_failure: libraryInput.ashrae_proxy_prefetch_failure ?? null,
-        peak_design_weather_source: libraryInput.peak_design_weather_source ?? project.peak_design_weather_source ?? "ashrae_auto",
-        peak_design_outdoor_dry_bulb_C: libraryInput.peak_design_outdoor_dry_bulb_C ?? project.peak_design_outdoor_dry_bulb_C ?? null,
-        ashrae_design_conditions_url: ashraeEndpoint,
-        solar_heat_gain_max_kW: libraryInput.heat_gains?.solar_heat_gain_max_kW ?? 0,
-        solar_daytime_start_hour: libraryInput.heat_gains?.solar_daytime_start_hour ?? 6,
-        solar_daytime_end_hour: libraryInput.heat_gains?.solar_daytime_end_hour ?? 18,
-        other_auxiliary_heat_gain_kW: libraryInput.heat_gains?.other_auxiliary_heat_gain_kW ?? 0,
-        unit_quantity: clone(libraryInput.unit_quantity),
-        weather,
-        curve_library: { curves },
-        equipment: {
-            cooling: {
-                cooling_unit_capacity_kW: project.cooling_unit_capacity_kW,
-                cooling_unit_count: activeUnits,
-                chiller: { enabled: true, curve_ref: accCurveId, source_equipment_id: accEquipmentId },
-                ACC: { enabled: true, curve_ref: accCurveId, source_equipment_id: accEquipmentId },
-                dry_cooler: { enabled: false },
-                pumps: { enabled: true, power_curve_refs: [pumpCurveId], source_equipment_id: pumpEquipmentId },
-                fans: { enabled: false }
-            },
-            library_fixed_power: clone(libraryInput.equipment.auxiliary),
-            electrical_path: clone(libraryInput.electrical_path)
-        },
-        electrical_path: clone(libraryInput.electrical_path),
-        library_context: {
-            configuration_id: libraryInput.configuration_id,
-            configuration_display_name: libraryInput.configuration_display_name,
-            configuration_manifest_schema_version: libraryInput.configuration_manifest_schema_version,
-            topology_id: topologyId,
-            implementation_status: libraryInput.implementation_status,
-            solver_dispatch_key: libraryInput.solver_dispatch_key,
-            report_profile: libraryInput.report_profile,
-            scenario_name: libraryInput.scenario_name,
-            required_units: project.required_units,
-            installed_units: project.installed_units,
-            active_units: project.active_units,
-            indoor_active_units: project.indoor_active_units,
-            selected_curves: clone(libraryInput.selected_curves),
-            engine_output_reference: clone(libraryInput.equipment.cooling.engine),
-            engine_radiator: clone(libraryInput.equipment.cooling.engine_radiator),
-            auxiliary_equipment: clone(libraryInput.equipment.auxiliary),
-            electrical_path: clone(libraryInput.electrical_path),
-            unit_quantity: clone(libraryInput.unit_quantity),
-            adapter_assumptions: clone(weather.metadata)
-        }
-    };
+    return JSON.parse(JSON.stringify(libraryInput));
 }
 
 async function runUsingConfigurationLibrary() {
@@ -5424,9 +5514,10 @@ async function runUsingConfigurationLibrary() {
     configurationLibraryData.pyodide_sync = syncResult;
     libraryInput.configuration_path = syncResult.configuration_path;
     configurationLibraryData.standardized_solver_input = libraryInput;
+    const topologyId = libraryInput?.topology_id || libraryInput?.solver_dispatch_key || libraryInput?.configuration_manifest?.solver_topology;
     const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput);
     configurationLibraryData.final_solver_input = adaptedInput;
-    applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path);
+    const solverFn = "dispatch_topology";
     phase19bTrace("runUsingConfigurationLibrary:adaptedInput after engine selection", {
         ashrae_top: adaptedInput?.ashrae_design_conditions_url,
         ashrae_project: adaptedInput?.project?.ashrae_design_conditions_url,
@@ -5434,13 +5525,6 @@ async function runUsingConfigurationLibrary() {
         acc_v2: adaptedInput?.acc_v2,
         final_json_passed_to_run: adaptedInput
     });
-    if (!adaptedInput.acc_v2?.configuration_path) {
-        if (status) {
-            status.textContent = "Configuration Library path is missing. Please click Load Configuration Library before running.";
-            status.style.color = "#dc2626";
-        }
-        return;
-    }
     elIn.value = pretty(adaptedInput);
     const calculationModeLabel = "Configuration Library Direct Solver_Curve Hourly Simulation";
     if (status) status.textContent = `Running ${configurationLibraryData.configuration_name} / ${libraryInput.scenario_name} / ${calculationModeLabel}...`;
@@ -5449,7 +5533,7 @@ async function runUsingConfigurationLibrary() {
         syncResult.workbook_paths.slice(0, 5).join("\n")
     );
     try {
-        await run({ libraryRun: true, libraryInput: adaptedInput });
+        await run({ libraryRun: true, libraryInput: adaptedInput, solverFn });
     } finally {
         setRunButtonsDisabled(false);
     }
@@ -5482,6 +5566,8 @@ function renderConfigurationLibrarySummary(data) {
     const values = [
         ["Configuration ID", data.configuration_id || data.configuration_name],
         ["Configuration Display Name", data.configuration_display_name || data.configuration_name],
+        ["Configuration Name", data.configuration_name],
+        ["Cooling System Type", data.cooling_system_type || "Not available"],
         ["Topology ID", data.topology_id || "Not available"],
         ["Configuration Validation", String(validation.status || "unknown").toUpperCase()],
         ["Validation Missing Roles", validation.missing_roles?.length ? validation.missing_roles.join(", ") : "None"],
@@ -5529,6 +5615,11 @@ function renderConfigurationLibrarySummary(data) {
         ["MEP Electrical Distribution Loss", resultValue(annualElectrical.annual_mep_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
         ["Total Electrical Distribution Loss", resultValue(annualElectrical.annual_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
         ["CHW Pump Energy", resultValue(firstAvailableResultField(annualElectrical, ["annual_chw_pump_energy_kWh", "annual_pump_energy_kWh"]), value => `${fmtInteger(value)} kWh`)],
+        ["Chiller Energy", resultValue(annualElectrical.annual_chiller_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Dry Cooler Energy", resultValue(annualElectrical.annual_dry_cooler_energy_kWh, value => `${fmtInteger(value)} kWh`)],
+        ["Average Chiller COP", resultValue(dispatchReportProfile(data.topology_id, data.last_solver_output || {}).summary.average_chiller_COP, value => fmtNumber(value, 3))],
+        ["Minimum Chiller COP", resultValue(dispatchReportProfile(data.topology_id, data.last_solver_output || {}).summary.min_chiller_COP, value => fmtNumber(value, 3))],
+        ["Maximum Chiller COP", resultValue(dispatchReportProfile(data.topology_id, data.last_solver_output || {}).summary.max_chiller_COP, value => fmtNumber(value, 3))],
         ["CDU Energy", resultValue(annualElectrical.annual_cdu_energy_kWh, value => `${fmtInteger(value)} kWh`)],
         ["RTC Energy", resultValue(annualElectrical.annual_rtc_energy_kWh, value => `${fmtInteger(value)} kWh`)],
         ["MAU Energy", resultValue(annualElectrical.annual_mau_energy_kWh, value => `${fmtInteger(value)} kWh`)],
@@ -5611,74 +5702,53 @@ async function loadSelectedConfigurationLibrary() {
     try {
         await loadConfigurationEquipmentAliases();
         const base = encodeURIComponent(configurationName);
-        const configurationSheets = await fetchConfigurationWorkbook(`${base}/configuration.xlsx`);
-        const equipmentPerUnit = (configurationSheets.Equipment_List || []).map(row => ({
-            equipment_id: String(row.Equipment || ""),
-            per_cooling_unit: Number(row["Per Cooling Unit"] || 0)
-        }));
-        const equipmentLoadIds = manifestEquipmentRoleIds(selectedManifest);
-        const equipmentRequests = equipmentLoadIds.map(async equipmentId => {
-            const resolvedId = resolveFrontendEquipmentId(equipmentId);
-            const packagePath = `equipment/${resolvedId}/${resolvedId}.xlsx`;
-            try {
-                const fetched = await fetchResolvedConfigurationEquipmentWorkbook(base, equipmentId);
-                const sheets = fetched.sheets;
-                const equipmentMetadata = await fetchConfigurationLibraryJson(`${configurationName}/equipment/${fetched.sourceEquipmentId}/equipment_metadata.json`).catch(() => null);
-                const curveNames = ["Solver_Curve", "Solver_Curve_Normal", "Solver_Curve_Failure"].filter(name => sheets[name]);
-                const information = librarySheetKeyValues(sheets.Information);
-                const metadata = librarySheetKeyValues(sheets.Metadata);
-                const validation = librarySheetKeyValues(sheets.Validation);
-                const equipmentType = information["Equipment Type"] || metadata.equipment_type || null;
-                const isElectricalPath = resolvedId.startsWith("ELECTRICAL_DISTRIBUTION") || String(equipmentType || "").toLowerCase() === "electrical distribution";
-                let electricalPath = null;
-                if (isElectricalPath) {
-                    const efficiencies = Object.fromEntries((sheets.Solver || []).map(row => [String(row.Path || "").toUpperCase(), Number(row.overall_efficiency)]));
-                    electricalPath = {
-                        it_efficiency: Number.isFinite(efficiencies.IT) ? efficiencies.IT : null,
-                        mep_efficiency: Number.isFinite(efficiencies.MEP) ? efficiencies.MEP : null
-                    };
-                }
-                const electricalPathFound = electricalPath && electricalPath.it_efficiency !== null && electricalPath.mep_efficiency !== null;
-                return [fetched.resolvedId, {
-                    equipment_id: fetched.resolvedId,
-                    source_equipment_id: fetched.rawEquipmentId,
-                    source_workbook_equipment_id: fetched.sourceEquipmentId,
-                    equipment_type: equipmentType,
-                    package_path: fetched.packagePath,
-                    status: electricalPathFound ? "Electrical Path Found" : "Found",
-                    available_sheets: Object.keys(sheets),
-                    solver_curves: Object.fromEntries(curveNames.map(name => [name, sheets[name]])),
-                    performance_map: sheets.Performance_Map || [],
-                    electrical_path: electricalPath,
-                    validation_status: validation["Validation Status"] || validation.Status || "Available",
-                    equipment_metadata: equipmentMetadata
-                }];
-            } catch (_) {
-                return [resolvedId, {
-                    equipment_id: resolvedId, source_equipment_id: equipmentId, equipment_type: null, package_path: packagePath,
-                    status: "Missing", available_sheets: [], solver_curves: {}, performance_map: [], electrical_path: null,
-                    validation_status: "Missing equipment package",
-                    equipment_metadata: null
-                }];
-            }
-        });
-        const [scenarioSheets, itSheets, equipmentEntries] = await Promise.all([
-            fetchConfigurationWorkbook(`${base}/scenario.xlsx`),
-            fetchConfigurationWorkbook(`${base}/input/IT_LOAD_90_PERCENT.xlsx`),
-            Promise.all(equipmentRequests)
-        ]);
-        const parameters = configurationKeyValues(configurationSheets.Configuration);
-        const scenarios = (scenarioSheets.Scenario || []).map(row => ({
-            scenario: row.Scenario,
-            running_unit_formula: row["Running Unit Formula"],
-            description: row.Description
-        }));
-        const percentages = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_percent)).filter(Number.isFinite);
-        const ratios = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_ratio)).filter(Number.isFinite);
+        const loadMode = configurationLibraryLoadMode(selectedManifest);
+        let configurationSheets = null;
+        let parameters = {};
+        let equipmentPerUnit = [];
+        let scenarios = defaultConfigurationLibraryScenarios();
+        let itLoadSourceFile = "configuration_manifest.json";
+        let percentages = [];
+        let ratios = [];
+        let equipmentEntries = [];
+
+        if (loadMode === "legacy") {
+            configurationSheets = await fetchConfigurationWorkbook(`${base}/configuration.xlsx`);
+            parameters = configurationKeyValues(configurationSheets.Configuration);
+            equipmentPerUnit = (configurationSheets.Equipment_List || []).map(row => ({
+                equipment_id: String(row.Equipment || ""),
+                per_cooling_unit: Number(row["Per Cooling Unit"] || 0)
+            }));
+            const [scenarioSheets, itSheets, loadedEquipmentEntries] = await Promise.all([
+                fetchConfigurationWorkbook(`${base}/scenario.xlsx`),
+                fetchConfigurationWorkbook(`${base}/input/IT_LOAD_90_PERCENT.xlsx`),
+                loadConfigurationEquipmentEntries(configurationName, selectedManifest)
+            ]);
+            equipmentEntries = loadedEquipmentEntries;
+            scenarios = (scenarioSheets.Scenario || []).map(row => ({
+                scenario: row.Scenario,
+                running_unit_formula: row["Running Unit Formula"],
+                description: row.Description
+            }));
+            percentages = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_percent)).filter(Number.isFinite);
+            ratios = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_ratio)).filter(Number.isFinite);
+            itLoadSourceFile = "input/IT_LOAD_90_PERCENT.xlsx";
+        } else {
+            equipmentEntries = await loadConfigurationEquipmentEntries(configurationName, selectedManifest);
+            const manifestItLoad = defaultConfigurationLibraryItLoad(configurationName);
+            percentages = manifestItLoad.payload.hourly_it_load_percent;
+            ratios = manifestItLoad.payload.hourly_it_load_ratio;
+            parameters = {
+                "Configuration Name": configurationName,
+                "Cooling System Type": manifestCoolingSystemType(selectedManifest),
+                "Cooling Unit Capacity": manifestCoolingUnitCapacityMw(selectedManifest, equipmentEntries),
+                "Power Source": manifestPowerSource(configurationName, selectedManifest)
+            };
+        }
         const itLoad = {
             schema_version: "pue.timeseries.it_load.v1",
             type: "annual_it_load",
-            source_file: "input/IT_LOAD_90_PERCENT.xlsx",
+            source_file: itLoadSourceFile,
             units: { hourly_it_load_percent: "%", hourly_it_load_ratio: "fraction" },
             data: { hourly_it_load_percent: percentages, "hourly_it_load_%": percentages, hourly_it_load_ratio: ratios },
             hours: percentages.length
@@ -5696,6 +5766,7 @@ async function loadSelectedConfigurationLibrary() {
             solver_dispatch_key: selectedManifest.solver_topology,
             report_profile: selectedManifest.report_profile,
             manifest_cooling_system_type: selectedManifest.cooling_system_type,
+            configuration_load_mode: loadMode,
             configuration_manifest: selectedManifest,
             configuration_name: parameters["Configuration Name"] || configurationName,
             cooling_system_type: parameters["Cooling System Type"],
@@ -5724,6 +5795,7 @@ async function loadSelectedConfigurationLibrary() {
                 implementation_status: configurationLibraryData.implementation_status,
                 solver_dispatch_key: configurationLibraryData.solver_dispatch_key,
                 report_profile: configurationLibraryData.report_profile,
+                configuration_load_mode: configurationLibraryData.configuration_load_mode,
                 configuration_name: configurationLibraryData.configuration_name,
                 cooling_system_type: configurationLibraryData.cooling_system_type,
                 cooling_unit_capacity_mw: configurationLibraryData.cooling_unit_capacity_mw,
@@ -5759,7 +5831,13 @@ async function loadSelectedConfigurationLibrary() {
         renderCoolingSystemSelection();
         renderConfigurationLibrarySummary(configurationLibraryData);
         renderFrameworkDiagnosticsPanel();
-        updateFileStatus("statusItLoad", `Configuration Library: IT_LOAD_90_PERCENT.xlsx (${percentages.length} hours)`, "ok");
+        updateFileStatus(
+            "statusItLoad",
+            loadMode === "legacy"
+                ? `Configuration Library: IT_LOAD_90_PERCENT.xlsx (${percentages.length} hours)`
+                : `Configuration Library: manifest default IT load (${percentages.length} hours)`,
+            "ok"
+        );
         refreshStandardInputStatus();
         if (status) {
             status.textContent = projectDesignCapacityKw() > 0
@@ -5932,6 +6010,9 @@ function showProjectVisualization(outObj) {
     const hourly = Array.isArray(outObj.hourly_results) ? outObj.hourly_results : [];
     const annual = outObj.annual_results || {};
     const peak = outObj.peak_results || {};
+    const topologyId = outObj.topology_id || outObj.report_profile || outObj.solver_dispatch_key || "unknown";
+    const report = dispatchReportProfile(topologyId, outObj);
+    const peakSummary = report.visualization_data.peak_summary;
 
     const vis = document.getElementById("resultsVisualization");
     const msg = document.getElementById("noResultsMessage");
@@ -5939,24 +6020,12 @@ function showProjectVisualization(outObj) {
     if (msg) msg.style.display = "none";
     const principle = document.getElementById("calculationPrinciple");
     if (principle) {
-        const accEngineUsed = getAccEngineUsedLabel(outObj);
-        const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
-        const accDisclosure = isDirectAccV2
-            ? `<div style="margin:6px 0;">ACC V2 Direct Mode: Configuration Library-driven ACC simulation using direct hourly Solver_Curve lookup.</div>` +
-              `<div style="margin:6px 0;">Simulation Method: True EPW × Solver_Curve</div>` +
-              `<div style="margin:6px 0 8px 0;">Simulation Basis: 8760-hour Annual Dynamic Simulation</div>`
-            : "";
-        const peakDisclosure = isDirectAccV2
-            ? `<div style="margin:6px 0 8px 0;">Peak PUE Basis: Peak Design PUE at ASHRAE 20-year Extreme Annual Design Condition, 100% design IT load, maximum solar heat gain, and configured other heat gain.</div>`
-            : "";
         principle.innerHTML =
             "<b>计算原理</b><br>" +
-            `<div style="margin:6px 0 8px 0;">ACC Engine Used: ${esc(accEngineUsed)}</div>` +
-            accDisclosure +
-            peakDisclosure +
-            "全年模式调用 <code>compute_pue_project(dc)</code>。每小时读取 <code>project.it_load.hourly_it_load_kW</code> 与 <code>weather.hourly_data.dry_bulb_C</code>，" +
-            "由电气效率曲线估算 UPS/变压器损耗，由 <code>chiller_COP_H_vs_load</code> COP 曲面估算冷水机功率，并按小时计算 " +
-            "<code>PUE = total_facility_power_kW / IT_load_kW</code>。年度 PUE 使用全年设施能耗除以全年 IT 能耗。";
+            `<div style="margin:6px 0;">Cooling System: ${esc(report.cooling_system_type)}</div>` +
+            `<div style="margin:6px 0;">Simulation Engine: ${esc(report.simulation_engine)}</div>` +
+            `<div style="margin:6px 0;">Performance Model: ${esc(report.performance_model)}</div>` +
+            `<div style="margin:6px 0 8px 0;">Simulation Basis: ${esc(report.simulation_basis)}</div>`;
     }
 
     setText("summaryPueLabel", "年度平均 PUE");
@@ -6140,9 +6209,9 @@ function showProjectVisualization(outObj) {
         data: {
             datasets: [{
                 label: "Outdoor temperature vs PUE",
-                data: sampled.map(row => ({
-                    x: pickHourlyValue(row, ["dry_bulb_C", "outdoor_temp_C"]),
-                    y: pickHourlyValue(row, ["hourly_PUE", "pue", "PUE"])
+                data: report.visualization_data.temperature_vs_pue.map(row => ({
+                    x: row.temperature_C,
+                    y: row.pue
                 })),
                 backgroundColor: "rgba(220, 38, 38, 0.45)",
                 pointRadius: 2
@@ -6161,25 +6230,14 @@ function showProjectVisualization(outObj) {
 
     const peakDetails = document.getElementById("peakHourDetails");
     if (peakDetails) {
-        const isDirectAccV2 = isConfigurationLibraryAccV2DirectResult(outObj);
         const cards = [
-            ...(isDirectAccV2 ? [
-                ["Peak Design Condition", peak.peak_design_temperature_basis || "ASHRAE_20_year_extreme_annual_design_condition"],
-                ["ASHRAE Weather Station", peak.peak_design_weather_station || "N/A"],
-                ["Station Distance", peak.peak_design_weather_station_distance_km != null ? `${fmtNumber(peak.peak_design_weather_station_distance_km, 1)} km` : "N/A"],
-                ["Design Temperature Source", "ASHRAE 20-year Extreme Annual DB Max"]
-            ] : [["Peak Facility Hour", peak.peak_hour_index]]),
-            [isDirectAccV2 ? "Max Hourly PUE Hour" : "Max PUE Hour", peak.max_hourly_PUE_hour_index ?? peak.peak_PUE_hour_index],
-            [isDirectAccV2 ? "Peak Design PUE" : "Peak PUE", fmtNumber(peak.peak_PUE, 3)],
-            ...(isDirectAccV2 ? [["Max Hourly PUE", fmtNumber(peak.max_hourly_PUE, 3)]] : []),
-            ...(isDirectAccV2 ? [
-                ["Peak Design Facility Electrical Demand", `${fmtInteger(peakDesignDemandKw)} kW`],
-                ["Max Hourly Facility Electrical Demand", `${fmtInteger(maxHourlyDemandKw)} kW`]
-            ] : []),
-            [isDirectAccV2 ? "Outdoor Dry Bulb" : "Dry Bulb", `${fmtNumber(peak.peak_outdoor_dry_bulb_C, 1)} deg C`],
-            ["Wet Bulb", `${fmtNumber(peak.peak_outdoor_wet_bulb_C, 1)} deg C`],
-            ["IT Load", `${fmtInteger(peak.peak_IT_load_kW)} kW`],
-            ...(isDirectAccV2 ? [] : [["Facility Power", `${fmtInteger(peak.peak_total_facility_power_kW)} kW`]])
+            ["Peak Facility Hour", peakSummary.peak_facility_hour],
+            ["Peak PUE", fmtNumber(peakSummary.peak_pue, 3)],
+            ["Peak Facility Demand", `${fmtInteger(peakSummary.peak_facility_power_kW)} kW`],
+            ["IT Load", `${fmtInteger(peakSummary.peak_it_load_kW)} kW`],
+            ["Outdoor Dry Bulb", `${fmtNumber(peakSummary.peak_outdoor_dry_bulb_C, 1)} deg C`],
+            ["Max Hourly PUE", fmtNumber(peakSummary.max_hourly_pue, 3)],
+            ["Max Hourly PUE Hour", peakSummary.max_hourly_pue_hour]
         ];
         peakDetails.innerHTML = cards.map(([label, value]) => `
             <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">
@@ -6649,7 +6707,11 @@ print("[Phase19B:Pyodide] dc.run_mode=", dc.get("run_mode"))
 print("[Phase19B:Pyodide] dc.acc_v2=", dc.get("acc_v2"))
 if solver_fn == "compute_acc_excel_replicated_hourly" and "compute_acc_excel_replicated_hourly" not in globals():
     raise RuntimeError("compute_acc_excel_replicated_hourly is not loaded")
-out = compute_acc_excel_replicated_hourly(dc) if solver_fn == "compute_acc_excel_replicated_hourly" else (compute_acc_experimental_hourly_shape(dc) if solver_fn == "compute_acc_experimental_hourly_shape" else (compute_acc_excel_benchmark(dc) if solver_fn == "compute_acc_excel_benchmark" else (compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc))))
+if solver_fn == "dispatch_topology":
+    from topology_dispatcher import dispatch_topology
+    out = dispatch_topology(dc.get("configuration_manifest") or {}, dc)
+else:
+    out = compute_acc_excel_replicated_hourly(dc) if solver_fn == "compute_acc_excel_replicated_hourly" else (compute_acc_experimental_hourly_shape(dc) if solver_fn == "compute_acc_experimental_hourly_shape" else (compute_acc_excel_benchmark(dc) if solver_fn == "compute_acc_excel_benchmark" else (compute_pue_project(dc) if solver_fn == "compute_pue_project" else compute_pue_v04(dc))))
 json.dumps(out, indent=2)
         `);
 
