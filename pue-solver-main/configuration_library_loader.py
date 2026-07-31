@@ -5,7 +5,6 @@ modify solver.py. XLSX reading uses the Python standard library only.
 """
 
 import json
-from math import ceil
 from pathlib import Path
 from re import match
 from zipfile import ZipFile
@@ -22,6 +21,12 @@ from equipment_registry import canonicalize_equipment_id
 from equipment_role_resolver import (
     resolve_equipment_role_id,
     validate_required_equipment_roles,
+)
+from unit_scenario_manager import (
+    calculate_active_units as _manager_calculate_active_units,
+    calculate_required_units as _manager_calculate_required_units,
+    calculate_unit_requirements as _manager_calculate_unit_requirements,
+    resolve_unit_scenario,
 )
 
 DEFAULT_LIBRARY_ROOT = Path(__file__).resolve().parent.parent / "Configuration Library"
@@ -375,7 +380,7 @@ def build_library_bound_input(configuration, scenarios, equipment, it_profile, t
 
 def calculate_required_units(total_it_capacity_mw, cooling_unit_capacity_mw):
     """Return duty units required to cover design IT capacity."""
-    return ceil(float(total_it_capacity_mw) / float(cooling_unit_capacity_mw))
+    return _manager_calculate_required_units(total_it_capacity_mw, cooling_unit_capacity_mw)
 
 
 def calculate_installed_units(total_it_capacity_mw, cooling_unit_capacity_mw):
@@ -384,25 +389,11 @@ def calculate_installed_units(total_it_capacity_mw, cooling_unit_capacity_mw):
 
 
 def calculate_unit_requirements(total_it_capacity_mw, cooling_unit_capacity_mw):
-    required_units = calculate_required_units(total_it_capacity_mw, cooling_unit_capacity_mw)
-    installed_units = required_units + 1
-    return {
-        "required_units": required_units,
-        "installed_units": installed_units,
-        "normal_active_units": installed_units,
-        "failure_active_units": required_units,
-        "indoor_active_units": installed_units,
-        "redundancy": "N+1",
-    }
+    return _manager_calculate_unit_requirements(total_it_capacity_mw, cooling_unit_capacity_mw)
 
 
 def calculate_running_units(installed_units, running_unit_formula):
-    formula = " ".join(str(running_unit_formula).strip().lower().split())
-    if formula == "installed_units":
-        return int(installed_units)
-    if match(r"^installed_units\s*-\s*1$", formula):
-        return max(0, int(installed_units) - 1)
-    raise ValueError(f"Unsupported running unit formula: {running_unit_formula}")
+    return _manager_calculate_active_units(installed_units, installed_units, running_unit_formula)
 
 
 def discover_configuration_library(library_root=None, include_invalid=False):
@@ -418,9 +409,14 @@ def load_configuration_library(configuration_name, library_root=None, total_it_c
         raise FileNotFoundError(configuration_dir)
     manifest = load_configuration_manifest(configuration_dir)
     assert_manifest_executable(manifest)
-    configuration = load_configuration_workbook(configuration_dir)
-    scenarios = load_scenario_workbook(configuration_dir)
-    it_profile = load_it_profile(configuration_dir)
+    if (configuration_dir / "configuration.xlsx").is_file():
+        configuration = load_configuration_workbook(configuration_dir)
+        scenarios = load_scenario_workbook(configuration_dir)
+        it_profile = load_it_profile(configuration_dir)
+    else:
+        configuration = _manifest_only_configuration(configuration_name, manifest)
+        scenarios = _default_manifest_only_scenarios()
+        it_profile = _default_manifest_only_it_profile()
     equipment = load_equipment_packages(configuration_dir, configuration["equipment_per_cooling_unit"])
     _validate_manifest_equipment_roles(manifest, equipment)
     library_bound_input = build_library_bound_input(
@@ -495,8 +491,21 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         raise ValueError(f"Unknown scenario: {scenario_name}")
 
     design_it_load_kw = float(total_it_capacity_mw) * 1000.0
-    sizing = calculate_unit_requirements(total_it_capacity_mw, loaded["cooling_unit_capacity_mw"])
-    active_units = calculate_running_units(sizing["installed_units"], scenario["running_unit_formula"])
+    unit_scenario = resolve_unit_scenario(
+        total_it_capacity_mw,
+        loaded["cooling_unit_capacity_mw"],
+        scenario_name=scenario["scenario"],
+        scenario_formula=scenario["running_unit_formula"],
+    )
+    sizing = {
+        "required_units": unit_scenario["required_units"],
+        "installed_units": unit_scenario["installed_units"],
+        "normal_active_units": unit_scenario["role_quantities"]["indoor_units"]["active_units"],
+        "failure_active_units": unit_scenario["required_units"],
+        "indoor_active_units": unit_scenario["role_quantities"]["indoor_units"]["active_units"],
+        "redundancy": unit_scenario["redundancy_mode"],
+    }
+    active_units = unit_scenario["active_units"]
     percentages = loaded["it_load"]["hourly_it_load_percent"]
     hourly_it_load_kw = [design_it_load_kw * float(percent) / 100.0 for percent in percentages]
     selected_curves = {
@@ -505,18 +514,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
     }
 
     manifest = loaded["configuration_manifest"]
-    acc_id = resolve_equipment_role_id(manifest, "primary_cooling", loaded["equipment"])
-    pump_id = resolve_equipment_role_id(manifest, "chw_pump", loaded["equipment"])
-    engine_id = resolve_equipment_role_id(manifest, "engine", loaded["equipment"])
-    radiator_id = resolve_equipment_role_id(manifest, "engine_radiator", loaded["equipment"])
-    electrical_id = resolve_equipment_role_id(manifest, "electrical_distribution", loaded["equipment"])
-    if "indoor_cooling" in manifest.get("equipment_roles", {}):
-        auxiliary_ids = resolve_equipment_role_id(manifest, "indoor_cooling", loaded["equipment"])
-    else:
-        auxiliary_ids = [
-            resolve_equipment_role_id(manifest, role, loaded["equipment"])
-            for role in ("cdu", "rtc", "mau")
-        ]
+    topology_id = manifest.get("solver_topology")
 
     def equipment_binding(equipment_id, role):
         package = loaded["equipment"][equipment_id]
@@ -529,9 +527,92 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "selected_curve_sheet": selected["sheet_name"],
             "selected_curve_status": selected["status"],
             "curve_data": selected["curve"],
+            "electrical_path": selected.get("electrical_path"),
             "equipment_metadata": package.get("equipment_metadata"),
             "equipment_metadata_validation": package.get("equipment_metadata_validation"),
         }
+
+    if topology_id == "chiller_dry_cooler":
+        chiller_id = resolve_equipment_role_id(manifest, "chiller", loaded["equipment"])
+        dry_cooler_id = resolve_equipment_role_id(manifest, "dry_cooler", loaded["equipment"])
+        pump_id = resolve_equipment_role_id(manifest, "chw_pump", loaded["equipment"])
+        electrical_id = resolve_equipment_role_id(manifest, "electrical_distribution", loaded["equipment"])
+        auxiliary_ids = []
+        if "indoor_cooling" in manifest.get("equipment_roles", {}):
+            auxiliary_ids = resolve_equipment_role_id(manifest, "indoor_cooling", loaded["equipment"]) or []
+
+        electrical_path = loaded["equipment"][electrical_id]["electrical_path"]
+        equipment = {
+            "cooling": {
+                "chiller": equipment_binding(chiller_id, "chiller"),
+                "dry_cooler": equipment_binding(dry_cooler_id, "dry_cooler"),
+                "pumps": {pump_id: equipment_binding(pump_id, "pump_power")},
+            },
+            "auxiliary": {
+                equipment_id: equipment_binding(equipment_id, "white_space_auxiliary")
+                for equipment_id in auxiliary_ids
+            },
+            "electrical_path": electrical_path,
+        }
+        return {
+            "cooling_system_type": loaded["cooling_system_type"],
+            "cooling_unit_capacity_mw": loaded["cooling_unit_capacity_mw"],
+            "power_source": loaded["power_source"],
+            "scenario_name": scenario["scenario"],
+            "configuration_id": loaded["configuration_id"],
+            "configuration_display_name": loaded["configuration_display_name"],
+            "configuration_manifest_schema_version": loaded["configuration_manifest_metadata"]["configuration_manifest_schema_version"],
+            "topology_id": loaded["topology_id"],
+            "implementation_status": loaded["implementation_status"],
+            "solver_dispatch_key": loaded["solver_dispatch_key"],
+            "report_profile": loaded["report_profile"],
+            "configuration_manifest": loaded["configuration_manifest"],
+            "project": {
+                "name": loaded["configuration_name"],
+                "calculation_mode": "project_8760",
+                "project_mode": True,
+                "peak_design_weather_source": "ashrae_auto",
+                "site_location": {},
+                "location": {
+                    "peak_design_weather_source": "ashrae_auto",
+                },
+                "design_it_load_kW": design_it_load_kw,
+                "cooling_unit_capacity_kW": loaded["cooling_unit_capacity_mw"] * 1000.0,
+                "required_units": sizing["required_units"],
+                "installed_units": sizing["installed_units"],
+                "active_units": active_units,
+                "indoor_active_units": sizing["normal_active_units"],
+                "redundancy_strategy": "N+1",
+                "scenario_name": scenario["scenario"],
+                "it_load": {
+                    "design_it_load_kW": design_it_load_kw,
+                    "hourly_it_load_percent": percentages,
+                    "hourly_it_load_kW": hourly_it_load_kw,
+                },
+            },
+            "site_location": {},
+            "equipment": equipment,
+            "electrical_path": electrical_path,
+            "selected_curves": selected_curves,
+            "configuration_library": {
+                **loaded["configuration_manifest_metadata"],
+                "configuration_name": loaded["configuration_name"],
+                "library_bound_input": loaded["library_bound_input"],
+            },
+        }
+
+    acc_id = resolve_equipment_role_id(manifest, "primary_cooling", loaded["equipment"])
+    pump_id = resolve_equipment_role_id(manifest, "chw_pump", loaded["equipment"])
+    engine_id = resolve_equipment_role_id(manifest, "engine", loaded["equipment"])
+    radiator_id = resolve_equipment_role_id(manifest, "engine_radiator", loaded["equipment"])
+    electrical_id = resolve_equipment_role_id(manifest, "electrical_distribution", loaded["equipment"])
+    if "indoor_cooling" in manifest.get("equipment_roles", {}):
+        auxiliary_ids = resolve_equipment_role_id(manifest, "indoor_cooling", loaded["equipment"])
+    else:
+        auxiliary_ids = [
+            resolve_equipment_role_id(manifest, role, loaded["equipment"])
+            for role in ("cdu", "rtc", "mau")
+        ]
 
     electrical_path = loaded["equipment"][electrical_id]["electrical_path"]
     equipment = {
@@ -604,3 +685,61 @@ def _resolve_loaded_equipment_id(equipment_packages, preferred_equipment_id, can
         if canonicalize_equipment_id(parsed["canonical_equipment_id"]) == canonical_equipment_id:
             return equipment_id
     raise KeyError(f"No equipment package found for {preferred_equipment_id} / {canonical_equipment_id}")
+
+
+def _manifest_only_configuration(configuration_name, manifest):
+    equipment_ids = []
+    for role_value in (manifest.get("equipment_roles") or {}).values():
+        values = role_value if isinstance(role_value, list) else [role_value]
+        for equipment_id in values:
+            if equipment_id and equipment_id not in equipment_ids:
+                equipment_ids.append(str(equipment_id))
+    capacity_mw = _capacity_mw_from_configuration_id(configuration_name) or 1.0
+    return {
+        "configuration_name": manifest.get("display_name") or configuration_name,
+        "cooling_system_type": manifest.get("cooling_system_type"),
+        "cooling_unit_capacity_mw": capacity_mw,
+        "power_source": _power_source_from_configuration_id(configuration_name),
+        "white_space_type": "CDU",
+        "equipment_per_cooling_unit": [
+            {"equipment_id": equipment_id, "per_cooling_unit": 1}
+            for equipment_id in equipment_ids
+        ],
+    }
+
+
+def _default_manifest_only_scenarios():
+    return [
+        {
+            "scenario": "Normal",
+            "running_unit_formula": "installed_units",
+            "description": "Manifest-only default normal operation.",
+        }
+    ]
+
+
+def _default_manifest_only_it_profile(hours=8760, percent=90.0):
+    percentages = [float(percent)] * int(hours)
+    ratios = [float(percent) / 100.0] * int(hours)
+    return {
+        "hourly_it_load_percent": percentages,
+        "hourly_it_load_%": percentages,
+        "hourly_it_load_ratio": ratios,
+        "hours": int(hours),
+        "source_file": "manifest_only_default_90_percent",
+    }
+
+
+def _capacity_mw_from_configuration_id(configuration_name):
+    text = str(configuration_name or "").upper()
+    found = match(r".*?([0-9]+(?:\.[0-9]+)?)\s*MW", text)
+    return float(found.group(1)) if found else None
+
+
+def _power_source_from_configuration_id(configuration_name):
+    text = str(configuration_name or "").upper()
+    if "GASENGINE" in text or "GAS_ENGINE" in text:
+        return "Gas Engine"
+    if "GRID" in text:
+        return "Grid"
+    return "Unknown"

@@ -6,6 +6,11 @@ profile. It does not calculate or transform solver outputs.
 
 from copy import deepcopy
 
+from report_sections import COMMON_REPORT_SECTIONS, COMMON_REPORT_SECTION_IDS, topology_specific_sections
+
+
+COMMON_REPORT_SECTION_TITLES = [section["title"] for section in COMMON_REPORT_SECTIONS]
+
 
 ACC_GAS_ENGINE_CDU_FIELDS = [
     {
@@ -84,6 +89,54 @@ GENERIC_PUE_FIELDS = [
     },
 ]
 
+CHILLER_DRY_COOLER_FIELDS = GENERIC_PUE_FIELDS + [
+    {
+        "key": "annual_chiller_energy_kWh",
+        "label": "Chiller Energy",
+        "category": "cooling",
+    },
+    {
+        "key": "annual_dry_cooler_energy_kWh",
+        "label": "Dry Cooler Energy",
+        "category": "cooling",
+    },
+    {
+        "key": "annual_pump_energy_kWh",
+        "label": "Pump Energy",
+        "category": "cooling",
+    },
+    {
+        "key": "annual_electrical_loss_kWh",
+        "label": "Electrical Losses",
+        "category": "electrical",
+    },
+    {
+        "key": "average_chiller_COP",
+        "label": "Average Chiller COP",
+        "category": "performance",
+    },
+    {
+        "key": "min_chiller_COP",
+        "label": "Minimum Chiller COP",
+        "category": "performance",
+    },
+    {
+        "key": "max_chiller_COP",
+        "label": "Maximum Chiller COP",
+        "category": "performance",
+    },
+    {
+        "key": "dry_cooler_capacity_kW",
+        "label": "Dry Cooler Capacity",
+        "category": "cooling_system_summary",
+    },
+    {
+        "key": "configuration_status",
+        "label": "Configuration Status",
+        "category": "cooling_system_summary",
+    },
+]
+
 
 REPORT_PROFILE_REGISTRY = {
     "acc_gas_engine_cdu": {
@@ -92,6 +145,11 @@ REPORT_PROFILE_REGISTRY = {
         "cooling_system_type": "ACC + Gas Engine + CDU",
         "topology": "acc_gas_engine_cdu",
         "status": "implemented",
+        "simulation_engine": "ACC V2 Configuration Library Engine",
+        "performance_model": "ACC V2 Direct Mode: Configuration Library Solver_Curve hourly simulation",
+        "simulation_basis": "8760-hour Annual Dynamic Simulation",
+        "common_sections": list(COMMON_REPORT_SECTION_IDS),
+        "topology_specific_sections": topology_specific_sections("acc_gas_engine_cdu"),
         "fields": ACC_GAS_ENGINE_CDU_FIELDS,
     },
     "chiller_dry_cooler": {
@@ -99,9 +157,19 @@ REPORT_PROFILE_REGISTRY = {
         "display_name": "Chiller + Dry Cooler Report",
         "cooling_system_type": "Chiller + Dry Cooler",
         "topology": "chiller_dry_cooler",
-        "configuration_status": "Framework Ready / Data Missing",
-        "status": "framework_ready_data_missing",
-        "fields": GENERIC_PUE_FIELDS,
+        "configuration_status": "Implemented",
+        "status": "implemented",
+        "simulation_engine": "Topology Dispatcher Runtime",
+        "performance_model": "Configuration Library Solver_Curve hourly simulation",
+        "simulation_basis": "8760-hour Annual Dynamic Simulation",
+        "common_sections": list(COMMON_REPORT_SECTION_IDS),
+        "topology_specific_sections": topology_specific_sections("chiller_dry_cooler"),
+        "sections": COMMON_REPORT_SECTION_TITLES + [
+            "Cooling System Summary",
+            "Standard Annual Energy Breakdown",
+            "Performance",
+        ],
+        "fields": CHILLER_DRY_COOLER_FIELDS,
     },
     "water_cooled_chiller": {
         "profile_id": "water_cooled_chiller",
@@ -109,6 +177,8 @@ REPORT_PROFILE_REGISTRY = {
         "cooling_system_type": "Water-Cooled Chiller",
         "topology": "water_cooled_chiller",
         "status": "metadata_only",
+        "common_sections": list(COMMON_REPORT_SECTION_IDS),
+        "topology_specific_sections": topology_specific_sections("water_cooled_chiller"),
         "fields": GENERIC_PUE_FIELDS,
     },
     "liquid_cooling": {
@@ -117,6 +187,8 @@ REPORT_PROFILE_REGISTRY = {
         "cooling_system_type": "Liquid Cooling",
         "topology": "liquid_cooling",
         "status": "metadata_only",
+        "common_sections": list(COMMON_REPORT_SECTION_IDS),
+        "topology_specific_sections": topology_specific_sections("liquid_cooling"),
         "fields": GENERIC_PUE_FIELDS,
     },
 }
@@ -128,6 +200,11 @@ GENERIC_REPORT_PROFILE = {
     "cooling_system_type": "Unknown Cooling System",
     "topology": "unknown",
     "status": "generic",
+    "simulation_engine": "Topology Dispatcher Runtime",
+    "performance_model": "Standardized hourly simulation",
+    "simulation_basis": "Annual Dynamic Simulation",
+    "common_sections": list(COMMON_REPORT_SECTION_IDS),
+    "topology_specific_sections": [],
     "fields": GENERIC_PUE_FIELDS,
 }
 

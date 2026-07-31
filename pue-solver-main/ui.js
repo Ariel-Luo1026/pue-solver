@@ -3134,9 +3134,51 @@ function buildHtmlReportFromSections(context) {
     const coolingSystemDisplay = report.cooling_system_type || context.input?.cooling_system_type || "N/A";
     const scenarioName = output.project?.scenario_name || report.operating_scenario?.scenario_name || "Normal";
     const peakSummary = report.visualization_data.peak_summary;
-    const peakMetric = Number.isFinite(Number(peak.peak_PUE))
-        ? ["Peak Design PUE", peak.peak_PUE]
-        : ["Peak Hourly PUE", peakSummary.peak_pue];
+    const peakDesignSource = String(peak.peak_design_weather_source || "").trim();
+    const peakDesignDryBulbAvailable = peak.peak_design_outdoor_dry_bulb_C != null
+        && peak.peak_design_outdoor_dry_bulb_C !== ""
+        && Number.isFinite(Number(peak.peak_design_outdoor_dry_bulb_C));
+    const peakDesignPueAvailable = peak.peak_PUE_definition === "peak_design"
+        && peakDesignDryBulbAvailable
+        && peak.peak_PUE != null
+        && peak.peak_PUE !== ""
+        && Number.isFinite(Number(peak.peak_PUE));
+    const peakDesignIsManual = peakDesignSource.toLowerCase() === "manual";
+    const peakDesignIsLocalCache = ["ashrae_local_cache", "ashrae_local_fallback"].includes(peakDesignSource.toLowerCase());
+    const peakDesignIsOnline = ["ashrae_online", "ashrae_online_proxy"].includes(peakDesignSource.toLowerCase());
+    const peakDesignSourceDisplay = peakDesignIsManual
+        ? (peakDesignDryBulbAvailable ? "Manual Override" : "Unavailable")
+        : (peakDesignIsLocalCache && peakDesignDryBulbAvailable
+            ? "ASHRAE 20-year Extreme Design Condition (Local Cache)"
+            : (peakDesignIsOnline && peakDesignDryBulbAvailable
+                ? "ASHRAE 20-year Extreme Design Condition (Online)"
+                : "Unavailable"));
+    const peakDesignLookupDisplay = peakDesignIsManual
+        ? (peakDesignDryBulbAvailable ? "Manual Override" : "Unavailable")
+        : (peakDesignIsLocalCache && peakDesignDryBulbAvailable
+            ? "Local Cache"
+            : (peakDesignIsOnline && peakDesignDryBulbAvailable
+                ? "Online"
+                : "Unavailable"));
+    const peakDesignWarning = !peakDesignDryBulbAvailable
+        ? `Peak design condition is unavailable${peak.peak_design_lookup_failure_reason ? `: ${esc(peak.peak_design_lookup_failure_reason)}` : "."} Peak Design PUE cannot be substantiated as ASHRAE-based.`
+        : "";
+    const peakDesignFacilityPower = peak.peak_design_facility_electrical_demand_kW
+        ?? peak.peak_design_total_facility_power_kW;
+    const peakDesignEquipmentRows = [
+        ["ACC Total Power, kW", peak.peak_design_ACC_power_kW],
+        ["Chiller Total Power, kW", peak.peak_design_chiller_power_kW],
+        ["Chiller COP", peak.peak_design_chiller_COP],
+        ["Dry Cooler Total Power, kW", peak.peak_design_dry_cooler_power_kW],
+        ["CHW Pump Power, kW", peak.peak_design_CHW_pump_power_kW],
+        ["RTC Power, kW", peak.peak_design_RTC_power_kW],
+        ["CDU Power, kW", peak.peak_design_CDU_power_kW],
+        ["MAU Power, kW", peak.peak_design_MAU_power_kW],
+        ["Engine Radiator Power, kW", peak.peak_design_engine_radiator_power_kW],
+        ["Other Active Equipment Power, kW", peak.peak_design_other_electrical_auxiliary_power_kW],
+        ["Electrical Loss, kW", peak.peak_design_electrical_loss_kW]
+    ].filter(([, value]) => Number.isFinite(Number(value)))
+        .map(([label, value]) => [label, reportValue(value, "", label === "Chiller COP" ? 3 : 1)]);
     const importedCurveRows = reportCurves.map(curve => [
         curve.category,
         esc(curve.curveId),
@@ -3224,9 +3266,11 @@ function buildHtmlReportFromSections(context) {
     <p>This assessment evaluates annual operating performance using the selected cooling configuration, weather data, equipment curves, and structured report sections returned by the report dispatcher.</p>
     <div class="meta">
         <div class="metric"><div class="label">Annual Average PUE</div><div class="value">${reportValue(annual.annual_average_PUE, "", 3)}</div></div>
-        <div class="metric"><div class="label">${esc(peakMetric[0])}</div><div class="value">${reportValue(peakMetric[1], "", 3)}</div></div>
+        <div class="metric"><div class="label">Peak Design PUE</div><div class="value">${peakDesignPueAvailable ? reportValue(peak.peak_PUE, "", 3) : "N/A"}</div></div>
+        <div class="metric"><div class="label">Maximum Hourly PUE</div><div class="value">${reportValue(peakSummary.max_hourly_pue, "", 3)}</div></div>
         <div class="metric"><div class="label">Annual Facility Energy</div><div class="value">${reportValue((annual.annual_facility_energy_kWh || 0) / 1000, " MWh", 0)}</div></div>
     </div>
+    ${peakDesignPueAvailable ? "" : `<div class="note">Peak Design PUE is unavailable because no valid peak design condition result was produced. Maximum Hourly PUE is reported separately and has not been substituted.</div>`}
     <table><tbody>${tableRows([
         ["Site Location", esc(projectInfo.location || weatherSource.project_location || "N/A")],
         ["Cooling System Type", esc(coolingSystemDisplay)],
@@ -3240,15 +3284,37 @@ function buildHtmlReportFromSections(context) {
     <div class="grid">
         <div class="card"><h3>Weather Summary</h3><table><tbody>${tableRows([
             ["Dry Bulb Average", reportValue(drySummary?.avg, " deg C", 1)],
-            ["Dry Bulb Peak", reportValue(drySummary?.max, " deg C", 1)],
+            ["Annual EPW Peak Dry-Bulb Temperature", reportValue(drySummary?.max, " deg C", 1)],
             ["Dry Bulb Minimum", reportValue(drySummary?.min, " deg C", 1)]
         ])}</tbody></table></div>
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
-            ["Source", esc(weatherSource.source || "N/A")],
+            ["Annual Simulation Weather Source", `EPW / 8760-hour TMY data (${esc(weatherSource.source || "source unavailable")})`],
             ["EPW File", esc(weatherSource.epw_file || weather.source_file || "N/A")],
             ["Weather Data Period", esc(getWeatherPeriod(weather) || "N/A")]
         ])}</tbody></table></div>
     </div>
+    <h3>Peak Design Condition</h3>
+    <table><tbody>${tableRows([
+        ["Peak Design Weather Source", esc(peakDesignSourceDisplay)],
+        ["Peak Design Condition Source", esc(peakDesignSourceDisplay)],
+        ["ASHRAE Station Name", esc(peak.peak_design_weather_station || "Not available")],
+        ["ASHRAE Station ID", esc(peak.peak_design_weather_station_id || "Not available")],
+        ["Design Outdoor Dry-Bulb Temperature, deg C", peakDesignDryBulbAvailable ? reportValue(peak.peak_design_outdoor_dry_bulb_C, "", 1) : "Not available"],
+        ["Lookup Status", esc(peakDesignLookupDisplay)],
+        ["Peak Design IT Load, kW", reportValue(peak.peak_design_it_load_kW, "", 1)],
+        ["Peak Design Solar Heat Gain, kW", reportValue(peak.peak_design_solar_heat_gain_kW, "", 1)],
+        ["Peak Design Other Auxiliary Heat Gain, kW", reportValue(peak.peak_design_other_auxiliary_heat_gain_kW, "", 1)],
+        ["Peak Design Cooling Load, kW", reportValue(peak.peak_design_cooling_load_kW, "", 1)],
+        ["Peak Design Facility Power, kW", reportValue(peakDesignFacilityPower, "", 1)],
+        ["Peak Design PUE", peakDesignPueAvailable ? reportValue(peak.peak_PUE, "", 3) : "N/A"],
+        ...peakDesignEquipmentRows
+    ])}</tbody></table>
+    ${(peakDesignIsOnline || peakDesignIsLocalCache) && peakDesignDryBulbAvailable
+        ? `<div class="note">Peak Design PUE is calculated at the ASHRAE 20-year extreme outdoor dry-bulb design condition and is independent of the maximum dry-bulb temperature contained in the annual EPW weather file.</div>`
+        : (peakDesignIsManual && peakDesignDryBulbAvailable
+            ? `<div class="note">Peak Design PUE is calculated using the displayed manual-override outdoor dry-bulb design condition and is independent of the maximum dry-bulb temperature contained in the annual EPW weather file.</div>`
+            : "")}
+    ${peakDesignWarning ? `<div class="note">${peakDesignWarning}</div>` : ""}
     ${tempDistribution ? temperatureDistributionTableHtml(tempDistribution) : `<div class="empty">Temperature distribution unavailable.</div>`}
     ${epwChartSection(weatherData)}
 </section>
@@ -6231,13 +6297,12 @@ function showProjectVisualization(outObj) {
     const peakDetails = document.getElementById("peakHourDetails");
     if (peakDetails) {
         const cards = [
-            ["Peak Facility Hour", peakSummary.peak_facility_hour],
-            ["Peak PUE", fmtNumber(peakSummary.peak_pue, 3)],
+            ["Peak Facility Demand Hour", peakSummary.peak_facility_hour],
             ["Peak Facility Demand", `${fmtInteger(peakSummary.peak_facility_power_kW)} kW`],
-            ["IT Load", `${fmtInteger(peakSummary.peak_it_load_kW)} kW`],
-            ["Outdoor Dry Bulb", `${fmtNumber(peakSummary.peak_outdoor_dry_bulb_C, 1)} deg C`],
-            ["Max Hourly PUE", fmtNumber(peakSummary.max_hourly_pue, 3)],
-            ["Max Hourly PUE Hour", peakSummary.max_hourly_pue_hour]
+            ["IT Load at Peak Facility Demand", `${fmtInteger(peakSummary.peak_it_load_kW)} kW`],
+            ["Outdoor Dry-Bulb at Peak Facility Demand", `${fmtNumber(peakSummary.peak_outdoor_dry_bulb_C, 1)} deg C`],
+            ["Maximum Hourly PUE", fmtNumber(peakSummary.max_hourly_pue, 3)],
+            ["Hour of Maximum Hourly PUE", peakSummary.max_hourly_pue_hour]
         ];
         peakDetails.innerHTML = cards.map(([label, value]) => `
             <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">

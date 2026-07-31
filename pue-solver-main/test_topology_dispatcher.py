@@ -2,9 +2,8 @@ import unittest
 from copy import deepcopy
 
 from configuration_library_loader import build_solver_input_from_library
-from library_solver_adapter import _build_acc_gas_engine_cdu_solver_input
+from topology_adapters.acc_gas_engine_cdu import build_acc_solver_input_from_configuration
 from solver import compute_pue_project
-from topology_adapters.chiller_dry_cooler import FRAMEWORK_REASON
 from topology_dispatcher import (
     NOT_IMPLEMENTED_REASON,
     TopologyDispatchError,
@@ -23,9 +22,10 @@ class TopologyDispatcherTest(unittest.TestCase):
     def test_acc_topology_dispatches_to_solver_adapter(self):
         dispatched = dispatch_topology(self.manifest, deepcopy(self.library_input))
 
-        self.assertIn("project", dispatched)
+        self.assertEqual(dispatched["status"], "success")
         self.assertEqual(dispatched["topology_id"], "acc_gas_engine_cdu")
-        self.assertEqual(dispatched["acc_curve"]["equipment_id"], "ACC_2")
+        self.assertEqual(len(dispatched["hourly_results"]), 8760)
+        self.assertIn("annual_average_PUE", dispatched["annual_results"])
 
     def test_unknown_topology_fails(self):
         manifest = deepcopy(self.manifest)
@@ -34,15 +34,17 @@ class TopologyDispatcherTest(unittest.TestCase):
         with self.assertRaisesRegex(TopologyDispatchError, "Unknown solver_topology"):
             dispatch_topology(manifest, deepcopy(self.library_input))
 
-    def test_chiller_dry_cooler_topology_returns_framework_status(self):
-        manifest = deepcopy(self.manifest)
-        manifest["solver_topology"] = "chiller_dry_cooler"
+    def test_chiller_dry_cooler_topology_returns_annual_result(self):
+        library_input = build_solver_input_from_library(
+            "CHILLER_DRYCOOLER_2MW_GRID", 2.0, "Normal"
+        )
 
-        result = dispatch_topology(manifest, deepcopy(self.library_input))
+        result = dispatch_topology(library_input["configuration_manifest"], deepcopy(library_input))
 
-        self.assertEqual(result["status"], "framework_ready_data_missing")
-        self.assertEqual(result["topology"], "chiller_dry_cooler")
-        self.assertEqual(result["reason"], FRAMEWORK_REASON)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["topology_id"], "chiller_dry_cooler")
+        self.assertEqual(len(result["hourly_results"]), 8760)
+        self.assertIn("annual_average_PUE", result["annual_results"])
 
     def test_framework_only_topology_without_adapter_returns_not_implemented_error(self):
         manifest = deepcopy(self.manifest)
@@ -56,9 +58,9 @@ class TopologyDispatcherTest(unittest.TestCase):
 
     def test_acc_annual_pue_output_remains_unchanged(self):
         dispatched = dispatch_topology(self.manifest, deepcopy(self.library_input))
-        previous = _build_acc_gas_engine_cdu_solver_input(deepcopy(self.library_input))
+        previous = build_acc_solver_input_from_configuration(self.manifest, deepcopy(self.library_input))
 
-        dispatched_pue = compute_pue_project(dispatched)["annual_results"]["annual_average_PUE"]
+        dispatched_pue = dispatched["annual_results"]["annual_average_PUE"]
         previous_pue = compute_pue_project(previous)["annual_results"]["annual_average_PUE"]
 
         self.assertLess(abs(dispatched_pue - previous_pue), 1e-9)

@@ -8,10 +8,9 @@ from configuration_manifest import ConfigurationManifestError, discover_configur
 from configuration_validator import validate_configuration_library
 from equipment_metadata import load_equipment_metadata, validate_equipment_folder
 from equipment_role_resolver import resolve_equipment_role_id
-from library_solver_adapter import _build_acc_gas_engine_cdu_solver_input
 from report_dispatcher import dispatch_report
 from solver import compute_pue_project
-from topology_adapters.chiller_dry_cooler import FRAMEWORK_REASON
+from topology_adapters.acc_gas_engine_cdu import build_acc_solver_input_from_configuration
 from topology_dispatcher import dispatch_topology
 from topology_registry import get_topology
 
@@ -43,7 +42,7 @@ class ChillerDryCoolerFrameworkTest(unittest.TestCase):
         by_id = {item["configuration_id"]: item for item in manifests}
 
         self.assertIn(CONFIGURATION_ID, by_id)
-        self.assertEqual(by_id[CONFIGURATION_ID]["implementation_status"], "framework_ready_data_missing")
+        self.assertEqual(by_id[CONFIGURATION_ID]["implementation_status"], "implemented")
         self.assertEqual(by_id[CONFIGURATION_ID]["solver_topology"], "chiller_dry_cooler")
 
     def test_manifest_validation_uses_chiller_dry_cooler_roles(self):
@@ -118,28 +117,30 @@ class ChillerDryCoolerFrameworkTest(unittest.TestCase):
 
             validate_configuration_manifest(manifest)
 
-    def test_chiller_dry_cooler_dispatch_returns_framework_status(self):
-        result = dispatch_topology(self.manifest, {"selected_curves": self.loaded_equipment})
+    def test_chiller_dry_cooler_dispatch_returns_annual_result(self):
+        library_input = build_solver_input_from_library(CONFIGURATION_ID, 2.0, "Normal")
+        result = dispatch_topology(library_input["configuration_manifest"], library_input)
 
-        self.assertEqual(result["status"], "framework_ready_data_missing")
-        self.assertEqual(result["topology"], "chiller_dry_cooler")
-        self.assertEqual(result["reason"], FRAMEWORK_REASON)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["topology_id"], "chiller_dry_cooler")
+        self.assertEqual(len(result["hourly_results"]), 8760)
+        self.assertIn("annual_average_PUE", result["annual_results"])
 
-    def test_topology_registry_and_report_profile_are_framework_ready(self):
+    def test_topology_registry_and_report_profile_are_implemented(self):
         topology = get_topology("chiller_dry_cooler")
         report = dispatch_report("chiller_dry_cooler", {"annual_results": {}})
 
         self.assertEqual(topology["adapter"], "chiller_dry_cooler")
-        self.assertEqual(topology["status"], "framework_ready_data_missing")
+        self.assertEqual(topology["status"], "implemented")
         self.assertEqual(report["profile_id"], "chiller_dry_cooler")
-        self.assertEqual(report["configuration_status"], "Framework Ready / Data Missing")
+        self.assertEqual(report["configuration_status"], "Implemented")
 
     def test_existing_acc_annual_pue_remains_unchanged(self):
         library_input = build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
         current = dispatch_topology(library_input["configuration_manifest"], deepcopy(library_input))
-        previous = _build_acc_gas_engine_cdu_solver_input(deepcopy(library_input))
+        previous = build_acc_solver_input_from_configuration(library_input["configuration_manifest"], deepcopy(library_input))
 
-        current_pue = compute_pue_project(current)["annual_results"]["annual_average_PUE"]
+        current_pue = current["annual_results"]["annual_average_PUE"]
         previous_pue = compute_pue_project(previous)["annual_results"]["annual_average_PUE"]
 
         self.assertLess(abs(current_pue - previous_pue), 1e-9)

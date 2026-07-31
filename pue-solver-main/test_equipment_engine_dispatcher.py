@@ -52,10 +52,26 @@ class EquipmentEngineDispatcherTest(unittest.TestCase):
 
         engine = dispatch_equipment_engine(metadata, metadata["curve_type"], [{"load_ratio": 1.0}])
 
-        self.assertEqual(engine["status"], "framework_ready")
+        self.assertEqual(engine["status"], "implemented")
         self.assertEqual(engine["equipment_type"], "CHILLER")
         self.assertEqual(engine["curve_schema"], "cop_map_2D")
-        self.assertIsNone(engine["engine_type"])
+        self.assertEqual(engine["engine_type"], "equipment_engines.chiller.ChillerEngine")
+
+    def test_dry_cooler_dispatch_works(self):
+        metadata = load_equipment_metadata(
+            Path(__file__).resolve().parent.parent
+            / "Configuration Library"
+            / "CHILLER_DRYCOOLER_2MW_GRID"
+            / "equipment"
+            / "DRYCOOLER_6"
+        )
+
+        engine = dispatch_equipment_engine(metadata, metadata["curve_type"], [{"Outdoor_Dry_Bulb_C": 35}])
+
+        self.assertEqual(engine["status"], "implemented")
+        self.assertEqual(engine["equipment_type"], "DRY_COOLER")
+        self.assertEqual(engine["curve_schema"], "ambient_capacity_power_1D")
+        self.assertEqual(engine["engine_type"], "equipment_engines.dry_cooler.DryCoolerEngine")
 
     def test_unknown_curve_rejected(self):
         metadata = {

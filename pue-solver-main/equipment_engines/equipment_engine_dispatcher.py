@@ -7,6 +7,8 @@ solver.py formulas, or equipment curve lookup behavior.
 from copy import deepcopy
 
 from equipment_curve_registry import validate_curve_type_supported
+from equipment_engines.chiller import ChillerEngine
+from equipment_engines.dry_cooler import DryCoolerEngine
 
 
 class EquipmentEngineDispatchError(ValueError):
@@ -52,15 +54,17 @@ ENGINE_REGISTRY = {
     },
     ("CHILLER", "cop_map_2D"): {
         "engine_key": "chiller_cop_map_2d",
-        "engine_type": None,
-        "status": "framework_ready",
-        "reason": "Validated manufacturer Solver_Curve data and solver module implementation are required before runtime simulation.",
+        "engine_type": "equipment_engines.chiller.ChillerEngine",
+        "engine_class": ChillerEngine,
+        "status": "implemented",
+        "reason": "Uses Configuration Library chiller COP map runtime engine.",
     },
     ("DRY_COOLER", "ambient_capacity_power_1D"): {
         "engine_key": "dry_cooler_ambient_capacity_power_1d",
-        "engine_type": None,
-        "status": "framework_ready",
-        "reason": "Validated manufacturer Solver_Curve data and solver module implementation are required before runtime simulation.",
+        "engine_type": "equipment_engines.dry_cooler.DryCoolerEngine",
+        "engine_class": DryCoolerEngine,
+        "status": "implemented",
+        "reason": "Uses Configuration Library dry cooler ambient capacity/power runtime engine.",
     },
 }
 
@@ -89,6 +93,7 @@ def dispatch_equipment_engine(equipment_metadata, curve_type=None, curve_data=No
         )
 
     result = deepcopy(registration)
+    engine_class = registration.get("engine_class")
     result.update({
         "equipment_id": metadata.get("equipment_id", ""),
         "equipment_type": equipment_type,
@@ -96,6 +101,12 @@ def dispatch_equipment_engine(equipment_metadata, curve_type=None, curve_data=No
         "curve_schema": curve_schema,
         "curve_data": curve_data,
     })
+    if engine_class is not None:
+        result["engine_class"] = engine_class
+        result["engine"] = engine_class(
+            equipment_id=metadata.get("equipment_id", equipment_type),
+            curve_data=curve_data,
+        )
     return result
 
 

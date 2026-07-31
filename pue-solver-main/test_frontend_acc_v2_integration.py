@@ -42,13 +42,28 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
 
     def test_configuration_library_run_path_no_longer_branches_to_benchmark_modes(self):
         run_block = self._function_source("runUsingConfigurationLibrary")
-        self.assertIn("CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE", run_block)
-        self.assertIn("applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path)", run_block)
-        self.assertIn("Configuration Library path is missing. Please click Load Configuration Library before running.", run_block)
-        self.assertIn("await run({ libraryRun: true, libraryInput: adaptedInput });", run_block)
+        self.assertIn('const solverFn = "dispatch_topology"', run_block)
+        self.assertNotIn("applyAccCalculationEngineSelection(adaptedInput, calculationMode, libraryInput.configuration_path)", run_block)
+        self.assertNotIn("Configuration Library path is missing. Please click Load Configuration Library before running.", run_block)
+        self.assertIn("await run({ libraryRun: true, libraryInput: adaptedInput, solverFn });", run_block)
         self.assertNotIn("compute_acc_excel_benchmark", run_block)
         self.assertNotIn("compute_acc_excel_replicated_hourly", run_block)
         self.assertNotIn("compute_acc_experimental_hourly_shape", run_block)
+
+    def test_configuration_library_dispatch_receives_synced_pyodide_configuration_path(self):
+        run_block = self._function_source("runUsingConfigurationLibrary")
+        self.assertIn("syncResult = await syncConfigurationLibraryToPyodide(configurationLibraryData)", run_block)
+        self.assertIn("libraryInput.configuration_path = syncResult.configuration_path", run_block)
+        self.assertIn("const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput)", run_block)
+        self.assertIn('const solverFn = "dispatch_topology"', run_block)
+        self.assertLess(
+            run_block.index("libraryInput.configuration_path = syncResult.configuration_path"),
+            run_block.index("const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput)"),
+        )
+        self.assertLess(
+            run_block.index("const adaptedInput = convertFrontendLibraryInputToSolverInput(libraryInput)"),
+            run_block.index('const solverFn = "dispatch_topology"'),
+        )
 
     def test_frontend_rejects_empty_hourly_project_output(self):
         run_block = self._function_source("run")
@@ -108,26 +123,34 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "equipment_curve_lookup.py",
             "equipment_curve_reader.py",
             "equipment_engine.py",
+            "cooling_load_model.py",
             "topology_dispatcher.py",
             "topology_adapters/__init__.py",
             "topology_adapters/acc_gas_engine_cdu.py",
+            "topology_adapters/chiller_dry_cooler_runtime.py",
             "topology_adapters/chiller_dry_cooler.py",
             "equipment_type_registry.py",
             "equipment_curve_registry.py",
             "equipment_metadata.py",
             "equipment_engines/__init__.py",
+            "equipment_engines/chiller.py",
+            "equipment_engines/dry_cooler.py",
             "equipment_engines/equipment_engine_dispatcher.py",
             "report_profile_registry.py",
             "report_dispatcher.py",
             "configuration_manifest.py",
             "equipment_role_resolver.py",
+            "unit_scenario_manager.py",
             "configuration_library_loader.py",
+            "configuration_validator.py",
+            "library_solver_adapter.py",
             "equipment_registry.py",
             "acc_v2_curve_lookup.py",
             "acc_v2_curve_reader.py",
             "acc_v2_diagnostics.py",
             "acc_v2_engine.py",
             "unit_quantity.py",
+            "solver.py",
         ):
             self.assertIn(f'"{module_name}"', self.ui)
         self.assertLess(ensure_block.index("DIRECT_MODE_PYTHON_MODULES"), ensure_block.index('fetch("./solver.py", { cache: "no-store" })'))
@@ -143,15 +166,22 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
         self.assertIn('"topology_dispatcher.py"', module_block)
         self.assertIn('"topology_adapters/__init__.py"', module_block)
         self.assertIn('"topology_adapters/acc_gas_engine_cdu.py"', module_block)
+        self.assertIn('"topology_adapters/chiller_dry_cooler_runtime.py"', module_block)
         self.assertIn('"topology_adapters/chiller_dry_cooler.py"', module_block)
         self.assertIn('"equipment_type_registry.py"', module_block)
         self.assertIn('"equipment_curve_registry.py"', module_block)
         self.assertIn('"equipment_metadata.py"', module_block)
         self.assertIn('"equipment_engines/__init__.py"', module_block)
+        self.assertIn('"equipment_engines/chiller.py"', module_block)
+        self.assertIn('"equipment_engines/dry_cooler.py"', module_block)
         self.assertIn('"equipment_engines/equipment_engine_dispatcher.py"', module_block)
         self.assertIn('"report_profile_registry.py"', module_block)
         self.assertIn('"report_dispatcher.py"', module_block)
+        self.assertIn('"unit_scenario_manager.py"', module_block)
         self.assertIn('"configuration_library_loader.py"', module_block)
+        self.assertIn('"configuration_validator.py"', module_block)
+        self.assertIn('"solver.py"', module_block)
+        self.assertIn('"library_solver_adapter.py"', module_block)
         self.assertIn("ensurePyodideDir(directory)", self._function_source("loadPythonModuleIntoPyodide"))
         self.assertLess(
             module_block.index('"configuration_manifest.py"'),
@@ -161,10 +191,56 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             module_block.index('"equipment_role_resolver.py"'),
             module_block.index('"configuration_library_loader.py"'),
         )
+        self.assertLess(
+            module_block.index('"unit_scenario_manager.py"'),
+            module_block.index('"configuration_library_loader.py"'),
+        )
+        self.assertLess(
+            module_block.index('"configuration_validator.py"'),
+            module_block.index('"library_solver_adapter.py"'),
+        )
+        self.assertLess(
+            module_block.index('"configuration_library_loader.py"'),
+            module_block.index('"library_solver_adapter.py"'),
+        )
+        self.assertLess(
+            module_block.index('"solver.py"'),
+            module_block.index('"library_solver_adapter.py"'),
+        )
+        self.assertLess(
+            module_block.index('"library_solver_adapter.py"'),
+            module_block.index('"topology_adapters/acc_gas_engine_cdu.py"'),
+        )
+        self.assertLess(
+            module_block.index('"topology_adapters/acc_gas_engine_cdu.py"'),
+            module_block.index('"topology_dispatcher.py"'),
+        )
 
-    def test_frontend_result_area_reports_acc_engine_used(self):
+    def test_pyodide_loads_acc_topology_solver_adapter_dependency(self):
+        module_block = self.ui[
+            self.ui.index("const DIRECT_MODE_PYTHON_MODULES"):
+            self.ui.index("function log")
+        ]
+        acc_adapter = (
+            Path(__file__).resolve().parent / "topology_adapters" / "acc_gas_engine_cdu.py"
+        ).read_text(encoding="utf-8")
+        configuration_loader = (
+            Path(__file__).resolve().parent / "configuration_library_loader.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "from library_solver_adapter import _build_acc_gas_engine_cdu_solver_input",
+            acc_adapter,
+        )
+        self.assertIn("from solver import compute_pue_project", acc_adapter)
+        self.assertIn("from unit_scenario_manager import", configuration_loader)
+        self.assertIn('"unit_scenario_manager.py"', module_block)
+        self.assertIn('"solver.py"', module_block)
+        self.assertIn('"library_solver_adapter.py"', module_block)
+
+    def test_frontend_result_area_reports_profile_driven_simulation_engine(self):
         self.assertIn("function getAccEngineUsedLabel", self.ui)
-        self.assertIn("ACC Engine Used:", self.ui)
+        self.assertIn("Simulation Engine:", self.ui)
         self.assertIn("ACC V2 Configuration Library Engine", self.ui)
         self.assertNotIn("ACC V2 unavailable", self.ui)
 

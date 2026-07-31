@@ -30,11 +30,15 @@ class TopologyRegistryTest(unittest.TestCase):
         self.assertEqual(get_topology("acc_gas_engine_cdu")["implementation_status"], "implemented")
         self.assertEqual(get_topology("acc")["implementation_status"], "implemented")
 
-    def test_non_acc_topologies_are_not_implemented(self):
+    def test_implemented_topologies_are_marked_implemented(self):
         self.assertEqual(
             get_topology("chiller_dry_cooler")["implementation_status"],
-            "framework_ready_data_missing",
+            "implemented",
         )
+        for topology_id in ("acc_gas_engine_cdu", "chiller_dry_cooler"):
+            self.assertEqual(get_topology(topology_id)["implementation_status"], "implemented")
+
+    def test_remaining_non_acc_topologies_are_not_implemented(self):
         for topology_id in set(TOPOLOGY_REGISTRY) - {"acc_gas_engine_cdu", "chiller_dry_cooler"}:
             self.assertEqual(get_topology(topology_id)["implementation_status"], "placeholder")
 

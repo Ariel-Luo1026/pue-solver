@@ -10,10 +10,10 @@ from configuration_validator import (
     validate_configuration_manifest,
 )
 from library_solver_adapter import (
-    _build_acc_gas_engine_cdu_solver_input,
     build_solver_input_from_configuration,
 )
 from solver import compute_pue_project
+from topology_adapters.acc_gas_engine_cdu import build_acc_solver_input_from_configuration
 
 
 class ConfigurationValidatorTest(unittest.TestCase):
@@ -254,9 +254,12 @@ class ConfigurationValidatorTest(unittest.TestCase):
             library_input["configuration_manifest"],
             deepcopy(library_input),
         )
-        previous = _build_acc_gas_engine_cdu_solver_input(deepcopy(library_input))
+        previous = build_acc_solver_input_from_configuration(
+            library_input["configuration_manifest"],
+            deepcopy(library_input),
+        )
 
-        validated_pue = compute_pue_project(validated)["annual_results"]["annual_average_PUE"]
+        validated_pue = validated["annual_results"]["annual_average_PUE"]
         previous_pue = compute_pue_project(previous)["annual_results"]["annual_average_PUE"]
         self.assertLess(abs(validated_pue - previous_pue), 1e-9)
 

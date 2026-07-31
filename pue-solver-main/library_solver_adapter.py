@@ -14,6 +14,29 @@ def _selected_curve(library_input, equipment_id):
     return curve if isinstance(curve, list) else []
 
 
+def _generic_role_binding(library_input, role_name):
+    equipment = library_input.get("equipment") if isinstance(library_input.get("equipment"), dict) else {}
+    role_bindings = equipment.get("role_bindings") if isinstance(equipment.get("role_bindings"), dict) else {}
+    return deepcopy(role_bindings.get(role_name))
+
+
+def _generic_role_bindings_by_id(library_input, role_names):
+    bindings = {}
+    for role_name in role_names:
+        value = _generic_role_binding(library_input, role_name)
+        for binding in (value if isinstance(value, list) else [value]):
+            if isinstance(binding, dict) and binding.get("equipment_id"):
+                bindings[binding["equipment_id"]] = binding
+    return bindings
+
+
+def _first_generic_role_binding(library_input, role_name):
+    value = _generic_role_binding(library_input, role_name)
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value if isinstance(value, dict) else None
+
+
 def _resolve_equipment_key(mapping, preferred_equipment_id, canonical_equipment_id):
     canonical_equipment_id = canonicalize_equipment_id(canonical_equipment_id)
     if preferred_equipment_id in mapping:
@@ -141,6 +164,17 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
     project["active_units"] = active_units
     project["indoor_active_units"] = indoor_active_units
 
+    equipment_context = library_input.get("equipment") if isinstance(library_input.get("equipment"), dict) else {}
+    auxiliary_equipment = deepcopy(equipment_context.get("auxiliary"))
+    if not isinstance(auxiliary_equipment, dict) or not auxiliary_equipment:
+        auxiliary_equipment = _generic_role_bindings_by_id(library_input, ("cdu", "rtc", "mau", "indoor_cooling"))
+    engine_binding = deepcopy(equipment_context.get("cooling", {}).get("engine")) if isinstance(equipment_context.get("cooling"), dict) else None
+    if not isinstance(engine_binding, dict):
+        engine_binding = _first_generic_role_binding(library_input, "engine")
+    radiator_binding = deepcopy(equipment_context.get("cooling", {}).get("engine_radiator")) if isinstance(equipment_context.get("cooling"), dict) else None
+    if not isinstance(radiator_binding, dict):
+        radiator_binding = _first_generic_role_binding(library_input, "engine_radiator")
+
     library_context = {
         "configuration_id": library_input.get("configuration_id") or library_input.get("configuration_library", {}).get("configuration_id"),
         "configuration_display_name": library_input.get("configuration_display_name") or library_input.get("configuration_library", {}).get("configuration_display_name"),
@@ -150,6 +184,7 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         "solver_dispatch_key": library_input.get("solver_dispatch_key") or library_input.get("configuration_library", {}).get("solver_dispatch_key") or "acc_gas_engine_cdu",
         "report_profile": library_input.get("report_profile") or library_input.get("configuration_library", {}).get("report_profile") or "acc_gas_engine_cdu",
         "configuration_name": library_input.get("configuration_library", {}).get("configuration_name"),
+        "configuration_path": library_input.get("configuration_path"),
         "scenario_name": library_input.get("scenario_name"),
         "acc_curve": {
             "equipment_id": acc_equipment_id,
@@ -161,9 +196,9 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         "active_units": active_units,
         "indoor_active_units": indoor_active_units,
         "selected_curves": deepcopy(library_input.get("selected_curves", {})),
-        "engine_output_reference": deepcopy(library_input.get("equipment", {}).get("cooling", {}).get("engine")),
-        "engine_radiator": deepcopy(library_input.get("equipment", {}).get("cooling", {}).get("engine_radiator")),
-        "auxiliary_equipment": deepcopy(library_input.get("equipment", {}).get("auxiliary", {})),
+        "engine_output_reference": engine_binding,
+        "engine_radiator": radiator_binding,
+        "auxiliary_equipment": auxiliary_equipment,
         "electrical_path": deepcopy(library_input.get("electrical_path")),
         "adapter_assumptions": weather.get("metadata", {}),
     }
@@ -171,6 +206,7 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         "configuration_id": library_context["configuration_id"],
         "configuration_display_name": library_context["configuration_display_name"],
         "configuration_manifest_schema_version": library_context["configuration_manifest_schema_version"],
+        "configuration_path": library_context["configuration_path"],
         "topology_id": library_context["topology_id"],
         "implementation_status": library_context["implementation_status"],
         "solver_dispatch_key": library_context["solver_dispatch_key"],
@@ -207,7 +243,7 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
                 "pumps": {"enabled": True, "power_curve_refs": [pump_curve_id], "source_equipment_id": pump_equipment_id},
                 "fans": {"enabled": False},
             },
-            "library_fixed_power": deepcopy(library_input.get("equipment", {}).get("auxiliary", {})),
+            "library_fixed_power": deepcopy(auxiliary_equipment),
             "electrical_path": deepcopy(library_input.get("electrical_path")),
         },
         "electrical_path": deepcopy(library_input.get("electrical_path")),
@@ -237,6 +273,13 @@ def build_solver_input_from_configuration(manifest, equipment_roles):
 def convert_library_input_to_solver_input(library_input):
     """Compatibility wrapper for existing callers of the Configuration Library adapter."""
     manifest = library_input.get("configuration_manifest", {}) if isinstance(library_input, dict) else {}
+    topology_id = (
+        library_input.get("topology_id")
+        or library_input.get("solver_dispatch_key")
+        or manifest.get("solver_topology")
+    )
+    if topology_id == "acc_gas_engine_cdu":
+        return _build_acc_gas_engine_cdu_solver_input(library_input)
     dispatched = build_solver_input_from_configuration(manifest, library_input)
     if isinstance(dispatched, dict) and dispatched.get("status") == "not_implemented":
         raise ValueError(

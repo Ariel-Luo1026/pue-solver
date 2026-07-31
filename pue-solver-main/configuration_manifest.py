@@ -100,6 +100,13 @@ def validate_configuration_manifest(raw_manifest, manifest_path=None):
     manifest["required_roles"] = [str(role) for role in manifest["required_roles"]]
     manifest["optional_roles"] = [str(role) for role in manifest["optional_roles"]]
     _validate_topology_compatibility(manifest, manifest_path)
+    topology = get_topology(manifest["solver_topology"]) or {}
+    required_inputs = manifest.get("required_inputs", topology.get("required_inputs", []))
+    if required_inputs is None:
+        required_inputs = []
+    if not isinstance(required_inputs, list):
+        raise _error(configuration_id, manifest_path, "required_inputs must be a list")
+    manifest["required_inputs"] = [str(item) for item in required_inputs]
 
     for role in manifest["required_roles"]:
         equipment_id = manifest["equipment_roles"].get(role)

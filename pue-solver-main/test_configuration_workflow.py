@@ -21,6 +21,7 @@ from library_solver_adapter import (
 )
 from report_dispatcher import dispatch_report
 from solver import compute_pue_project
+from topology_adapters.acc_gas_engine_cdu import build_acc_solver_input_from_configuration
 from topology_dispatcher import dispatch_topology
 
 
@@ -123,12 +124,12 @@ class ConfigurationWorkflowTest(unittest.TestCase):
             deepcopy(library_input),
         )
         direct_dispatch = dispatch_topology(library_input["configuration_manifest"], deepcopy(library_input))
-        previous = _build_acc_gas_engine_cdu_solver_input(deepcopy(library_input))
+        previous = build_acc_solver_input_from_configuration(library_input["configuration_manifest"], deepcopy(library_input))
 
-        dispatched_pue = compute_pue_project(dispatched)["annual_results"]["annual_average_PUE"]
-        direct_dispatch_pue = compute_pue_project(direct_dispatch)["annual_results"]["annual_average_PUE"]
+        dispatched_pue = dispatched["annual_results"]["annual_average_PUE"]
+        direct_dispatch_pue = direct_dispatch["annual_results"]["annual_average_PUE"]
         previous_pue = compute_pue_project(previous)["annual_results"]["annual_average_PUE"]
-        report = dispatch_report(dispatched["topology_id"], {"annual_results": {"annual_average_PUE": dispatched_pue}})
+        report = dispatch_report(direct_dispatch["topology_id"], {"annual_results": {"annual_average_PUE": dispatched_pue}})
 
         self.assertLess(abs(dispatched_pue - previous_pue), 1e-9)
         self.assertLess(abs(direct_dispatch_pue - previous_pue), 1e-9)
