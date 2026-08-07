@@ -234,6 +234,32 @@
     "lon": 121.805
   },
   {
+    "city": "Ain Sefra",
+    "country": "DZA",
+    "aliases": [
+      "Ain Sefra",
+      "DZA Ain Sefra",
+      "605600",
+      "SRC-TMYx",
+      "DZA NA",
+      "DZA NA Ain",
+      "DZA NA Ain Sefra 605600 TMYx 2011-2025",
+      "DZA_NA_Ain Sefra 605600_TMYx 2011-2025",
+      "DZA_NA_Ain-Sefra-605600_TMYx-2011-2025",
+      "DZA_NA_Ain.Sefra.605600_TMYx.2011-2025",
+      "JUNO",
+      "Ain.Sefra",
+      "Ain Sefra NA DZA"
+    ],
+    "station": "Ain Sefra",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/DZA_NA_Ain.Sefra.605600_TMYx.2011-2025.epw",
+    "epw_file": "DZA_NA_Ain.Sefra.605600_TMYx.2011-2025.epw",
+    "wmo": "605600",
+    "lat": 32.767,
+    "lon": -0.6
+  },
+  {
     "city": "Madrid WS",
     "country": "ESP",
     "aliases": [
@@ -621,6 +647,33 @@
     "wmo": "994007",
     "lat": 21.3033,
     "lon": -157.8645
+  },
+  {
+    "city": "Columbus",
+    "country": "United States",
+    "aliases": [
+      "Columbus-Port Columbus Intl",
+      "Columbus",
+      "United States Columbus-Port Columbus Intl",
+      "724280",
+      "TMY3",
+      "USA OH",
+      "USA OH Columbus",
+      "USA OH Columbus-Port Columbus Intl AP 724280 TMY3",
+      "USA_OH_Columbus-Port Columbus Intl AP 724280_TMY3",
+      "USA_OH_Columbus-Port-Columbus-Intl-AP-724280_TMY3",
+      "USA_OH_Columbus-Port.Columbus.Intl.AP.724280_TMY3",
+      "JUNO",
+      "Columbus-Port Columbus Intl AP",
+      "Columbus-Port Columbus Intl AP OH USA"
+    ],
+    "station": "Columbus-Port Columbus Intl",
+    "source": "Local EPW",
+    "epw_path": "./data/epw/USA_OH_Columbus-Port.Columbus.Intl.AP.724280_TMY3.epw",
+    "epw_file": "USA_OH_Columbus-Port.Columbus.Intl.AP.724280_TMY3.epw",
+    "wmo": "724280",
+    "lat": 39.983,
+    "lon": -82.883
   },
   {
     "city": "Dallas Love Field",

@@ -78,7 +78,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertEqual(len(self.loaded["equipment_per_cooling_unit"]), 8)
         self.assertTrue(all(item["status"] in {"Found", "Electrical Path Found"} for item in self.loaded["equipment"].values()))
         self.assertIn("Solver_Curve", self.loaded["equipment"]["ACC_2"]["solver_curves"])
-        self.assertIn("Solver_Curve_Normal", self.loaded["equipment"]["CHW_PUMP_2"]["solver_curves"])
+        self.assertIn("Solver_Curve", self.loaded["equipment"]["CHW_PUMP_2"]["solver_curves"])
         self.assertIn("Solver_Curve_Failure", self.loaded["equipment"]["ENGINE_2"]["solver_curves"])
 
     def test_shared_equipment_alias_json_loads_required_mappings(self):
@@ -120,8 +120,8 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
 
     def test_normal_and_failure_curve_selection_with_fallback(self):
         equipment = self.loaded["equipment"]
-        self.assertEqual(select_solver_curve(equipment["CHW_PUMP_2"], "Normal")["sheet_name"], "Solver_Curve_Normal")
-        self.assertEqual(select_solver_curve(equipment["CHW_PUMP_2"], "Failure")["sheet_name"], "Solver_Curve_Failure")
+        self.assertEqual(select_solver_curve(equipment["CHW_PUMP_2"], "Normal")["sheet_name"], "Solver_Curve")
+        self.assertEqual(select_solver_curve(equipment["CHW_PUMP_2"], "Failure")["sheet_name"], "Solver_Curve")
         self.assertEqual(select_solver_curve(equipment["ACC_2"], "Normal")["sheet_name"], "Solver_Curve")
         self.assertEqual(select_solver_curve(equipment["CDU_2"], "Failure")["sheet_name"], "Solver_Curve")
         self.assertEqual(select_solver_curve(equipment["ELECTRICAL_DISTRIBUTION_2"], "Normal")["status"], "Electrical Path Found")
@@ -149,7 +149,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         equipment = self.loaded["equipment"]
         expected = {
             "ACC_2": ("Solver_Curve", "Solver_Curve"),
-            "CHW_PUMP_2": ("Solver_Curve_Normal", "Solver_Curve_Failure"),
+            "CHW_PUMP_2": ("Solver_Curve", "Solver_Curve"),
             "ENGINE_2": ("Solver_Curve_Normal", "Solver_Curve_Failure"),
             "ENGINE_RADIATOR_2": ("Solver_Curve_Normal", "Solver_Curve_Failure"),
             "CDU_2": ("Solver_Curve", "Solver_Curve"),
@@ -201,7 +201,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
         self.assertAlmostEqual(project["it_load"]["hourly_it_load_kW"][0], 3960)
         self.assertAlmostEqual(solver_input["electrical_path"]["it_efficiency"], 0.9723)
         self.assertAlmostEqual(solver_input["electrical_path"]["mep_efficiency"], 0.9959)
-        self.assertEqual(solver_input["selected_curves"]["CHW_PUMP_2"]["sheet_name"], "Solver_Curve_Normal")
+        self.assertEqual(solver_input["selected_curves"]["CHW_PUMP_2"]["sheet_name"], "Solver_Curve")
         self.assertEqual(solver_input["selected_curves"]["CDU_2"]["sheet_name"], "Solver_Curve")
         self.assertEqual(solver_input["configuration_id"], "ACC_1.5MW_GASENGINE_CDU")
         self.assertEqual(solver_input["topology_id"], "acc_gas_engine_cdu")

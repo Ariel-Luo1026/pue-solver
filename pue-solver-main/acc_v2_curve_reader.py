@@ -248,14 +248,8 @@ def _optional_sheet_warnings(sheet_names, equipment_id):
 
 
 def _select_solver_curve_sheet(equipment_id, sheet_names):
-    if equipment_id == "pump" or canonicalize_equipment_id(equipment_id) == "CHW_PUMP_2":
-        for sheet_name in ("Solver_Curve_Normal", "Solver_Curve"):
-            if sheet_name in sheet_names:
-                return sheet_name
-        scenario_sheets = sorted(
-            sheet_name for sheet_name in sheet_names if sheet_name.startswith("Solver_Curve_")
-        )
-        return scenario_sheets[0] if scenario_sheets else None
+    if equipment_id == "pump" or canonicalize_equipment_id(equipment_id).startswith("CHW_PUMP"):
+        return "Solver_Curve" if "Solver_Curve" in sheet_names else None
     return "Solver_Curve" if "Solver_Curve" in sheet_names else None
 
 

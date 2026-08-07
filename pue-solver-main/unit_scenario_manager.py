@@ -12,6 +12,8 @@ DEFAULT_ROLE_KEYS = (
     "chiller_units",
     "dry_cooler_units",
     "pump_units",
+    "chw_pump_units",
+    "cw_pump_units",
     "indoor_units",
     "engine_units",
 )
@@ -97,6 +99,8 @@ def _role_quantities(base, overrides=None):
         "chiller_units": _role_count(base["required_units"], base["installed_units"], base["active_units"]),
         "dry_cooler_units": _role_count(base["required_units"], base["installed_units"], base["active_units"]),
         "pump_units": _role_count(base["required_units"], base["installed_units"], base["active_units"]),
+        "chw_pump_units": _role_count(base["required_units"], base["installed_units"], base["active_units"]),
+        "cw_pump_units": _role_count(base["required_units"], base["installed_units"], base["active_units"]),
         "indoor_units": _role_count(base["required_units"], base["installed_units"], base["installed_units"]),
         "engine_units": _role_count(base["required_units"], base["installed_units"], base["active_units"]),
     }

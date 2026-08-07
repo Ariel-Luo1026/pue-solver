@@ -46,6 +46,7 @@ LEGACY_COMPONENT_FIELDS = (
     ("CHILLER", ("chiller_power_kW",)),
     ("DRY_COOLER", ("dry_cooler_power_kW", "dry_cooler_fan_power_kW")),
     ("CHW_PUMP", ("pump_power_kW", "pumps_kw")),
+    ("CW_PUMP", ("cw_pump_power_total_kW",)),
     ("INDOOR_EQUIPMENT", ("white_space_equipment_power_kW",)),
     ("ELECTRICAL_LOSS", ("electrical_loss_kW",)),
     ("AUXILIARY", ("auxiliary_power_kW",)),

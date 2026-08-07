@@ -113,7 +113,7 @@ class ConfigurationWorkflowTest(unittest.TestCase):
         self.assertIn("TEST_ACC_CONFIGURATION", indexed_ids)
         self.assertIn('test_only: "Test Only"', ui)
         self.assertIn("Configuration Validation", ui)
-        self.assertIn("Equipment Summary / Package Auto Binding", ui)
+        self.assertIn("Equipment Binding Details", ui)
         self.assertNotIn("TEST_ACC_CONFIGURATION", ui)
 
     def test_topology_dispatcher_and_report_layer_preserve_existing_acc_result(self):

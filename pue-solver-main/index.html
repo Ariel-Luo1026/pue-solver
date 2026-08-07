@@ -463,20 +463,23 @@
                 <select id="scenarioSelect"></select>
             </div>
         </div>
-        <div class="fileGrid" style="margin-top:12px;">
-            <div class="fileSlot">
-                <div class="panelTitle">White Space Equipment</div>
-                <ul id="whiteSpaceEquipmentList" style="margin-bottom:0;"></ul>
+        <details id="coolingAdvancedConfigurationDetails" class="advancedDetails" style="margin-top:12px;">
+            <summary>Advanced Configuration Details</summary>
+            <div class="fileGrid">
+                <div class="fileSlot">
+                    <div class="panelTitle">White Space Equipment</div>
+                    <ul id="whiteSpaceEquipmentList" style="margin-bottom:0;"></ul>
+                </div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Gray Space Equipment</div>
+                    <ul id="graySpaceEquipmentList" style="margin-bottom:0;"></ul>
+                </div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Required Performance Curves</div>
+                    <ul id="coolingPerformanceCurveList" style="margin-bottom:0;"></ul>
+                </div>
             </div>
-            <div class="fileSlot">
-                <div class="panelTitle">Gray Space Equipment</div>
-                <ul id="graySpaceEquipmentList" style="margin-bottom:0;"></ul>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">Required Performance Curves</div>
-                <ul id="coolingPerformanceCurveList" style="margin-bottom:0;"></ul>
-            </div>
-        </div>
+        </details>
         <div id="coolingSystemStatus" class="hint" style="margin-top:10px;"></div>
         <div id="scenarioSummaryPanel" class="panel" style="margin-top:14px; overflow-x:auto;">
             <div class="panelTitle">Scenario Summary</div>
@@ -566,70 +569,37 @@
             </div>
             <div id="peakDesignWeatherStatus" class="hint" style="margin-top:10px;">Peak Design Condition uses ASHRAE n=20 year extreme dry-bulb maximum unless manual override is selected.</div>
         </div>
-        <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Manual Excel upload remains available below.</div>
+        <div id="configurationLibraryStatus" class="hint" style="margin-top:10px;">Not loaded. Select and load a Configuration Library to bind equipment models.</div>
+        <div id="configurationLibraryBindingStatus" class="panel" style="margin-top:12px;">Equipment binding status will appear after the Configuration Library is loaded.</div>
         <div id="configurationLibrarySummary" class="fileGrid" style="margin-top:12px; display:none;"></div>
     </div>
 
     <!-- ================= Framework Diagnostics ================= -->
     <div class="card" id="frameworkDiagnosticsPanel">
-        <h3 style="margin:0 0 10px 0;">Framework Diagnostics</h3>
-        <div class="hint" id="frameworkDiagnosticsNotice">Frontend diagnostics preview — not connected to calculation.</div>
-        <div id="frameworkDiagnosticsGrid" class="fileGrid" style="margin-top:12px;"></div>
+        <details id="frameworkDiagnosticsDetails">
+            <summary class="panelTitle" style="cursor:pointer;">Framework Diagnostics (Developer)</summary>
+            <div class="hint" id="frameworkDiagnosticsNotice" style="margin-top:10px;">Frontend diagnostics preview — not connected to calculation.</div>
+            <div id="frameworkDiagnosticsGrid" class="fileGrid" style="margin-top:12px;"></div>
+        </details>
     </div>
 
     <!-- ================= Standardized Data Inputs ================= -->
     <div class="card">
-        <h3 style="margin:0 0 10px 0;">输入文件</h3>
+        <h3 style="margin:0 0 10px 0;">Simulation Inputs</h3>
         <div class="fileGrid">
             <div class="fileSlot">
-                <div class="panelTitle">1. IT负载全年曲线</div>
-                <input id="fileItLoad" type="file" accept=".json,.xlsx,.xls" />
-                <div id="statusItLoad" class="hint">未加载</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">2. EPW全年温度曲线</div>
-                <input id="fileWeather" type="file" accept=".json,.epw,.xlsx,.xls" />
+                <div class="panelTitle">Weather Source</div>
                 <button type="button" class="secondaryButton" id="btnAutoMatchEpw" style="margin-top:8px;">Auto Match EPW</button>
-                <div id="statusWeather" class="hint">未加载</div>
+                <div id="statusWeather" class="hint">Auto matched EPW: not loaded</div>
                 <div id="autoEpwStatus" class="hint">Weather matching uses Latitude / Longitude. Local match first; online EPW fetch is attempted when API server is running.</div>
             </div>
             <div class="fileSlot">
-                <div class="panelTitle">3. 干冷器性能曲线</div>
-                <input id="fileDryCooler" type="file" accept=".json,.xlsx,.xls,.xml" />
-                <div id="statusDryCooler" class="hint">未加载</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">4. 离心冷水机COP曲面</div>
-                <input id="fileChiller" type="file" accept=".json,.xlsx,.xls,.xml" />
-                <div id="statusChiller" class="hint">未加载</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">5. 电气设备性能曲线</div>
-                <input id="fileElectrical" type="file" accept=".json,.xlsx,.xls,.xml" />
-                <div id="statusElectrical" class="hint">未加载</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">6. 水泵性能曲线</div>
-                <input id="filePumps" type="file" accept=".json,.xlsx,.xls,.xml" />
-                <div id="statusPumps" class="hint">未加载</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">7. Auxiliary Fixed Loads</div>
-                <div class="hint">由系数和全年IT负载自动生成</div>
-                <div id="statusAuxFixed" class="hint">默认系数 0.005</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">8. 末端风机性能曲线</div>
-                <input id="fileFans" type="file" accept=".json,.xlsx,.xls,.xml" />
-                <div id="statusFans" class="hint">未加载</div>
-            </div>
-            <div class="fileSlot">
-                <div class="panelTitle">9. Heat Gains / Auxiliary</div>
+                <div class="panelTitle">Heat Gains / Auxiliary</div>
                 <div class="hint">Solar heat gain and other auxiliary heat gains are included in Total Cooling Load.</div>
                 <div class="compactFields">
                     <label class="muted">
                         Solar Heat Gain Max (kW)
-                        <input id="solarHeatGainMaxKw" type="number" min="0" step="0.1" value="0" />
+                        <input id="solarHeatGainMaxKw" type="number" min="0" step="0.1" value="7" />
                     </label>
                     <label class="muted">
                         Daytime Start Hour
@@ -641,66 +611,25 @@
                     </label>
                     <label class="muted">
                         Other Auxiliary Heat Gains (kW)
-                        <input id="otherAuxiliaryHeatGainKw" type="number" min="0" step="0.1" value="0" />
+                        <input id="otherAuxiliaryHeatGainKw" type="number" min="0" step="0.1" value="71" />
                     </label>
                     <label class="muted" title="Direct electrical loads not represented by dedicated equipment models. Examples include PLC, control cabinets, instrumentation, network equipment, and miscellaneous electrical loads. This value contributes directly to Facility Energy and PUE.">
                         Other Electrical Auxiliary Power (kW)
                         <input id="otherElectricalAuxiliaryPowerKw" type="number" min="0" step="0.1" value="0" />
                     </label>
                 </div>
-                <div id="statusSolarGain" class="hint">Solar Heat Gain 0.0 kW；Other Auxiliary Heat Gains 0.0 kW；Other Electrical Auxiliary Power 0.0 kW</div>
+                <div id="statusSolarGain" class="hint">Solar Heat Gain 7.0 kW；Other Auxiliary Heat Gains 71.0 kW；Other Electrical Auxiliary Power 0.0 kW</div>
             </div>
         </div>
-        <div class="toolbar" style="margin-top:12px;">
-            <button class="secondaryButton" id="btnLoadDemoData">加载演示全年数据</button>
-            <button class="hiddenControl" id="btnBuildFromFiles">从文件生成Solver输入</button>
-            <label class="muted" style="display:flex; gap:8px; align-items:center;">
-                Auxiliary Fixed Load系数
-                <input id="auxFixedCoeff" value="0.005" style="width:90px;" />
-            </label>
-            <label class="muted" style="display:flex; gap:8px; align-items:center;">
-                Dry cooler approach C
-                <input id="dryCoolerApproachC" value="5" style="width:70px;" />
-            </label>
-            <span id="standardInputStatus" class="muted">上传 IT 负载和天气后可直接运行。</span>
-        </div>
-        <div class="curvePreviewGrid">
-            <div class="panel">
-                <div class="panelTitle">IT Load 8760</div>
-                <div class="resultChartBox"><canvas id="inputItChart"></canvas></div>
+        <div id="standardInputStatus" class="muted" style="margin-top:12px;">Load a Configuration Library and auto-match EPW weather to prepare the annual simulation.</div>
+        <details id="advancedInputOverrideDetails" class="advancedDetails" style="margin-top:14px; margin-bottom:0;">
+            <summary>Advanced Input Override</summary>
+            <div class="fileGrid">
+                <div class="fileSlot"><div class="panelTitle">Manual IT Load Profile Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
+                <div class="fileSlot"><div class="panelTitle">Manual Weather File Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
+                <div class="fileSlot"><div class="panelTitle">Custom Equipment Curve Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
             </div>
-            <div class="panel">
-                <div class="panelTitle">Outdoor Dry Bulb 8760</div>
-                <div class="resultChartBox"><canvas id="inputWeatherChart"></canvas></div>
-            </div>
-            <div class="panel">
-                <div class="panelTitle">Dry Cooler Curve</div>
-                <div class="resultChartBox"><canvas id="inputDryCoolerChart"></canvas></div>
-            </div>
-            <div class="panel">
-                <div class="panelTitle">Chiller COP Surface Slices</div>
-                <div class="resultChartBox"><canvas id="inputChillerChart"></canvas></div>
-                <div id="inputChillerSurfaceFunction" class="calcBox" style="margin-top:10px;"></div>
-                <div class="panelTitle" style="margin-top:14px;">3D Chiller COP Surface</div>
-                <div id="inputChillerSurface3d" class="inputSurfaceBox"></div>
-            </div>
-            <div class="panel">
-                <div class="panelTitle">Electrical Efficiency</div>
-                <div class="resultChartBox"><canvas id="inputElectricalChart"></canvas></div>
-            </div>
-            <div class="panel">
-                <div class="panelTitle">Pump Power vs IT Load</div>
-                <div class="resultChartBox"><canvas id="inputPumpChart"></canvas></div>
-            </div>
-            <div class="panel">
-                <div class="panelTitle">Auxiliary Fixed Loads 8760</div>
-                <div class="resultChartBox"><canvas id="inputAuxChart"></canvas></div>
-            </div>
-            <div class="panel">
-                <div class="panelTitle">MAU Power vs IT Load</div>
-                <div class="resultChartBox"><canvas id="inputFanChart"></canvas></div>
-            </div>
-        </div>
+        </details>
     </div>
 
     <!-- ================= Run ================= -->

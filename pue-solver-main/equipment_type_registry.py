@@ -20,6 +20,12 @@ EQUIPMENT_TYPE_REGISTRY = {
         "expected_curve_types": ["load_ratio_power"],
         "status": "implemented",
     },
+    "CW_PUMP": {
+        "equipment_type": "CW_PUMP",
+        "display_name": "Cooling Water Pump",
+        "expected_curve_types": ["load_ratio_power"],
+        "status": "implemented",
+    },
     "CDU": {
         "equipment_type": "CDU",
         "display_name": "Cooling Distribution Unit",
@@ -71,7 +77,7 @@ EQUIPMENT_TYPE_REGISTRY = {
     "DRY_COOLER": {
         "equipment_type": "DRY_COOLER",
         "display_name": "Dry Cooler",
-        "expected_curve_types": ["ambient_capacity_power", "load_ratio_power"],
+        "expected_curve_types": ["ambient_capacity_power", "outdoor_temperature_power", "load_ratio_power"],
         "status": "framework_only",
     },
     "CONDENSER_PUMP": {
@@ -102,6 +108,9 @@ EQUIPMENT_TYPE_ALIASES = {
     "CHW PUMP": "CHW_PUMP",
     "CHILLED WATER PUMP": "CHW_PUMP",
     "CHW_PUMP": "CHW_PUMP",
+    "CW PUMP": "CW_PUMP",
+    "COOLING WATER PUMP": "CW_PUMP",
+    "CW_PUMP": "CW_PUMP",
     "GAS ENGINE": "ENGINE",
     "ENGINE": "ENGINE",
     "ENGINE RADIATOR": "ENGINE_RADIATOR",

@@ -112,7 +112,7 @@ class EquipmentMetadataTest(unittest.TestCase):
         validation = validate_equipment_metadata(metadata)
 
         self.assertEqual(validation["status"], "valid", validation)
-        self.assertEqual(validation["curve_schema"], "ambient_capacity_power_1D")
+        self.assertEqual(validation["curve_schema"], "outdoor_temperature_power_1D")
 
     def test_unknown_curve_type_fails_registry_validation(self):
         validation = validate_curve_type_supported("ACC", "unknown_curve_type")

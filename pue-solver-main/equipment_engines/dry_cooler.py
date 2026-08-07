@@ -16,6 +16,7 @@ class DryCoolerEngine:
 
     equipment_id: str = "DRY_COOLER"
     curve_data: Any = None
+    capacity_curve_data: Any = None
     source_workbook: str | None = None
     source_sheet: str = "Solver_Curve"
 
@@ -24,20 +25,63 @@ class DryCoolerEngine:
         required_heat_rejection = _to_float(required_heat_rejection_kW, "required_heat_rejection_kW")
         if required_heat_rejection < 0:
             raise DryCoolerEngineValidationError("required_heat_rejection_kW must be greater than or equal to 0.")
-        point = lookup_dry_cooler_point(
+        capacity_point = lookup_dry_cooler_point(
+            self.capacity_curve_data if self.capacity_curve_data is not None else self.curve_data,
+            ambient_dry_bulb_C=ambient_dry_bulb_C,
+            equipment_id=self.equipment_id,
+        )
+        power_point = lookup_dry_cooler_power_point(
             self.curve_data,
             ambient_dry_bulb_C=ambient_dry_bulb_C,
             equipment_id=self.equipment_id,
         )
-        available_capacity = point["dry_cooler_capacity_kW"]
+        available_capacity = capacity_point["dry_cooler_capacity_kW"]
         if available_capacity <= 0:
             raise DryCoolerEngineValidationError(f"Invalid dry cooler capacity: {available_capacity}")
         return {
-            "dry_cooler_power_kW": point["dry_cooler_power_kW"],
+            "dry_cooler_power_kW": power_point["dry_cooler_power_kW"],
             "dry_cooler_capacity_kW": available_capacity,
             "dry_cooler_capacity_ratio": required_heat_rejection / available_capacity,
             "dry_cooler_curve_source": "configuration_library_solver_curve",
+            **power_point,
         }
+
+
+def lookup_dry_cooler_power_point(curve_data, ambient_dry_bulb_C, equipment_id="DRY_COOLER"):
+    rows = _temperature_power_rows(curve_data, equipment_id)
+    raw_temperature = _to_float(ambient_dry_bulb_C, "ambient_dry_bulb_C")
+    temperatures = [row["outdoor_dry_bulb_C"] for row in rows]
+    lookup_temperature = _clamp(raw_temperature, temperatures[0], temperatures[-1])
+    lo, hi = _bounds(temperatures, lookup_temperature)
+    row_lo = next(row for row in rows if row["outdoor_dry_bulb_C"] == lo)
+    row_hi = next(row for row in rows if row["outdoor_dry_bulb_C"] == hi)
+    return {
+        "dry_cooler_power_kW": _linear(lo, hi, row_lo["power_kW"], row_hi["power_kW"], lookup_temperature),
+        "dry_cooler_outdoor_temperature_raw_C": raw_temperature,
+        "dry_cooler_lookup_temperature_C": lookup_temperature,
+        "dry_cooler_curve_min_temperature_C": temperatures[0],
+        "dry_cooler_curve_max_temperature_C": temperatures[-1],
+        "dry_cooler_temperature_clamped_low": raw_temperature < temperatures[0],
+        "dry_cooler_temperature_clamped_high": raw_temperature > temperatures[-1],
+    }
+
+
+def _temperature_power_rows(curve_data, equipment_id):
+    rows = _extract_rows(curve_data, equipment_id)
+    parsed = []
+    for index, row in enumerate(rows, start=1):
+        try:
+            temperature = float(row.get("outdoor_dry_bulb_C"))
+            power = float(row.get("power_kW"))
+        except (TypeError, ValueError):
+            continue
+        parsed.append({"outdoor_dry_bulb_C": temperature, "power_kW": power})
+    parsed.sort(key=lambda row: row["outdoor_dry_bulb_C"])
+    if not parsed:
+        raise DryCoolerEngineValidationError(f"Missing dry cooler temperature power curve for {equipment_id}.")
+    if any(right["outdoor_dry_bulb_C"] <= left["outdoor_dry_bulb_C"] for left, right in zip(parsed, parsed[1:])):
+        raise DryCoolerEngineValidationError(f"{equipment_id} outdoor_dry_bulb_C must be strictly increasing.")
+    return parsed
 
 
 def calculate_dry_cooler_power(
@@ -45,9 +89,14 @@ def calculate_dry_cooler_power(
     required_heat_rejection_kW,
     ambient_dry_bulb_C,
     equipment_id="DRY_COOLER",
+    capacity_curve_data=None,
 ):
     """Convenience wrapper for one-shot dry cooler runtime calculation."""
-    return DryCoolerEngine(equipment_id=equipment_id, curve_data=curve_data).calculate(
+    return DryCoolerEngine(
+        equipment_id=equipment_id,
+        curve_data=curve_data,
+        capacity_curve_data=capacity_curve_data,
+    ).calculate(
         required_heat_rejection_kW=required_heat_rejection_kW,
         ambient_dry_bulb_C=ambient_dry_bulb_C,
     )
@@ -91,15 +140,15 @@ def _dry_cooler_rows(curve_data, equipment_id):
     for index, row in enumerate(rows, start=1):
         parsed = {
             "Outdoor_Dry_Bulb_C": _to_float(
-                row.get("Outdoor_Dry_Bulb_C"),
+                row.get("Outdoor_Dry_Bulb_C") if row.get("Outdoor_Dry_Bulb_C") is not None else row.get("Ambient_C"),
                 f"{equipment_id} row {index} Outdoor_Dry_Bulb_C",
             ),
             "Heat_Rejection_Capacity_kW": _to_float(
-                row.get("Heat_Rejection_Capacity_kW"),
+                row.get("Heat_Rejection_Capacity_kW") if row.get("Heat_Rejection_Capacity_kW") is not None else row.get("Heat_Rejection_kW"),
                 f"{equipment_id} row {index} Heat_Rejection_Capacity_kW",
             ),
             "Estimated_Fan_Power_kW": _to_float(
-                row.get("Estimated_Fan_Power_kW"),
+                row.get("Estimated_Fan_Power_kW") if row.get("Estimated_Fan_Power_kW") is not None else row.get("Estimated_Total_Fan_Power_kW"),
                 f"{equipment_id} row {index} Estimated_Fan_Power_kW",
             ),
             "Solver_Use": str(row.get("Solver_Use") or ""),

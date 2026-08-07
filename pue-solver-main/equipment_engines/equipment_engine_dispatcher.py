@@ -66,6 +66,13 @@ ENGINE_REGISTRY = {
         "status": "implemented",
         "reason": "Uses Configuration Library dry cooler ambient capacity/power runtime engine.",
     },
+    ("DRY_COOLER", "outdoor_temperature_power_1D"): {
+        "engine_key": "dry_cooler_outdoor_temperature_power_1d",
+        "engine_type": "equipment_engines.dry_cooler.DryCoolerEngine",
+        "engine_class": DryCoolerEngine,
+        "status": "implemented",
+        "reason": "Uses the dry cooler outdoor-temperature-only power runtime engine; capacity is supplied separately.",
+    },
 }
 
 

@@ -29,6 +29,11 @@ EQUIPMENT_CURVE_REGISTRY = {
         },
     },
     "DRY_COOLER": {
+        "outdoor_temperature_power": {
+            "curve_type": "outdoor_temperature_power",
+            "curve_schema": "outdoor_temperature_power_1D",
+            "display_name": "Outdoor Dry-Bulb / Power Curve",
+        },
         "ambient_capacity_power": {
             "curve_type": "ambient_capacity_power",
             "curve_schema": "ambient_capacity_power_1D",
@@ -41,6 +46,18 @@ EQUIPMENT_CURVE_REGISTRY = {
         },
     },
     "CHW_PUMP": {
+        "load_ratio_power": {
+            "curve_type": "load_ratio_power",
+            "curve_schema": "load_ratio_power_1D",
+            "display_name": "Load Ratio / Power Curve",
+        },
+        "load_ratio_power_1D": {
+            "curve_type": "load_ratio_power_1D",
+            "curve_schema": "load_ratio_power_1D",
+            "display_name": "Load Ratio / Power Curve",
+        },
+    },
+    "CW_PUMP": {
         "load_ratio_power": {
             "curve_type": "load_ratio_power",
             "curve_schema": "load_ratio_power_1D",

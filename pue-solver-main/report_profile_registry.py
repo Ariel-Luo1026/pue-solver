@@ -102,7 +102,17 @@ CHILLER_DRY_COOLER_FIELDS = GENERIC_PUE_FIELDS + [
     },
     {
         "key": "annual_pump_energy_kWh",
-        "label": "Pump Energy",
+        "label": "Pump Energy (Legacy CHW)",
+        "category": "cooling",
+    },
+    {
+        "key": "annual_chw_pump_energy_kWh",
+        "label": "CHW Pump Energy",
+        "category": "cooling",
+    },
+    {
+        "key": "annual_cw_pump_energy_kWh",
+        "label": "CW Pump Energy",
         "category": "cooling",
     },
     {

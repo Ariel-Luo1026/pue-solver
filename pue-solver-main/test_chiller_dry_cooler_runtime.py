@@ -7,6 +7,13 @@ from topology_dispatcher import dispatch_topology
 
 
 class ChillerDryCoolerRuntimeTest(unittest.TestCase):
+    def test_chiller_topology_resolves_new_single_curve_pump(self):
+        solver_input = build_solver_input_from_library(
+            "CHILLER_DRYCOOLER_2MW_GRID", 4.0, "Normal"
+        )
+        self.assertEqual(solver_input["configuration_manifest"]["equipment_roles"]["chw_pump"], "CHW_PUMP_3")
+        self.assertEqual(solver_input["selected_curves"]["CHW_PUMP_3"]["sheet_name"], "Solver_Curve")
+
     @classmethod
     def setUpClass(cls):
         cls.library_input = build_solver_input_from_library(
@@ -112,7 +119,13 @@ class ChillerDryCoolerRuntimeTest(unittest.TestCase):
             failure_row["pump_power_kW"],
             failure_row["pump_power_per_unit_kW"] * failure_row["active_pump_units"],
         )
-        self.assertAlmostEqual(normal_row["pump_power_per_unit_kW"], failure_row["pump_power_per_unit_kW"])
+        for row in (normal_row, failure_row):
+            expected = row["cooling_load_kW"] / (
+                row["active_pump_units"] * row["pump_reference_capacity_per_unit_kW"]
+            )
+            self.assertAlmostEqual(row["pump_load_ratio_raw"], expected)
+            self.assertEqual(row["pump_curve_source"], "CHW_PUMP_3/Solver_Curve")
+        self.assertNotEqual(normal_row["pump_load_ratio_raw"], failure_row["pump_load_ratio_raw"])
 
     def test_capacity_validation_reports_normal_and_failure_unit_scenarios(self):
         normal_input = build_solver_input_from_library(

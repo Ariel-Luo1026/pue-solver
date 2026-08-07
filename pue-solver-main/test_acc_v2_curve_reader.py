@@ -128,7 +128,7 @@ class ACCV2CurveReaderTest(unittest.TestCase):
 
         self.assertEqual([row["power_kW"] for row in rows], [5, 20, 60])
 
-    def test_chw_pump_preview_accepts_scenario_solver_curve_sheets(self):
+    def test_chw_pump_preview_rejects_scenario_only_solver_curve_sheets(self):
         with TemporaryDirectory() as temp_dir:
             config = _make_configuration(
                 temp_dir,
@@ -144,11 +144,9 @@ class ACCV2CurveReaderTest(unittest.TestCase):
             preview = read_acc_v2_equipment_curves(config)
 
         pump = preview.equipment_curves["pump"]
-        self.assertEqual(preview.validation_status, "valid")
-        self.assertTrue(pump.required_columns_present)
-        self.assertEqual(pump.missing_columns, [])
-        self.assertEqual(pump.metadata["selected_solver_curve_sheet"], "Solver_Curve_Normal")
-        self.assertEqual([row["power_kW"] for row in pump.solver_curve_rows], [15, 45])
+        self.assertEqual(preview.validation_status, "invalid")
+        self.assertFalse(pump.required_columns_present)
+        self.assertIsNone(pump.metadata.get("selected_solver_curve_sheet"))
 
     def test_missing_solver_curve_produces_clear_error(self):
         with TemporaryDirectory() as temp_dir:

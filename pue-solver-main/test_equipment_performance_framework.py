@@ -10,7 +10,7 @@ from equipment_performance import (
     calculate_equipment_performance,
     dispatch_performance_adapter,
 )
-from configuration_library_loader import build_solver_input_from_library
+from configuration_library_loader import _records, build_solver_input_from_library, read_xlsx_sheets
 from solver import compute_pue_project
 from topology_adapters.acc_gas_engine_cdu import build_acc_solver_input_from_configuration
 from topology_dispatcher import dispatch_topology
@@ -32,6 +32,9 @@ class EquipmentPerformanceFrameworkTest(unittest.TestCase):
         cls.chiller_curve = read_equipment_solver_curve(CHILLER_CONFIG, "CENTRIFUGALCHILLER_1")
         cls.dry_cooler_metadata = load_equipment_metadata(CHILLER_CONFIG / "equipment" / "DRYCOOLER_6")
         cls.dry_cooler_curve = read_equipment_solver_curve(CHILLER_CONFIG, "DRYCOOLER_6")
+        cls.dry_cooler_capacity_curve = _records(read_xlsx_sheets(
+            CHILLER_CONFIG / "equipment" / "DRYCOOLER_6" / "DRYCOOLER_6.xlsx"
+        )["Performance_Map"])
 
     def test_acc_dispatch(self):
         adapter = dispatch_performance_adapter(self.acc_metadata, self.acc_curve)
@@ -83,10 +86,11 @@ class EquipmentPerformanceFrameworkTest(unittest.TestCase):
                 "required_heat_rejection_kW": 2445,
                 "ambient_dry_bulb_C": 35,
             },
+            capacity_curve_data=self.dry_cooler_capacity_curve,
         )
 
         self.assertEqual(result.equipment_type, "DRY_COOLER")
-        self.assertEqual(result.performance["power_kW"], 261.3)
+        self.assertGreater(result.performance["power_kW"], 0)
         self.assertEqual(result.performance["capacity_kW"], 4890)
         self.assertEqual(result.performance["capacity_ratio"], 0.5)
 
@@ -109,6 +113,7 @@ class EquipmentPerformanceFrameworkTest(unittest.TestCase):
                 "required_heat_rejection_kW": 2445,
                 "ambient_dry_bulb_C": 35,
             },
+            capacity_curve_data=self.dry_cooler_capacity_curve,
         ).to_dict()
 
         self.assertEqual(

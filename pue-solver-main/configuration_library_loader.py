@@ -211,16 +211,24 @@ def _sheet_key_values(rows):
 
 
 def select_solver_curve(equipment_package, scenario_name):
-    """Select a scenario sheet first, then generic Solver_Curve."""
+    """Select the applicable solver curve; pumps always use one shared curve."""
     electrical_path = equipment_package.get("electrical_path") if equipment_package else None
     if electrical_path and electrical_path.get("it_efficiency") is not None and electrical_path.get("mep_efficiency") is not None:
         return {
             "status": "Electrical Path Found",
             "sheet_name": "Solver",
             "curve": None,
+            "performance_map": equipment_package.get("performance_map"),
             "electrical_path": electrical_path,
+            "equipment_metadata": equipment_package.get("equipment_metadata"),
         }
     curves = equipment_package.get("solver_curves", {}) if equipment_package else {}
+    metadata = equipment_package.get("equipment_metadata") or {}
+    equipment_type = str(metadata.get("equipment_type") or "").upper()
+    equipment_id = str(equipment_package.get("equipment_id") or "").upper()
+    if equipment_type in {"CHW_PUMP", "CW_PUMP"} or equipment_id.startswith(("CHW_PUMP", "CW_PUMP")):
+        curve = curves.get("Solver_Curve")
+        return {"status": "Selected" if curve else "Missing Curve", "sheet_name": "Solver_Curve" if curve else None, "curve": curve, "performance_map": equipment_package.get("performance_map"), "equipment_metadata": equipment_package.get("equipment_metadata")}
     scenario = str(scenario_name or "").strip().lower()
     preferred = None
     if scenario == "normal":
@@ -229,9 +237,9 @@ def select_solver_curve(equipment_package, scenario_name):
         preferred = "Solver_Curve_Failure"
     for sheet_name in (preferred, "Solver_Curve"):
         if sheet_name and curves.get(sheet_name):
-            return {"status": "Selected", "sheet_name": sheet_name, "curve": curves[sheet_name]}
+            return {"status": "Selected", "sheet_name": sheet_name, "curve": curves[sheet_name], "performance_map": equipment_package.get("performance_map"), "equipment_metadata": equipment_package.get("equipment_metadata")}
     if str(equipment_package.get("equipment_id", "")).startswith("ACC_") and equipment_package.get("performance_map"):
-        return {"status": "Selected", "sheet_name": "Performance_Map", "curve": equipment_package["performance_map"]}
+        return {"status": "Selected", "sheet_name": "Performance_Map", "curve": equipment_package["performance_map"], "performance_map": equipment_package.get("performance_map"), "equipment_metadata": equipment_package.get("equipment_metadata")}
     return {"status": "Missing Curve", "sheet_name": None, "curve": None}
 
 
@@ -527,8 +535,11 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "selected_curve_sheet": selected["sheet_name"],
             "selected_curve_status": selected["status"],
             "curve_data": selected["curve"],
+            "performance_map": package.get("performance_map"),
             "electrical_path": selected.get("electrical_path"),
             "equipment_metadata": package.get("equipment_metadata"),
+            "information": package.get("information"),
+            "metadata": package.get("metadata"),
             "equipment_metadata_validation": package.get("equipment_metadata_validation"),
         }
 
@@ -536,6 +547,7 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         chiller_id = resolve_equipment_role_id(manifest, "chiller", loaded["equipment"])
         dry_cooler_id = resolve_equipment_role_id(manifest, "dry_cooler", loaded["equipment"])
         pump_id = resolve_equipment_role_id(manifest, "chw_pump", loaded["equipment"])
+        cw_pump_id = resolve_equipment_role_id(manifest, "cw_pump", loaded["equipment"])
         electrical_id = resolve_equipment_role_id(manifest, "electrical_distribution", loaded["equipment"])
         auxiliary_ids = []
         if "indoor_cooling" in manifest.get("equipment_roles", {}):
@@ -546,7 +558,10 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             "cooling": {
                 "chiller": equipment_binding(chiller_id, "chiller"),
                 "dry_cooler": equipment_binding(dry_cooler_id, "dry_cooler"),
-                "pumps": {pump_id: equipment_binding(pump_id, "pump_power")},
+                "pumps": {
+                    pump_id: equipment_binding(pump_id, "chw_pump_power"),
+                    cw_pump_id: equipment_binding(cw_pump_id, "cw_pump_power"),
+                },
             },
             "auxiliary": {
                 equipment_id: equipment_binding(equipment_id, "white_space_auxiliary")

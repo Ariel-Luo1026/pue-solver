@@ -278,7 +278,9 @@ const EQUIPMENT_CURVE_SCHEMA_REGISTRY = Object.freeze({
     },
     DRY_COOLER: {
         ambient_capacity_power: "ambient_capacity_power_1D",
-        ambient_capacity_power_1D: "ambient_capacity_power_1D"
+        ambient_capacity_power_1D: "ambient_capacity_power_1D",
+        outdoor_temperature_power: "outdoor_temperature_power_1D",
+        outdoor_temperature_power_1D: "outdoor_temperature_power_1D"
     },
     CHW_PUMP: {
         load_ratio_power: "load_ratio_power_1D",
@@ -322,6 +324,7 @@ const DIRECT_MODE_PYTHON_MODULES = Object.freeze([
     "configuration_manifest.py",
     "equipment_role_resolver.py",
     "unit_scenario_manager.py",
+    "pump_load_framework.py",
     "configuration_library_loader.py",
     "configuration_validator.py",
     "equipment_curve_reader.py",
@@ -3107,6 +3110,18 @@ function buildHtmlReportFromSections(context) {
     const tempDistribution = buildTemperatureDistribution(weatherData);
     const drySummary = summarizeNumericArray(dry);
     const annualEnergyBreakdown = report.annual_energy_breakdown || {};
+    const pumpRows = hourly.filter(row => Number.isFinite(Number(row.pump_load_ratio_raw)));
+    const pumpReference = pumpRows[0]?.pump_reference_capacity_per_unit_kW;
+    const pumpActiveCount = pumpRows[0]?.pump_active_unit_count ?? pumpRows[0]?.active_pump_units;
+    const pumpMaxRawRatio = pumpRows.length ? Math.max(...pumpRows.map(row => Number(row.pump_load_ratio_raw))) : null;
+    const pumpOverloadHours = pumpRows.filter(row => row.pump_overload || row.pump_clamped_high).length;
+    const pumpClampedHours = pumpRows.filter(row => row.pump_clamped_low || row.pump_clamped_high).length;
+    const cwPumpRows = hourly.filter(row => Number.isFinite(Number(row.cw_pump_load_ratio_raw)));
+    const cwPumpReference = cwPumpRows[0]?.cw_pump_reference_capacity_per_unit_kW;
+    const cwPumpActiveCount = cwPumpRows[0]?.cw_pump_active_unit_count;
+    const cwPumpMaxRawRatio = cwPumpRows.length ? Math.max(...cwPumpRows.map(row => Number(row.cw_pump_load_ratio_raw))) : null;
+    const cwPumpOverloadHours = cwPumpRows.filter(row => row.cw_pump_overload).length;
+    const cwPumpClampedHours = cwPumpRows.filter(row => row.cw_pump_load_ratio_clamped_low || row.cw_pump_load_ratio_clamped_high).length;
     const energyRows = [
         ["IT Energy", annualEnergyBreakdown.annual_it_energy_kWh ?? annual.annual_IT_energy_kWh],
         ...Object.entries(annualEnergyBreakdown.components || {}).map(([key, data]) => [reportKeyLabel(key), data?.energy_kWh]),
@@ -3171,6 +3186,7 @@ function buildHtmlReportFromSections(context) {
         ["Chiller COP", peak.peak_design_chiller_COP],
         ["Dry Cooler Total Power, kW", peak.peak_design_dry_cooler_power_kW],
         ["CHW Pump Power, kW", peak.peak_design_CHW_pump_power_kW],
+        ["CW Pump Power, kW", peak.peak_design_CW_pump_power_kW],
         ["RTC Power, kW", peak.peak_design_RTC_power_kW],
         ["CDU Power, kW", peak.peak_design_CDU_power_kW],
         ["MAU Power, kW", peak.peak_design_MAU_power_kW],
@@ -3333,6 +3349,38 @@ function buildHtmlReportFromSections(context) {
 <section>
     <h2>4. Simulation Methodology</h2>
     <p>Hourly cooling loads combine IT load, solar heat gain, and other auxiliary heat gain. Equipment power is obtained from the selected Configuration Library performance lookup, and annual PUE is calculated from annual facility and IT energy.</p>
+    <p>CHW Pump Load Ratio = Cooling Load per Active CHW Pump ÷ Fixed Single-CHW-Pump Reference Capacity.</p>
+    <p>CW Pump Load Ratio = Heat Rejection Load per Active CW Pump ÷ Fixed Single-CW-Pump Reference Capacity.</p>
+    <p>Normal and Failure use the same Solver_Curve for each pump type; only scenario-specific active pump counts change.</p>
+    <p>Each hourly ratio uses a fixed single-pump reference capacity; it is not derived from peak load.</p>
+    <p>Dry Cooler Power Model: Single-unit dry-cooler input power is determined from outdoor dry-bulb temperature using the DRYCOOLER_6 Solver_Curve. Total dry-cooler power equals per-unit curve power multiplied by active dry-cooler count.</p>
+    <p>Engineering temperature-only power estimate based on the supplied dry-cooler capacity data and fan-affinity assumptions.</p>
+    ${Number.isFinite(Number(annual.dry_cooler_curve_min_temperature_C)) ? `<h3>Dry Cooler Power Diagnostics</h3><table><tbody>${tableRows([
+        ["Minimum Curve Temperature", reportValue(annual.dry_cooler_curve_min_temperature_C, " deg C", 1)],
+        ["Maximum Curve Temperature", reportValue(annual.dry_cooler_curve_max_temperature_C, " deg C", 1)],
+        ["Minimum Curve Power", reportValue(annual.dry_cooler_curve_min_power_kW, " kW", 2)],
+        ["Rated Power Cap", reportValue(annual.dry_cooler_rated_power_cap_kW, " kW", 2)],
+        ["Annual Dry Cooler Energy", reportValue(annual.annual_dry_cooler_energy_kWh, " kWh", 1)],
+        ["Maximum Dry Cooler Total Power", reportValue(annual.max_dry_cooler_total_power_kW, " kW", 1)],
+        ["Peak Design Dry Cooler Power", reportValue(peak.peak_design_dry_cooler_power_kW, " kW", 1)],
+        ["Temperature Clamp Hours", esc(annual.dry_cooler_temperature_clamp_hours)]
+    ])}</tbody></table>` : ""}
+    ${pumpRows.length ? `<h3>Pump Annual Diagnostics</h3><table><tbody>${tableRows([
+        ["Fixed Reference Capacity per Pump", reportValue(pumpReference, " kW", 1)],
+        ["Active Pump Count", esc(pumpActiveCount)],
+        ["Maximum Raw Pump Load Ratio", reportValue(pumpMaxRawRatio, "", 3)],
+        ["Overload Hours", esc(pumpOverloadHours)],
+        ["Clamped Hours", esc(pumpClampedHours)],
+        ["Annual Pump Energy (CHW)", reportValue(annual.annual_chw_pump_energy_kWh ?? annual.annual_pump_energy_kWh, " kWh", 1)]
+    ])}</tbody></table>` : ""}
+    ${cwPumpRows.length ? `<h3>CW Pump Annual Diagnostics</h3><table><tbody>${tableRows([
+        ["Fixed Reference Capacity per CW Pump", reportValue(cwPumpReference, " kW", 1)],
+        ["Active CW Pump Count", esc(cwPumpActiveCount)],
+        ["Maximum CW Pump Load Ratio", reportValue(cwPumpMaxRawRatio, "", 3)],
+        ["CW Pump Overload Hours", esc(cwPumpOverloadHours)],
+        ["CW Pump Clamped Hours", esc(cwPumpClampedHours)],
+        ["Annual CW Pump Energy", reportValue(annual.annual_cw_pump_energy_kWh, " kWh", 1)]
+    ])}</tbody></table>` : ""}
     ${formulasHtml()}
 </section>
 <section>
@@ -4158,7 +4206,7 @@ async function autoMatchLocalEpw() {
         const onlineResult = await fetchOnlineEpw(coordinates.latitude, coordinates.longitude, locationText);
         if (!onlineResult || !onlineResult.success) {
             resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("No suitable online EPW found. Please upload EPW manually.", "error");
+            setAutoEpwStatus("No suitable online EPW found. Check the local EPW library or EPW API service.", "error");
             return;
         }
 
@@ -4166,7 +4214,7 @@ async function autoMatchLocalEpw() {
         match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
         if (!match || !match.epw_path) {
             resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("Online EPW downloaded, but local index did not match. Please upload EPW manually.", "error");
+            setAutoEpwStatus("Online EPW downloaded, but the local EPW index did not match.", "error");
             return;
         }
         const station = onlineResult.matched_station || match.station || match.city;
@@ -4182,7 +4230,7 @@ async function autoMatchLocalEpw() {
         );
     } catch (e) {
         resetWeatherStatusAfterMiss();
-        setAutoEpwStatus("Local EPW not found. Start EPW API server or upload EPW manually.", "error");
+        setAutoEpwStatus("Local EPW not found. Start the EPW API server or check the local EPW library.", "error");
     }
 }
 
@@ -4615,10 +4663,10 @@ function refreshStandardInputStatus() {
     const dry = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"], ["weather", "hourly_data", "dry_bulb_C"]]);
     const el = document.getElementById("standardInputStatus");
     if (el) {
-        const ready = Boolean(it && dry);
+        const ready = Boolean(configurationLibraryData && dry);
         el.textContent = ready
-            ? `输入就绪：IT=${it.length}小时，天气=${dry.length}小时，点击“运行计算”会自动生成 solver 输入。`
-            : `等待输入：IT=${it ? it.length : 0}小时，天气=${dry ? dry.length : 0}小时。`;
+            ? "输入就绪：设备模型由 Configuration Library 自动加载，天气数据和冷却负荷修正参数已准备完成，点击运行计算执行年度PUE模拟。 Input ready: Equipment models are automatically loaded from Configuration Library. Weather data and cooling load adjustment parameters are prepared. Click Run Simulation to execute annual PUE calculation."
+            : `等待输入：Configuration Library=${configurationLibraryData ? "已加载" : "未加载"}，天气=${dry ? `${dry.length}小时` : "未加载"}。`;
         el.style.color = ready ? "#059669" : "#6b7280";
     }
 }
@@ -5215,6 +5263,19 @@ function selectLibrarySolverCurve(equipmentPackage, scenarioName) {
         };
     }
     const curves = equipmentPackage?.solver_curves || {};
+    const equipmentType = String(equipmentPackage?.equipment_type || equipmentPackage?.equipment_metadata?.equipment_type || "").toUpperCase();
+    const equipmentId = String(equipmentPackage?.equipment_id || "").toUpperCase();
+    if (["CHW_PUMP", "CW_PUMP"].includes(equipmentType) || /^(CHW|CW)_PUMP/.test(equipmentId)) {
+        const curve = Array.isArray(curves.Solver_Curve) && curves.Solver_Curve.length ? curves.Solver_Curve : null;
+        return {
+            status: curve ? "Selected" : "Missing Curve",
+            sheet_name: curve ? "Solver_Curve" : null,
+            curve,
+            equipment_metadata: equipmentPackage?.equipment_metadata || null,
+            equipment_type: equipmentType || null,
+            package_path: equipmentPackage?.package_path || null
+        };
+    }
     const scenario = String(scenarioName || "").toLowerCase();
     const preferred = scenario === "normal" ? "Solver_Curve_Normal"
         : (["failure", "maintenance"].includes(scenario) ? "Solver_Curve_Failure" : null);
@@ -5358,6 +5419,7 @@ function buildGenericConfigurationLibraryPayload(data, scenarioNameOverride = nu
             selected_curve_sheet: selected?.sheet_name || null,
             selected_curve_status: selected?.status || "Missing Solver_Curve",
             curve_data: selected?.curve || null,
+            performance_map: item?.performance_map || null,
             electrical_path: selected?.electrical_path || item?.electrical_path || null,
             equipment_type: selected?.equipment_type || item?.equipment_type || item?.equipment_metadata?.equipment_type || null,
             curve_type: item?.equipment_metadata?.curve_type || null,
@@ -5629,7 +5691,7 @@ function renderConfigurationLibrarySummary(data) {
         ?? sumAvailableResultFields(annualElectrical, ["annual_cdu_energy_kWh", "annual_rtc_energy_kWh", "annual_mau_energy_kWh"]);
     const engineRadiatorMaxPower = firstAvailableResultField(annualElectrical, ["max_engine_radiator_power_kW"])
         ?? maxHourlyResultField(hourlyElectrical, ["engine_radiator_power_kW"]);
-    const values = [
+    const metadataValues = [
         ["Configuration ID", data.configuration_id || data.configuration_name],
         ["Configuration Display Name", data.configuration_display_name || data.configuration_name],
         ["Configuration Name", data.configuration_name],
@@ -5676,7 +5738,9 @@ function renderConfigurationLibrarySummary(data) {
         ] : []),
         ["IT Load kW sample", itSample.length ? itSample.map(value => fmtNumber(value, 1)).join(", ") : "Enter Total IT Capacity"],
         ["Electrical IT / MEP efficiency", electricalPath
-            ? `${fmtNumber(electricalPath.it_efficiency * 100, 2)}% / ${fmtNumber(electricalPath.mep_efficiency * 100, 2)}%` : "Missing"],
+            ? `${fmtNumber(electricalPath.it_efficiency * 100, 2)}% / ${fmtNumber(electricalPath.mep_efficiency * 100, 2)}%` : "Missing"]
+    ];
+    const calculationValues = [
         ["IT Electrical Distribution Loss", resultValue(annualElectrical.annual_it_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
         ["MEP Electrical Distribution Loss", resultValue(annualElectrical.annual_mep_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
         ["Total Electrical Distribution Loss", resultValue(annualElectrical.annual_electrical_loss_kWh, value => `${fmtInteger(value)} kWh`)],
@@ -5704,6 +5768,7 @@ function renderConfigurationLibrarySummary(data) {
     ];
     summary.style.display = "grid";
     const selectedScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
+    const bindingSummaryRows = [];
     const equipmentRows = manifestEquipmentRoleIds(data.configuration_manifest).map(equipmentId => {
         const resolved = findLibraryEquipmentPackage(data, equipmentId);
         const item = resolved.equipmentPackage || { equipment_id: resolved.resolvedId, status: "Missing", solver_curves: {} };
@@ -5725,6 +5790,17 @@ function renderConfigurationLibrarySummary(data) {
         const equipmentType = equipmentMetadata.equipment_type || item.equipment_type || "Not available";
         const metadataCurveType = equipmentMetadata.curve_type || "Not available";
         const curveSchema = equipmentCurveSchema(equipmentType, metadataCurveType);
+        const bindingName = ({
+            CHILLER: "Chiller",
+            DRY_COOLER: "Dry Cooler",
+            CHW_PUMP: "CHW Pump",
+            CW_PUMP: "CW Pump",
+            ELECTRICAL_DISTRIBUTION: "Electrical Distribution"
+        })[String(equipmentType).toUpperCase()] || String(equipmentType).replaceAll("_", " ");
+        bindingSummaryRows.push({
+            label: `${bindingName} Solver_Curve`,
+            available: Boolean(selected.sheet_name || selected.electrical_path)
+        });
         return `<tr>
             <td>${esc(resolved.resolvedId)}</td><td>${esc(equipmentType)}</td>
             <td>${esc(metadataCurveType)}</td><td>${esc(curveSchema)}</td><td>${esc(equipmentMetadata.status || packageStatus)}</td><td>${esc(packageStatus)}</td>
@@ -5732,14 +5808,32 @@ function renderConfigurationLibrarySummary(data) {
             <td>${selectedDisplay}</td><td>${esc(sourceStatus)}</td><td>${esc(curveType)}</td>
         </tr>`;
     }).join("");
-    summary.innerHTML = values.map(([label, value]) =>
+    const bindingStatus = document.getElementById("configurationLibraryBindingStatus");
+    if (bindingStatus) {
+        bindingStatus.innerHTML = `<div class="panelTitle">Configuration Library Loaded:</div>${bindingSummaryRows.map(item =>
+            `<div>${item.available ? "✓" : "⚠"} ${esc(item.label)}</div>`
+        ).join("")}`;
+    }
+    const valueCards = values => values.map(([label, value]) =>
         `<div class="fileSlot"><div class="panelTitle">${esc(label)}</div><div>${esc(value)}</div></div>`
-    ).join("") + `<div class="fileSlot" style="grid-column:1/-1; overflow-x:auto;">
-        <div class="panelTitle">Equipment Summary / Package Auto Binding — ${esc(selectedScenario)}</div>
-        <table style="width:100%; min-width:720px;"><thead><tr>
-            <th>Equipment ID</th><th>Equipment Type</th><th>Curve Type</th><th>Curve Schema</th><th>Metadata Status</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th><th>Curve Type</th>
-        </tr></thead><tbody>${equipmentRows}</tbody></table>
-    </div>`;
+    ).join("");
+    summary.innerHTML = `
+        <details id="configurationMetadataDetails" class="advancedDetails" style="grid-column:1/-1; margin-bottom:0;">
+            <summary>Configuration Metadata</summary>
+            <div class="fileGrid">${valueCards(metadataValues)}</div>
+        </details>
+        <details id="configurationCalculationSummaryDetails" class="advancedDetails" style="grid-column:1/-1; margin-bottom:0;">
+            <summary>Calculation Summary</summary>
+            <div class="fileGrid">${valueCards(calculationValues)}</div>
+        </details>
+        <details id="configurationEquipmentBindingDetails" class="advancedDetails" style="grid-column:1/-1; margin-bottom:0;">
+            <summary>Equipment Binding Details</summary>
+            <div class="fileSlot" style="overflow-x:auto;">
+                <table style="width:100%; min-width:720px;"><thead><tr>
+                    <th>Equipment ID</th><th>Equipment Type</th><th>Curve Type</th><th>Curve Schema</th><th>Metadata Status</th><th>Package Status</th><th>Solver_Curve Sheet Found</th><th>Selected Curve</th><th>Source Status</th><th>Curve Type</th>
+                </tr></thead><tbody>${equipmentRows}</tbody></table>
+            </div>
+        </details>`;
 }
 
 async function loadSelectedConfigurationLibrary() {
@@ -5907,7 +6001,7 @@ async function loadSelectedConfigurationLibrary() {
         refreshStandardInputStatus();
         if (status) {
             status.textContent = projectDesignCapacityKw() > 0
-                ? `Loaded ${configurationLibraryData.configuration_name}. Manual uploads remain available as overrides.`
+                ? `Loaded ${configurationLibraryData.configuration_name}. Equipment models are automatically bound from Configuration Library.`
                 : `Loaded ${configurationLibraryData.configuration_name}. Enter Total IT Capacity to convert IT load percent to kW.`;
             status.style.color = "#059669";
         }
@@ -6098,13 +6192,12 @@ function showProjectVisualization(outObj) {
     setText("summaryItLabel", "IT 年能耗 (kWh)");
     setText("summaryFacilityLabel", "设施总能耗 (kWh)");
     const isDirectAccV2Summary = isConfigurationLibraryAccV2DirectResult(outObj);
-    const peakDesignDemandKw = peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW ?? peak.peak_total_facility_power_kW;
-    const maxHourlyDemandKw = peak.max_hourly_facility_electrical_demand_kW ?? peak.max_hourly_total_facility_power_kW;
+    const peakFacilityPowerKw = peakSummary?.peak_facility_power_kW ?? peak.peak_total_facility_power_kW;
     setText("summaryPeakLabel", isDirectAccV2Summary ? "峰值设计设施电气需求 (kW)" : "峰值设施功率 (kW)");
     setText("annualPueValue", fmtNumber(annual.annual_average_PUE, 3));
     setText("annualItEnergy", fmtInteger(annual.annual_IT_energy_kWh));
     setText("annualFacilityEnergy", fmtInteger(annual.annual_facility_energy_kWh));
-    setText("peakFacilityPower", `${fmtInteger(isDirectAccV2Summary ? peakDesignDemandKw : peak.peak_total_facility_power_kW)} kW`);
+    setText("peakFacilityPower", `${fmtInteger(peakFacilityPowerKw)} kW`);
     renderProjectInfoReportPanel();
     renderSolarGainReportPanel();
     renderWeatherReportPanel();

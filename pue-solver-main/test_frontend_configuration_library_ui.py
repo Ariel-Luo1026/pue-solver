@@ -26,6 +26,32 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         ):
             self.assertIn(text, self.index)
 
+    def test_cooling_advanced_information_is_collapsed_by_default(self):
+        start = self.index.index('<details id="coolingAdvancedConfigurationDetails"')
+        end = self.index.index("</details>", start)
+        details = self.index[start:end]
+
+        self.assertNotIn(" open", details.split(">", 1)[0])
+        self.assertIn("Advanced Configuration Details", details)
+        for label, element_id in (
+            ("White Space Equipment", "whiteSpaceEquipmentList"),
+            ("Gray Space Equipment", "graySpaceEquipmentList"),
+            ("Required Performance Curves", "coolingPerformanceCurveList"),
+        ):
+            self.assertIn(label, details)
+            self.assertIn(f'id="{element_id}"', details)
+
+    def test_cooling_advanced_disclosure_does_not_wrap_primary_controls(self):
+        details_start = self.index.index('<details id="coolingAdvancedConfigurationDetails"')
+        primary_controls = (
+            'id="coolingSystemType"',
+            'id="coolingUnitCapacity"',
+            'id="powerSource"',
+            'id="scenarioSelect"',
+        )
+        for control in primary_controls:
+            self.assertLess(self.index.index(control), details_start)
+
     def test_unit_quantity_maps_to_project_input(self):
         self.assertIn("function getUnitQuantitySelection", self.ui)
         self.assertIn('mode: "manual"', self.ui)
@@ -214,7 +240,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("equipment_metadata missing", validation_block)
         summary_block = self._function_source("renderConfigurationLibrarySummary")
         for text in (
-            "Equipment Summary / Package Auto Binding",
+            "Equipment Binding Details",
             "Equipment Type",
             "Curve Type",
             "Curve Schema",
@@ -224,6 +250,29 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             "equipmentCurveSchema",
         ):
             self.assertIn(text, summary_block)
+
+    def test_configuration_library_secondary_sections_are_collapsed_disclosures(self):
+        summary_block = self._function_source("renderConfigurationLibrarySummary")
+        for details_id, title in (
+            ("configurationMetadataDetails", "Configuration Metadata"),
+            ("configurationCalculationSummaryDetails", "Calculation Summary"),
+            ("configurationEquipmentBindingDetails", "Equipment Binding Details"),
+        ):
+            self.assertIn(f'<details id="{details_id}"', summary_block)
+            self.assertIn(f"<summary>{title}</summary>", summary_block)
+        self.assertNotIn('<details id="configurationMetadataDetails" open', summary_block)
+        self.assertNotIn('<details id="configurationCalculationSummaryDetails" open', summary_block)
+        self.assertNotIn('<details id="configurationEquipmentBindingDetails" open', summary_block)
+
+    def test_framework_diagnostics_is_developer_disclosure_closed_by_default(self):
+        start = self.index.index('<details id="frameworkDiagnosticsDetails"')
+        opening_tag = self.index[start:self.index.index(">", start)]
+        end = self.index.index("</details>", start)
+        details = self.index[start:end]
+        self.assertNotIn(" open", opening_tag)
+        self.assertIn("Framework Diagnostics (Developer)", details)
+        self.assertIn('id="frameworkDiagnosticsNotice"', details)
+        self.assertIn('id="frameworkDiagnosticsGrid"', details)
 
     def test_configuration_library_direct_input_carries_configuration_path(self):
         builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
@@ -251,9 +300,75 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw", builder_block)
         self.assertIn("other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw", builder_block)
 
-        self.assertIn("solar_heat_gain_max_kW: heatGains.solarHeatGainMaxKw", builder_block)
-        self.assertIn("other_auxiliary_heat_gain_kW: heatGains.otherAuxiliaryHeatGainKw", builder_block)
-        self.assertIn("other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw", builder_block)
+    def test_simulation_inputs_are_configuration_library_driven(self):
+        self.assertIn("Simulation Inputs", self.index)
+        self.assertIn("Weather Source", self.index)
+        self.assertIn("Auto Match EPW", self.index)
+        for legacy_id in (
+            "fileItLoad",
+            "fileWeather",
+            "fileDryCooler",
+            "fileChiller",
+            "fileElectrical",
+            "filePumps",
+            "fileFans",
+        ):
+            self.assertNotIn(f'id="{legacy_id}"', self.index)
+        for legacy_title in (
+            "IT负载全年曲线",
+            "干冷器性能曲线",
+            "离心冷水机COP曲面",
+            "电气设备性能曲线",
+            "水泵性能曲线",
+            "末端风机性能曲线",
+        ):
+            self.assertNotIn(legacy_title, self.index)
+
+    def test_project_level_heat_gain_defaults_are_preserved(self):
+        for element_id, value in (
+            ("solarHeatGainMaxKw", "7"),
+            ("solarDaytimeStartHour", "6"),
+            ("solarDaytimeEndHour", "18"),
+            ("otherAuxiliaryHeatGainKw", "71"),
+            ("otherElectricalAuxiliaryPowerKw", "0"),
+        ):
+            self.assertRegex(self.index, rf'id="{element_id}"[^>]*value="{value}"')
+
+    def test_advanced_input_override_is_closed_and_unconnected(self):
+        start = self.index.index('<details id="advancedInputOverrideDetails"')
+        opening_tag = self.index[start:self.index.index(">", start)]
+        end = self.index.index("</details>", start)
+        details = self.index[start:end]
+        self.assertNotIn(" open", opening_tag)
+        for title in (
+            "Advanced Input Override",
+            "Manual IT Load Profile Override",
+            "Manual Weather File Override",
+            "Custom Equipment Curve Override",
+            "not connected in this phase",
+        ):
+            self.assertIn(title, details)
+
+    def test_configuration_library_binding_status_uses_existing_bindings(self):
+        self.assertIn('id="configurationLibraryBindingStatus"', self.index)
+        summary_block = self._function_source("renderConfigurationLibrarySummary")
+        for text in (
+            "bindingSummaryRows",
+            "selected.sheet_name || selected.electrical_path",
+            "Configuration Library Loaded:",
+            'CHILLER: "Chiller"',
+            "Dry Cooler",
+            "CHW Pump",
+            "CW Pump",
+            "Electrical Distribution",
+        ):
+            self.assertIn(text, summary_block)
+
+    def test_input_ready_message_describes_library_driven_workflow(self):
+        status_block = self._function_source("refreshStandardInputStatus")
+        self.assertIn("设备模型由 Configuration Library 自动加载", status_block)
+        self.assertIn("Equipment models are automatically loaded from Configuration Library", status_block)
+        self.assertNotIn("点击“运行计算”会自动生成 solver 输入", status_block)
 
     def test_configuration_library_workbooks_sync_to_pyodide_as_binary_files(self):
         self.assertIn('const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library"', self.ui)

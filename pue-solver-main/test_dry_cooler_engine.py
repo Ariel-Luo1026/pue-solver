@@ -1,11 +1,13 @@
 import unittest
 from pathlib import Path
 
-from equipment_curve_reader import DRY_COOLER_AMBIENT_CAPACITY_POWER, read_equipment_solver_curve
+from configuration_library_loader import _records, read_xlsx_sheets
+from equipment_curve_reader import DRY_COOLER_OUTDOOR_TEMPERATURE_POWER, read_equipment_solver_curve
 from equipment_engines.dry_cooler import (
     DryCoolerEngineValidationError,
     calculate_dry_cooler_power,
     lookup_dry_cooler_point,
+    lookup_dry_cooler_power_point,
 )
 
 
@@ -20,14 +22,16 @@ class DryCoolerEngineTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.preview = read_equipment_solver_curve(CONFIGURATION_PATH, "DRYCOOLER_6")
+        workbook = CONFIGURATION_PATH / "equipment" / "DRYCOOLER_6" / "DRYCOOLER_6.xlsx"
+        cls.performance_map = _records(read_xlsx_sheets(workbook)["Performance_Map"])
 
     def test_reader_detects_dry_cooler_curve(self):
-        self.assertEqual(self.preview.curve_type, DRY_COOLER_AMBIENT_CAPACITY_POWER)
+        self.assertEqual(self.preview.curve_type, DRY_COOLER_OUTDOOR_TEMPERATURE_POWER)
         self.assertEqual(self.preview.errors, [])
 
     def test_ambient_lookup(self):
         point = lookup_dry_cooler_point(
-            self.preview,
+            self.performance_map,
             ambient_dry_bulb_C=35,
             equipment_id="DRYCOOLER_6",
         )
@@ -41,6 +45,7 @@ class DryCoolerEngineTest(unittest.TestCase):
             required_heat_rejection_kW=2445,
             ambient_dry_bulb_C=35,
             equipment_id="DRYCOOLER_6",
+            capacity_curve_data=self.performance_map,
         )
 
         self.assertEqual(result["dry_cooler_capacity_kW"], 4890)
@@ -52,9 +57,11 @@ class DryCoolerEngineTest(unittest.TestCase):
             required_heat_rejection_kW=2445,
             ambient_dry_bulb_C=35,
             equipment_id="DRYCOOLER_6",
+            capacity_curve_data=self.performance_map,
         )
 
-        self.assertEqual(result["dry_cooler_power_kW"], 261.3)
+        expected = lookup_dry_cooler_power_point(self.preview, 35, "DRYCOOLER_6")["dry_cooler_power_kW"]
+        self.assertEqual(result["dry_cooler_power_kW"], expected)
         self.assertEqual(result["dry_cooler_curve_source"], "configuration_library_solver_curve")
 
     def test_missing_curve_error(self):

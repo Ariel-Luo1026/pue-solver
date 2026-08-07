@@ -32,6 +32,7 @@ def _generic_payload(library_input):
                 "selected_curve_sheet": selected.get("sheet_name"),
                 "selected_curve_status": selected.get("status"),
                 "curve_data": selected.get("curve"),
+                "performance_map": selected.get("performance_map"),
                 "electrical_path": selected.get("electrical_path"),
                 "equipment_metadata": selected.get("equipment_metadata"),
             }

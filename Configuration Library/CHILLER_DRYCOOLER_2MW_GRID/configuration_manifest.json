@@ -8,7 +8,8 @@
   "equipment_roles": {
     "chiller": "CENTRIFUGALCHILLER_1",
     "dry_cooler": "DRYCOOLER_6",
-    "chw_pump": "CHW_PUMP_2",
+    "chw_pump": "CHW_PUMP_3",
+    "cw_pump": "CW_PUMP_6",
     "indoor_cooling": [
       "CDU_2",
       "RTC_1&2",
@@ -20,6 +21,7 @@
     "chiller",
     "dry_cooler",
     "chw_pump",
+    "cw_pump",
     "electrical_distribution"
   ],
   "optional_roles": [

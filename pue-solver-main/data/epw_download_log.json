@@ -611,5 +611,33 @@
     "confidence": "high",
     "already_cached": false,
     "master_index_records": 97487
+  },
+  {
+    "query_location": "JUNO",
+    "project_latitude": 32.693,
+    "project_longitude": -0.951,
+    "matched_station": "Ain.Sefra",
+    "distance_km": 33.8,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_1_Africa/DZA_Algeria/NA_Naama/DZA_NA_Ain.Sefra.605600_TMYx.2011-2025.zip",
+    "epw_file": "DZA_NA_Ain.Sefra.605600_TMYx.2011-2025.epw",
+    "downloaded_at": "2026-07-22T06:44:27.193424+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
+  },
+  {
+    "query_location": "JUNO",
+    "project_latitude": 39.9612,
+    "project_longitude": -82.9988,
+    "matched_station": "Columbus-Port Columbus Intl AP",
+    "distance_km": 10.2,
+    "source": "Climate.OneBuilding",
+    "download_url": "https://climate.onebuilding.org/WMO_Region_4_North_and_Central_America/USA_United_States_of_America/OH_Ohio/USA_OH_Columbus-Port.Columbus.Intl.AP.724280_TMY3.zip",
+    "epw_file": "USA_OH_Columbus-Port.Columbus.Intl.AP.724280_TMY3.epw",
+    "downloaded_at": "2026-07-22T07:45:51.724483+00:00",
+    "confidence": "high",
+    "already_cached": false,
+    "master_index_records": 97487
   }
 ]

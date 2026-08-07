@@ -20,6 +20,7 @@ ELECTRICAL_LOSS_FRACTION = "electrical_loss_fraction"
 ELECTRICAL_LOSS_POWER = "electrical_loss_power"
 CHILLER_COP_MAP = "chiller_cop_map"
 DRY_COOLER_AMBIENT_CAPACITY_POWER = "dry_cooler_ambient_capacity_power"
+DRY_COOLER_OUTDOOR_TEMPERATURE_POWER = "dry_cooler_outdoor_temperature_power"
 UNKNOWN_SCHEMA = "unknown"
 
 
@@ -197,7 +198,8 @@ def preview_from_solver_curve_rows(equipment_id, rows, source_workbook=None, sou
             "Unknown Solver_Curve schema. Expected load_ratio with power_kW, efficiency, "
             "loss_fraction, loss_kW, ambient_C/load_ratio/power_input_kW, or "
             "CEFT_C/load_ratio/COP_kW_per_kW, or "
-            "Outdoor_Dry_Bulb_C/Heat_Rejection_Capacity_kW/Estimated_Fan_Power_kW."
+            "Outdoor_Dry_Bulb_C/Heat_Rejection_Capacity_kW/Estimated_Fan_Power_kW, or "
+            "outdoor_dry_bulb_C/power_kW."
         )
         return preview
     missing = [column for column in required if not any(column in row for row in rows)]
@@ -309,6 +311,8 @@ def detect_curve_type(rows):
             "Heat_Rejection_Capacity_kW",
             "Estimated_Fan_Power_kW",
         )
+    if {"outdoor_dry_bulb_C", "power_kW"}.issubset(columns):
+        return DRY_COOLER_OUTDOOR_TEMPERATURE_POWER, ("outdoor_dry_bulb_C", "power_kW")
     if {"load_ratio", "power_kW"}.issubset(columns):
         return ONE_DIMENSIONAL_POWER, ("load_ratio", "power_kW")
     if {"load_ratio", "efficiency"}.issubset(columns):

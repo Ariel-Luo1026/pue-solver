@@ -317,7 +317,8 @@ def _annual_energy_from_annual_results(solver_result):
     add("ACC", annual.get("annual_acc_energy_kWh"))
     add("CHILLER", annual.get("annual_chiller_energy_kWh"))
     add("DRY_COOLER", annual.get("annual_dry_cooler_energy_kWh"))
-    add("CHW_PUMP", annual.get("annual_pump_energy_kWh"))
+    add("CHW_PUMP", annual.get("annual_chw_pump_energy_kWh") or annual.get("annual_pump_energy_kWh"))
+    add("CW_PUMP", annual.get("annual_cw_pump_energy_kWh"))
     add(
         "INDOOR_EQUIPMENT",
         annual.get("annual_white_space_equipment_energy_kWh")
@@ -327,7 +328,7 @@ def _annual_energy_from_annual_results(solver_result):
     cooling = sum(
         component["energy_kWh"]
         for key, component in components.items()
-        if key in {"ACC", "CHILLER", "DRY_COOLER", "CHW_PUMP"}
+        if key in {"ACC", "CHILLER", "DRY_COOLER", "CHW_PUMP", "CW_PUMP"}
     )
     return {
         "annual_it_energy_kWh": annual.get("annual_IT_energy_kWh"),

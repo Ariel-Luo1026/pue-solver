@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "CW_PUMP_6",
+  "equipment_type": "CW_PUMP",
+  "display_name": "Cooling Water Pump 6",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "reference_capacity_kW": null,
+  "power_input_type": "pump",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "prototype",
+  "data_status": "prototype",
+  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID",
+  "notes": "Cooling-water pump serving the Chiller condenser and Dry Cooler loop. Normal and Failure use the same Solver_Curve."
+}

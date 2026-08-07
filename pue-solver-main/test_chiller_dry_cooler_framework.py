@@ -29,7 +29,8 @@ class ChillerDryCoolerFrameworkTest(unittest.TestCase):
             for equipment_id in [
                 "CENTRIFUGALCHILLER_1",
                 "DRYCOOLER_6",
-                "CHW_PUMP_2",
+                "CHW_PUMP_3",
+                "CW_PUMP_6",
                 "CDU_2",
                 "RTC_1&2",
                 "MAU_1&2",
@@ -50,6 +51,7 @@ class ChillerDryCoolerFrameworkTest(unittest.TestCase):
             "chiller",
             "dry_cooler",
             "chw_pump",
+            "cw_pump",
             "electrical_distribution",
         ])
         self.assertEqual(self.manifest["optional_roles"], ["indoor_cooling"])
@@ -59,7 +61,7 @@ class ChillerDryCoolerFrameworkTest(unittest.TestCase):
     def test_equipment_role_binding_resolves_manifest_ids(self):
         self.assertEqual(resolve_equipment_role_id(self.manifest, "chiller", self.loaded_equipment), "CENTRIFUGALCHILLER_1")
         self.assertEqual(resolve_equipment_role_id(self.manifest, "dry_cooler", self.loaded_equipment), "DRYCOOLER_6")
-        self.assertEqual(resolve_equipment_role_id(self.manifest, "chw_pump", self.loaded_equipment), "CHW_PUMP_2")
+        self.assertEqual(resolve_equipment_role_id(self.manifest, "chw_pump", self.loaded_equipment), "CHW_PUMP_3")
         self.assertEqual(
             resolve_equipment_role_id(self.manifest, "indoor_cooling", self.loaded_equipment),
             ["CDU_2", "RTC_1&2", "MAU_1&2"],
@@ -98,15 +100,15 @@ class ChillerDryCoolerFrameworkTest(unittest.TestCase):
     def test_equipment_metadata_is_present_and_marks_prototype_support_data(self):
         chiller = validate_equipment_folder(CONFIGURATION_PATH / "equipment" / "CENTRIFUGALCHILLER_1")
         dry_cooler = validate_equipment_folder(CONFIGURATION_PATH / "equipment" / "DRYCOOLER_6")
-        pump_metadata = load_equipment_metadata(CONFIGURATION_PATH / "equipment" / "CHW_PUMP_2")
+        pump_metadata = load_equipment_metadata(CONFIGURATION_PATH / "equipment" / "CHW_PUMP_3")
 
         self.assertEqual(chiller["status"], "valid")
         self.assertEqual(dry_cooler["status"], "valid")
         self.assertEqual(chiller["curve_type"], "cop_curve")
-        self.assertEqual(dry_cooler["curve_type"], "ambient_capacity_power")
+        self.assertEqual(dry_cooler["curve_type"], "outdoor_temperature_power")
         self.assertEqual(pump_metadata["status"], "prototype")
         self.assertEqual(pump_metadata["data_status"], "prototype")
-        self.assertEqual(pump_metadata["source_configuration"], "ACC_1.5MW_GASENGINE_CDU")
+        self.assertEqual(pump_metadata["source_configuration"], "CHILLER_DRYCOOLER_2MW_GRID")
 
     def test_missing_required_role_fails_manifest_validation(self):
         manifest = deepcopy(self.manifest)

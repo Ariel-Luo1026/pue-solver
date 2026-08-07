@@ -141,6 +141,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "configuration_manifest.py",
             "equipment_role_resolver.py",
             "unit_scenario_manager.py",
+            "pump_load_framework.py",
             "configuration_library_loader.py",
             "configuration_validator.py",
             "library_solver_adapter.py",

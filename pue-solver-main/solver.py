@@ -2429,28 +2429,23 @@ def compute_pue_project(input_obj):
 
         # Simplified variable loads (pumps, fans, etc.)
         pumps_kw = 0.01 * it_kw  # 1% of IT load
-        pump_load_ratio = unit_load_ratio
-        chw_pump_load_ratio_basis = "unit_load_ratio"
-        chw_pump_reference_capacity_kw = None
+        from pump_load_framework import PUMP_LOAD_RATIO_BASIS, resolve_pump_reference_capacity
+        chw_pump_reference_capacity_kw, chw_pump_reference_capacity_source = resolve_pump_reference_capacity(
+            equipment_metadata=pumps_cfg.get("equipment_metadata"),
+            cooling_unit_capacity_kW=cooling_unit_capacity_kw,
+        )
+        pump_active_unit_count = int(library_active_units)
+        pump_required_load_per_unit_kw = cooling_load_kw / pump_active_unit_count if pump_active_unit_count > 0 else 0.0
+        pump_load_ratio_raw = pump_required_load_per_unit_kw / chw_pump_reference_capacity_kw
+        pump_load_ratio = pump_load_ratio_raw
+        chw_pump_load_ratio_basis = PUMP_LOAD_RATIO_BASIS
         chw_pump_load_ratio_warning = None
-        if configuration_library_direct_mode and acc_v2_direct_mode_enabled:
-            if (
-                peak_design_required_capacity_per_acc_unit_kw is not None
-                and peak_design_required_capacity_per_acc_unit_kw > 0
-            ):
-                pump_load_ratio = _clamp(
-                    acc_required_capacity_per_unit_kw / peak_design_required_capacity_per_acc_unit_kw,
-                    0.0,
-                    1.0,
-                )
-                chw_pump_load_ratio_basis = "design_required_capacity_per_acc_unit"
-                chw_pump_reference_capacity_kw = peak_design_required_capacity_per_acc_unit_kw
-            else:
-                chw_pump_load_ratio_warning = acc_v2_pump_capacity_warning
         chw_pump_power_per_unit_kw = 0.0
         cw_pump_power_per_unit_kw = 0.0
         pump_power_per_unit_kw = 0.0
         pump_power_total_check = True
+        pump_curve_min_load_ratio = None
+        pump_curve_max_load_ratio = None
         chw_pump_curve_source = "legacy_non_configuration_mode"
         configuration_library_chw_pump_requested = False
         configuration_library_chw_pump_error = None
@@ -2464,12 +2459,27 @@ def compute_pue_project(input_obj):
                 pump_ref_text = str(pump_ref)
                 source_equipment_id = str(pumps_cfg.get("source_equipment_id") or "")
                 is_configuration_library_chw_pump = (
-                    "CHW_PUMP_2" in pump_ref_text.upper()
-                    or source_equipment_id.upper() == "CHW_PUMP_2"
+                    "CHW_PUMP" in pump_ref_text.upper()
+                    or source_equipment_id.upper().startswith("CHW_PUMP")
                 )
                 if is_configuration_library_chw_pump:
                     configuration_library_chw_pump_requested = True
                 raw_curve = curve_lib.get("raw_curves", {}).get(str(pump_ref), {}) if isinstance(curve_lib, dict) else {}
+                if isinstance(raw_curve, dict):
+                    raw_pump_points = raw_curve.get("points") or raw_curve.get("data") or []
+                    raw_pump_ratios = []
+                    for raw_pump_point in raw_pump_points if isinstance(raw_pump_points, list) else []:
+                        if isinstance(raw_pump_point, dict):
+                            raw_pump_ratio = _num(raw_pump_point.get(raw_curve.get("x_axis") or "load_ratio"), None)
+                        elif isinstance(raw_pump_point, (list, tuple)) and raw_pump_point:
+                            raw_pump_ratio = _num(raw_pump_point[0], None)
+                        else:
+                            raw_pump_ratio = None
+                        if raw_pump_ratio is not None:
+                            raw_pump_ratios.append(raw_pump_ratio)
+                    if raw_pump_ratios:
+                        pump_curve_min_load_ratio = min(raw_pump_ratios)
+                        pump_curve_max_load_ratio = max(raw_pump_ratios)
                 if is_configuration_library_chw_pump:
                     try:
                         from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
@@ -2484,7 +2494,7 @@ def compute_pue_project(input_obj):
                             pump_curve_load_value,
                         )
                         if not lookup_result.lookup_success:
-                            raise ValueError("; ".join(lookup_result.errors) or "CHW_PUMP_2 lookup failed.")
+                            raise ValueError("; ".join(lookup_result.errors) or f"{equipment_engine_id} lookup failed.")
                         pump_curve_load_value = lookup_result.load_ratio
                         pump_curve_value = lookup_result.power_kW
                         pump_source = "configuration_library_solver_curve"
@@ -2548,18 +2558,18 @@ def compute_pue_project(input_obj):
                     "load_ratio": pump_curve_load_value,
                     "curve_value": pump_curve_value,
                     "power_per_unit_kW": pump_kw,
-                    "total_power_kW": pump_kw * cooling_unit_count
+                    "total_power_kW": pump_kw * pump_active_unit_count
                 })
             if pump_values_per_unit:
                 pump_power_per_unit_kw = sum(pump_values_per_unit)
-                pumps_kw = pump_power_per_unit_kw * cooling_unit_count
-                pump_power_total_check = abs((pump_power_per_unit_kw * cooling_unit_count) - pumps_kw) <= 1e-9
+                pumps_kw = pump_power_per_unit_kw * pump_active_unit_count
+                pump_power_total_check = abs((pump_power_per_unit_kw * pump_active_unit_count) - pumps_kw) <= 1e-9
         if (
             configuration_library_direct_mode
             and pumps_enabled
             and (
                 configuration_library_chw_pump_requested
-                or str(pumps_cfg.get("source_equipment_id") or "").upper() == "CHW_PUMP_2"
+                or str(pumps_cfg.get("source_equipment_id") or "").upper().startswith("CHW_PUMP")
             )
             and chw_pump_curve_source != "configuration_library_solver_curve"
         ):
@@ -3191,6 +3201,18 @@ def compute_pue_project(input_obj):
             "cop_surface_x_max": cop_surface_x_max,
             "cop_source": cop_source,
             "pump_load_ratio": pump_load_ratio,
+            "pump_load_ratio_raw": pump_load_ratio_raw,
+            "pump_load_ratio_lookup": pump_debug_rows[0].get("load_ratio") if pump_debug_rows else None,
+            "pump_curve_min_load_ratio": pump_curve_min_load_ratio,
+            "pump_curve_max_load_ratio": pump_curve_max_load_ratio,
+            "pump_clamped_low": bool(pump_curve_min_load_ratio is not None and 0 < pump_load_ratio_raw < pump_curve_min_load_ratio),
+            "pump_clamped_high": bool(pump_curve_max_load_ratio is not None and pump_load_ratio_raw > pump_curve_max_load_ratio),
+            "pump_overload": bool(pump_curve_max_load_ratio is not None and pump_load_ratio_raw > pump_curve_max_load_ratio),
+            "pump_active_unit_count": pump_active_unit_count,
+            "pump_required_load_per_unit_kW": pump_required_load_per_unit_kw,
+            "pump_reference_capacity_per_unit_kW": chw_pump_reference_capacity_kw,
+            "pump_reference_capacity_source": chw_pump_reference_capacity_source,
+            "pump_load_ratio_basis": chw_pump_load_ratio_basis,
             "chw_pump_load_ratio_basis": chw_pump_load_ratio_basis,
             "chw_pump_reference_capacity_kW": chw_pump_reference_capacity_kw,
             "peak_design_required_capacity_per_acc_unit_kW": peak_design_required_capacity_per_acc_unit_kw,
@@ -3198,10 +3220,12 @@ def compute_pue_project(input_obj):
             "chw_pump_power_per_unit_kW": chw_pump_power_per_unit_kw,
             "cw_pump_power_per_unit_kW": cw_pump_power_per_unit_kw,
             "pump_power_per_unit_kW": pump_power_per_unit_kw,
+            "pump_power_total_kW": pumps_kw,
             "pump_power_total_check": pump_power_total_check,
             "pump_power_kW": pumps_kw,
             "pumps_kw": pumps_kw,
             "chw_pump_curve_source": chw_pump_curve_source,
+            "pump_curve_source": chw_pump_curve_source,
             "pump_power_details": pump_debug_rows,
             "airflow_power_kW": airflow_kw,
             "terminal_fan_power_kW": airflow_kw,

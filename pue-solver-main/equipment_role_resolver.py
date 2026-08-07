@@ -76,6 +76,7 @@ def _resolve_declared_equipment_id(manifest, role_name, declared_equipment_id, l
         equipment_id
         for equipment_id in sorted(loaded_equipment)
         if _canonical_equipment_family(equipment_id) == declared_canonical
+        and _pump_family_matches(declared_equipment_id, equipment_id)
     ]
     if len(matches) == 1:
         return matches[0]
@@ -92,3 +93,13 @@ def _resolve_declared_equipment_id(manifest, role_name, declared_equipment_id, l
 def _canonical_equipment_family(equipment_id):
     parsed = parse_equipment_folder_name(equipment_id)
     return canonicalize_equipment_id(parsed.get("canonical_equipment_id") or equipment_id)
+
+
+def _pump_family_matches(declared_equipment_id, candidate_equipment_id):
+    declared = str(declared_equipment_id).upper()
+    candidate = str(candidate_equipment_id).upper()
+    if declared.startswith("CW_PUMP"):
+        return candidate.startswith("CW_PUMP")
+    if declared.startswith("CHW_PUMP"):
+        return candidate.startswith("CHW_PUMP")
+    return True

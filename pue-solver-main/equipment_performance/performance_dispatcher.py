@@ -14,10 +14,11 @@ PERFORMANCE_ADAPTER_REGISTRY = {
     ("ACC", "ambient_capacity_power_2D"): ACCPerformanceAdapter,
     ("CHILLER", "cop_map_2D"): ChillerPerformanceAdapter,
     ("DRY_COOLER", "ambient_capacity_power_1D"): DryCoolerPerformanceAdapter,
+    ("DRY_COOLER", "outdoor_temperature_power_1D"): DryCoolerPerformanceAdapter,
 }
 
 
-def dispatch_performance_adapter(equipment_metadata, curve_data=None, curve_type=None):
+def dispatch_performance_adapter(equipment_metadata, curve_data=None, curve_type=None, **adapter_kwargs):
     """Return a performance adapter selected by equipment metadata."""
     metadata = equipment_metadata if isinstance(equipment_metadata, dict) else {}
     equipment_type = str(metadata.get("equipment_type") or "").strip().upper()
@@ -41,10 +42,22 @@ def dispatch_performance_adapter(equipment_metadata, curve_data=None, curve_type
     return adapter_class(
         equipment_metadata={**metadata, "equipment_type": equipment_type, "curve_schema": curve_schema},
         curve_data=curve_data,
+        **adapter_kwargs,
     )
 
 
-def calculate_equipment_performance(equipment_metadata, curve_data, input_conditions, curve_type=None):
+def calculate_equipment_performance(
+    equipment_metadata,
+    curve_data,
+    input_conditions,
+    curve_type=None,
+    **adapter_kwargs,
+):
     """Dispatch and evaluate one equipment performance point."""
-    adapter = dispatch_performance_adapter(equipment_metadata, curve_data=curve_data, curve_type=curve_type)
+    adapter = dispatch_performance_adapter(
+        equipment_metadata,
+        curve_data=curve_data,
+        curve_type=curve_type,
+        **adapter_kwargs,
+    )
     return adapter.calculate(input_conditions)
