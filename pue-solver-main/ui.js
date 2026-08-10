@@ -156,6 +156,7 @@ let scenarioResults = [];
 window.scenario_results = scenarioResults;
 let configurationLibraryData = null;
 let configurationLibraryCatalog = [];
+let automaticEpwReady = false;
 let lastAccCalculationEngineSelection = "acc_v2";
 const equipmentPdfSpecs = {};
 const CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE = "acc_v2_direct_solver_curve_hourly";
@@ -737,9 +738,7 @@ function phase19bTrace(label, data = null) {
 }
 
 function setRunButtonsDisabled(disabled) {
-    if (btnRun) btnRun.disabled = disabled;
-    const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
-    if (runLibraryButton) runLibraryButton.disabled = disabled || !configurationLibraryData;
+    if (btnRun) btnRun.disabled = disabled || !configurationLibraryData || !automaticEpwReady;
 }
 
 function clearRuntimeErrorDetails() {
@@ -924,9 +923,9 @@ function isConfigurationLibraryAccV2DirectResult(outputObj = {}, inputObj = null
 }
 
 function getCoolingSystemSelection() {
-    const type = document.getElementById("coolingSystemType")?.value || DEFAULT_COOLING_SYSTEM_TYPE;
-    const capacityMw = Number(document.getElementById("coolingUnitCapacity")?.value || DEFAULT_COOLING_UNIT_CAPACITY_MW);
-    const powerSource = document.getElementById("powerSource")?.value || DEFAULT_POWER_SOURCE;
+    const type = configurationLibraryData?.cooling_system_type || DEFAULT_COOLING_SYSTEM_TYPE;
+    const capacityMw = Number(configurationLibraryData?.cooling_unit_capacity_mw || DEFAULT_COOLING_UNIT_CAPACITY_MW);
+    const powerSource = configurationLibraryData?.power_source || DEFAULT_POWER_SOURCE;
     const scenarioKey = document.getElementById("scenarioSelect")?.value || DEFAULT_SCENARIO_KEY;
     const scenario = SCENARIO_REGISTRY[scenarioKey] || SCENARIO_REGISTRY[DEFAULT_SCENARIO_KEY];
     const config = COOLING_SYSTEM_CONFIG[type];
@@ -1139,15 +1138,29 @@ async function checkSelectedDefaultCurveFiles(powerConfig) {
 
 function renderCoolingSystemSelection() {
     const { type, capacityMw, powerSource, scenario, config, powerConfig } = getCoolingSystemSelection();
+    const libraryLoaded = Boolean(configurationLibraryData);
     const directModeActive = isConfigurationLibraryDirectModeActive({ type, capacityMw, powerSource });
+    const displayValues = {
+        coolingSystemType: libraryLoaded ? type : "Not loaded",
+        coolingUnitCapacity: libraryLoaded ? `${capacityMw} MW` : "Not loaded",
+        powerSource: libraryLoaded ? powerSource : "Not loaded"
+    };
+    Object.entries(displayValues).forEach(([id, value]) => {
+        const field = document.getElementById(id);
+        if (field) field.textContent = value;
+        const source = document.getElementById(`${id}Source`);
+        if (source) source.textContent = libraryLoaded
+            ? "Loaded from Configuration Library"
+            : "Source: Configuration Library (not loaded)";
+    });
     const renderList = (id, values) => {
         const el = document.getElementById(id);
         if (el) el.innerHTML = values.map(value => `<li>${esc(value)}</li>`).join("");
     };
-    renderList("whiteSpaceEquipmentList", directModeActive
+    renderList("whiteSpaceEquipmentList", !libraryLoaded ? ["Load Configuration Library to view equipment"] : directModeActive
         ? DIRECT_MODE_WHITE_SPACE_EQUIPMENT
         : (powerConfig?.white_space_equipment || []).map(equipmentIdDisplayName));
-    renderList("graySpaceEquipmentList", directModeActive
+    renderList("graySpaceEquipmentList", !libraryLoaded ? ["Load Configuration Library to view equipment"] : directModeActive
         ? DIRECT_MODE_GRAY_SPACE_EQUIPMENT
         : (powerConfig?.gray_space_equipment || []).map(equipmentIdDisplayName));
     const curveSources = directModeActive ? {} : buildSelectedCurveSources(powerConfig);
@@ -1160,15 +1173,15 @@ function renderCoolingSystemSelection() {
             return `${equipmentIdDisplayName(equipmentId)} — ${status}`;
         })
     ];
-    renderList("coolingPerformanceCurveList", curveRows);
-    checkSelectedDefaultCurveFiles(powerConfig);
+    renderList("coolingPerformanceCurveList", libraryLoaded ? curveRows : ["Load Configuration Library to view curve dependencies"]);
+    if (libraryLoaded) checkSelectedDefaultCurveFiles(powerConfig);
     const status = document.getElementById("coolingSystemStatus");
     if (status) {
         const libraryRunnable = directModeActive;
         const runnable = (config?.implemented && powerSource === DEFAULT_POWER_SOURCE) || libraryRunnable;
-        status.textContent = runnable ? `${type}, ${capacityMw} MW, ${powerSource}, ${scenario.display_name}: ${libraryRunnable ? "Configuration Library calculation model" : "calculation model"} available.`
+        status.textContent = !libraryLoaded ? "Load a Configuration Library to define the cooling system." : runnable ? `${type}, ${capacityMw} MW, ${powerSource}, ${scenario.display_name}: ${libraryRunnable ? "Configuration Library calculation model" : "calculation model"} available.`
             : powerSource !== DEFAULT_POWER_SOURCE ? POWER_SOURCE_MODEL_UNAVAILABLE_MESSAGE : COOLING_MODEL_UNAVAILABLE_MESSAGE;
-        status.style.color = runnable ? "#059669" : "#b45309";
+        status.style.color = libraryLoaded && runnable ? "#059669" : "#b45309";
     }
     renderScenarioSummary();
     renderFrameworkDiagnosticsPanel();
@@ -1412,47 +1425,16 @@ function resetScenarioResults() {
 }
 
 function updateCoolingUnitCapacityOptions(preferredCapacity) {
-    const type = document.getElementById("coolingSystemType")?.value || DEFAULT_COOLING_SYSTEM_TYPE;
-    const select = document.getElementById("coolingUnitCapacity");
-    if (!select) return;
-    const capacities = Object.keys(COOLING_SYSTEM_CONFIG[type]?.cooling_unit_capacities || {}).map(Number);
-    select.innerHTML = capacities.map(value => `<option value="${value}">${value} MW</option>`).join("");
-    const requested = Number(preferredCapacity);
-    select.value = capacities.includes(requested) ? String(requested) : String(capacities[0]);
     renderCoolingSystemSelection();
 }
 
 function initCoolingSystemSelection() {
-    const typeSelect = document.getElementById("coolingSystemType");
-    const capacitySelect = document.getElementById("coolingUnitCapacity");
-    const powerSourceSelect = document.getElementById("powerSource");
     const scenarioSelect = document.getElementById("scenarioSelect");
-    if (!typeSelect || !capacitySelect || !powerSourceSelect || !scenarioSelect) return;
-    typeSelect.innerHTML = Object.keys(COOLING_SYSTEM_CONFIG).map(type => `<option value="${type}">${type}</option>`).join("");
-    typeSelect.value = DEFAULT_COOLING_SYSTEM_TYPE;
-    powerSourceSelect.value = DEFAULT_POWER_SOURCE;
+    if (!scenarioSelect) return;
     scenarioSelect.innerHTML = Object.values(SCENARIO_REGISTRY)
         .map(scenario => `<option value="${scenario.scenario_key}">${scenario.display_name}</option>`).join("");
     scenarioSelect.value = DEFAULT_SCENARIO_KEY;
-    updateCoolingUnitCapacityOptions(DEFAULT_COOLING_UNIT_CAPACITY_MW);
-    typeSelect.addEventListener("change", () => {
-        resetScenarioResults();
-        updateCoolingUnitCapacityOptions();
-        standardSolverInput = null;
-        refreshStandardInputStatus();
-    });
-    capacitySelect.addEventListener("change", () => {
-        resetScenarioResults();
-        renderCoolingSystemSelection();
-        standardSolverInput = null;
-        refreshStandardInputStatus();
-    });
-    powerSourceSelect.addEventListener("change", () => {
-        resetScenarioResults();
-        renderCoolingSystemSelection();
-        standardSolverInput = null;
-        refreshStandardInputStatus();
-    });
+    renderCoolingSystemSelection();
     scenarioSelect.addEventListener("change", () => {
         renderCoolingSystemSelection();
         if (configurationLibraryData) {
@@ -2213,11 +2195,6 @@ function restoreProjectMemory(key = "") {
         if (document.getElementById("dryCoolerApproachC")) document.getElementById("dryCoolerApproachC").value = report.dry_cooler_approach_c || "5";
 
         const coolingSelection = payload.cooling_system_selection || {};
-        const restoredType = COOLING_SYSTEM_CONFIG[coolingSelection.type] ? coolingSelection.type : DEFAULT_COOLING_SYSTEM_TYPE;
-        if (document.getElementById("coolingSystemType")) document.getElementById("coolingSystemType").value = restoredType;
-        updateCoolingUnitCapacityOptions(coolingSelection.capacity_mw ?? DEFAULT_COOLING_UNIT_CAPACITY_MW);
-        const restoredPowerSource = ["Grid", "Gas Engine"].includes(coolingSelection.power_source) ? coolingSelection.power_source : DEFAULT_POWER_SOURCE;
-        if (document.getElementById("powerSource")) document.getElementById("powerSource").value = restoredPowerSource;
         const restoredScenario = SCENARIO_REGISTRY[coolingSelection.scenario_key] ? coolingSelection.scenario_key : DEFAULT_SCENARIO_KEY;
         if (document.getElementById("scenarioSelect")) document.getElementById("scenarioSelect").value = restoredScenario;
         renderCoolingSystemSelection();
@@ -4070,6 +4047,16 @@ function setAutoEpwStatus(text, tone = "info") {
     el.textContent = text;
 }
 
+function resetAutomaticEpwBindingState() {
+    automaticEpwReady = false;
+    standardDataFiles.weather = null;
+    standardSolverInput = null;
+    updateFileStatus("statusWeather", "Climate Station: Waiting for Configuration Library loading", "info");
+    setAutoEpwStatus("Weather Data: Waiting for Configuration Library loading", "info");
+    const modeStatus = document.getElementById("automaticEpwModeStatus");
+    if (modeStatus) modeStatus.textContent = "Automatic EPW Matching";
+}
+
 function getWeatherHours(weatherObj) {
     const data = weatherObj && (weatherObj.data || weatherObj.hourly_data);
     return Array.isArray(data && data.dry_bulb_C) ? data.dry_bulb_C.length : 0;
@@ -4163,20 +4150,22 @@ async function applyMatchedEpw(match, locationText, coordinates = null, statusTe
     });
     standardDataFiles.weather = json;
     const weatherHours = getWeatherHours(json);
+    automaticEpwReady = weatherHours === 8760 || weatherHours === 8784;
     standardSolverInput = null;
     preferStandardFiles = true;
-    updateFileStatus("statusWeather", statusText || `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`, "ok");
+    updateFileStatus("statusWeather", `Climate Station: ${match.station || match.city} / ${match.source || "Local EPW"}`, "ok");
+    const modeStatus = document.getElementById("automaticEpwModeStatus");
+    if (modeStatus) modeStatus.textContent = automaticEpwReady ? "✓ Automatic EPW Matching" : "Automatic EPW Matching";
     if (weatherHours !== 8760 && weatherHours !== 8784) {
-        setAutoEpwStatus(`EPW loaded, but weather hours are unusual: ${weatherHours}`, "error");
-    } else if (autoStatusText) {
-        setAutoEpwStatus(autoStatusText, "ok");
+        setAutoEpwStatus(`Weather Data: EPW loaded, but weather hours are unusual: ${weatherHours}`, "error");
     } else {
-        setAutoEpwStatus("", "ok");
+        setAutoEpwStatus(`Weather Data: ${weatherHours} hourly weather loaded`, "ok");
     }
     previewInputCurves(standardDataFiles);
     renderWeatherReportPanel();
     renderTemperatureDistributionPanel();
     refreshStandardInputStatus();
+    setRunButtonsDisabled(false);
     return json;
 }
 
@@ -4185,21 +4174,23 @@ async function autoMatchLocalEpw() {
     const locationText = locationInput ? locationInput.value.trim() : "";
     const coordinates = readProjectCoordinates();
     const resetWeatherStatusAfterMiss = () => {
-        updateFileStatus("statusWeather", standardDataFiles.weather ? "已有天气数据未改变" : "未加载", "info");
+        automaticEpwReady = false;
+        updateFileStatus("statusWeather", "Climate Station: EPW match unavailable", "error");
+        if (btnRun) btnRun.disabled = true;
     };
     updateFileStatus("statusWeather", "Matching local EPW...", "info");
     setAutoEpwStatus("", "info");
     if (!coordinates) {
         resetWeatherStatusAfterMiss();
         setAutoEpwStatus("Please enter valid Latitude and Longitude for EPW matching.", "error");
-        return;
+        return false;
     }
     try {
         let epwIndex = await loadLocalEpwIndex();
         let match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
         if (match && match.epw_path) {
             await applyMatchedEpw(match, locationText, coordinates);
-            return;
+            return automaticEpwReady;
         }
 
         setAutoEpwStatus("No local EPW matched. Searching online EPW...", "info");
@@ -4207,7 +4198,7 @@ async function autoMatchLocalEpw() {
         if (!onlineResult || !onlineResult.success) {
             resetWeatherStatusAfterMiss();
             setAutoEpwStatus("No suitable online EPW found. Check the local EPW library or EPW API service.", "error");
-            return;
+            return false;
         }
 
         epwIndex = await loadLocalEpwIndex();
@@ -4215,7 +4206,7 @@ async function autoMatchLocalEpw() {
         if (!match || !match.epw_path) {
             resetWeatherStatusAfterMiss();
             setAutoEpwStatus("Online EPW downloaded, but the local EPW index did not match.", "error");
-            return;
+            return false;
         }
         const station = onlineResult.matched_station || match.station || match.city;
         const distance = Number.isFinite(Number(onlineResult.distance_km))
@@ -4228,9 +4219,11 @@ async function autoMatchLocalEpw() {
             `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`,
             `Online EPW downloaded: ${station} / ${distance}`
         );
+        return automaticEpwReady;
     } catch (e) {
         resetWeatherStatusAfterMiss();
         setAutoEpwStatus("Local EPW not found. Start the EPW API server or check the local EPW library.", "error");
+        return false;
     }
 }
 
@@ -5561,6 +5554,14 @@ async function runUsingConfigurationLibrary() {
         if (status) status.textContent = "Load Configuration Library first.";
         return;
     }
+    if (!automaticEpwReady) {
+        if (status) {
+            status.textContent = "Automatic EPW weather matching must complete successfully before running the annual simulation.";
+            status.style.color = "#dc2626";
+        }
+        if (btnRun) btnRun.disabled = true;
+        return;
+    }
     if (!isConfigurationManifestRunnable(configurationLibraryData.configuration_manifest)) {
         if (status) {
             status.textContent = "This configuration requires validated Solver_Curve data and solver module implementation.";
@@ -5981,13 +5982,6 @@ async function loadSelectedConfigurationLibrary() {
         configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
         window.configurationLibraryData = configurationLibraryData;
 
-        const typeSelect = document.getElementById("coolingSystemType");
-        if (typeSelect && COOLING_SYSTEM_CONFIG[configurationLibraryData.cooling_system_type]) {
-            typeSelect.value = configurationLibraryData.cooling_system_type;
-            updateCoolingUnitCapacityOptions(configurationLibraryData.cooling_unit_capacity_mw);
-        }
-        const powerSelect = document.getElementById("powerSource");
-        if (powerSelect) powerSelect.value = configurationLibraryData.power_source;
         renderCoolingSystemSelection();
         renderConfigurationLibrarySummary(configurationLibraryData);
         renderFrameworkDiagnosticsPanel();
@@ -5998,15 +5992,18 @@ async function loadSelectedConfigurationLibrary() {
                 : `Configuration Library: manifest default IT load (${percentages.length} hours)`,
             "ok"
         );
+        resetAutomaticEpwBindingState();
+        const epwMatched = await autoMatchLocalEpw();
+        configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+        renderConfigurationLibrarySummary(configurationLibraryData);
         refreshStandardInputStatus();
         if (status) {
-            status.textContent = projectDesignCapacityKw() > 0
-                ? `Loaded ${configurationLibraryData.configuration_name}. Equipment models are automatically bound from Configuration Library.`
-                : `Loaded ${configurationLibraryData.configuration_name}. Enter Total IT Capacity to convert IT load percent to kW.`;
-            status.style.color = "#059669";
+            status.textContent = epwMatched
+                ? `Loaded ${configurationLibraryData.configuration_name}. Equipment models and EPW weather are ready.`
+                : `Loaded ${configurationLibraryData.configuration_name}, but automatic EPW weather matching did not complete.`;
+            status.style.color = epwMatched ? "#059669" : "#dc2626";
         }
-        const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
-        if (runLibraryButton) runLibraryButton.disabled = false;
+        if (btnRun) btnRun.disabled = !epwMatched;
     } catch (error) {
         if (status) {
             status.textContent = `Configuration Library load failed: ${String(error.message || error)}`;
@@ -6025,8 +6022,16 @@ function initStandardDataInputs() {
     const librarySelect = document.getElementById("configurationLibrarySelect");
     if (librarySelect) librarySelect.addEventListener("change", () => {
         configurationLibraryData = null;
-        const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
-        if (runLibraryButton) runLibraryButton.disabled = true;
+        if (btnRun) btnRun.disabled = true;
+        resetAutomaticEpwBindingState();
+        const summary = document.getElementById("configurationLibrarySummary");
+        if (summary) {
+            summary.innerHTML = "";
+            summary.style.display = "none";
+        }
+        const bindingStatus = document.getElementById("configurationLibraryBindingStatus");
+        if (bindingStatus) bindingStatus.textContent = "Equipment binding status will appear after the Configuration Library is loaded.";
+        renderCoolingSystemSelection();
         const manifest = selectedConfigurationManifest();
         const status = document.getElementById("configurationLibraryStatus");
         if (status && manifest) {
@@ -6036,8 +6041,6 @@ function initStandardDataInputs() {
         }
         renderFrameworkDiagnosticsPanel();
     });
-    const runLibraryButton = document.getElementById("btnRunConfigurationLibrary");
-    if (runLibraryButton) runLibraryButton.addEventListener("click", runUsingConfigurationLibrary);
     ["unitQuantityMode", "unitRedundancyMode", "manualInstalledUnits", "manualRunningUnits", "manualStandbyUnits"].forEach((id) => {
         const input = document.getElementById(id);
         if (!input) return;
@@ -6077,8 +6080,6 @@ function initStandardDataInputs() {
     if (demoBtn) demoBtn.addEventListener("click", loadDemoStandardData);
     const buildBtn = document.getElementById("btnBuildFromFiles");
     if (buildBtn) buildBtn.addEventListener("click", buildStandardSolverInputToTextarea);
-    const autoEpwBtn = document.getElementById("btnAutoMatchEpw");
-    if (autoEpwBtn) autoEpwBtn.addEventListener("click", autoMatchLocalEpw);
     const auxInput = document.getElementById("auxFixedCoeff");
     if (auxInput) auxInput.addEventListener("input", () => {
         updateFileStatus("statusAuxFixed", `当前系数 ${auxInput.value || 0}`, "ok");
@@ -6703,7 +6704,7 @@ async function init() {
         }
 
         elStatus.textContent = "Page ready. Calculation engine will load when you click Run.";
-        btnRun.disabled = false;
+        btnRun.disabled = !configurationLibraryData;
 
         if (window.initCurveEditors) window.initCurveEditors();
         initStandardDataInputs();
@@ -7046,7 +7047,7 @@ json.dumps(out, indent=2)
     }
 }
 
-btnRun.addEventListener("click", run);
+btnRun.addEventListener("click", runUsingConfigurationLibrary);
 if (btnExportHtmlReport) btnExportHtmlReport.addEventListener("click", exportHtmlReport);
 if (btnExportJson) btnExportJson.addEventListener("click", exportOutputJson);
 elIn.addEventListener("input", () => {

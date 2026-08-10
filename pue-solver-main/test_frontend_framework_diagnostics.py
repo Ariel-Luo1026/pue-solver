@@ -38,7 +38,7 @@ class FrontendFrameworkDiagnosticsTest(unittest.TestCase):
 
     def test_existing_calculation_buttons_remain_available(self):
         self.assertIn('id="btnRun"', self.index)
-        self.assertIn('id="btnRunConfigurationLibrary"', self.index)
+        self.assertNotIn('id="btnRunConfigurationLibrary"', self.index)
         self.assertIn('runUsingConfigurationLibrary', self.ui)
 
     def test_diagnostics_are_not_added_to_exported_report(self):

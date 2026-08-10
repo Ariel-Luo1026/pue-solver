@@ -18,7 +18,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
     def test_acc_engine_selector_is_removed_and_direct_engine_is_fixed(self):
         self.assertNotIn('id="accCalculationEngine"', self.index)
         self.assertNotIn("Legacy ACC Engine", self.index)
-        self.assertIn("ACC V2 Configuration Library Engine", self.index)
+        self.assertNotIn("ACC V2 Configuration Library Engine", self.index)
 
     def test_run_mode_selector_is_removed_and_direct_mode_is_fixed(self):
         self.assertNotIn('id="configurationCalculationMode"', self.index)
@@ -26,7 +26,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
         self.assertNotIn("Excel Benchmark Annual Equivalent Mode", self.index)
         self.assertNotIn("Excel Replicated Hourly Mode", self.index)
         self.assertNotIn("ACC V2 Direct Solver_Curve Hourly Mode", self.index)
-        self.assertIn("Using Configuration Library Direct Solver_Curve hourly simulation.", self.index)
+        self.assertNotIn("Using Configuration Library Direct Solver_Curve hourly simulation.", self.index)
         self.assertIn("Configuration Library Direct Solver_Curve Hourly Simulation", self.index)
 
     def test_frontend_always_maps_direct_mode_to_acc_v2_feature_flag(self):

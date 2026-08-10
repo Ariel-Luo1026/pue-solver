@@ -52,6 +52,43 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         for control in primary_controls:
             self.assertLess(self.index.index(control), details_start)
 
+    def test_cooling_system_definition_is_read_only_and_library_driven(self):
+        for element_id in ("coolingSystemType", "coolingUnitCapacity", "powerSource"):
+            self.assertIn(f'id="{element_id}" class="coolingDefinitionValue"', self.index)
+            self.assertNotIn(f'<select id="{element_id}"', self.index)
+            self.assertIn(f'id="{element_id}Source"', self.index)
+        self.assertIn("Source: Configuration Library", self.index)
+        self.assertIn('<select id="scenarioSelect"></select>', self.index)
+
+        selection_block = self._function_source("getCoolingSystemSelection")
+        for source in (
+            "configurationLibraryData?.cooling_system_type",
+            "configurationLibraryData?.cooling_unit_capacity_mw",
+            "configurationLibraryData?.power_source",
+        ):
+            self.assertIn(source, selection_block)
+        for element_id in ("coolingSystemType", "coolingUnitCapacity", "powerSource"):
+            self.assertNotIn(f'document.getElementById("{element_id}")', selection_block)
+        self.assertIn('document.getElementById("scenarioSelect")', selection_block)
+
+    def test_loaded_library_populates_read_only_definition_cards(self):
+        render_block = self._function_source("renderCoolingSystemSelection")
+        for text in (
+            'coolingSystemType: libraryLoaded ? type : "Not loaded"',
+            'coolingUnitCapacity: libraryLoaded ? `${capacityMw} MW` : "Not loaded"',
+            'powerSource: libraryLoaded ? powerSource : "Not loaded"',
+            '"Loaded from Configuration Library"',
+        ):
+            self.assertIn(text, render_block)
+
+    def test_configuration_change_clears_definition_and_requires_reload(self):
+        init_block = self._function_source("initStandardDataInputs")
+        self.assertIn("configurationLibraryData = null", init_block)
+        self.assertIn("btnRun.disabled = true", init_block)
+        self.assertIn('summary.style.display = "none"', init_block)
+        self.assertIn("Equipment binding status will appear after the Configuration Library is loaded.", init_block)
+        self.assertIn("renderCoolingSystemSelection()", init_block)
+
     def test_unit_quantity_maps_to_project_input(self):
         self.assertIn("function getUnitQuantitySelection", self.ui)
         self.assertIn('mode: "manual"', self.ui)
@@ -131,7 +168,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertNotIn("loadPyodide()", init_block)
         self.assertNotIn("runPythonAsync", init_block)
         self.assertIn("Calculation engine will load when you click Run", init_block)
-        self.assertIn("btnRun.disabled = false", init_block)
+        self.assertIn("btnRun.disabled = !configurationLibraryData", init_block)
 
         ensure_block = self._function_source("ensurePyodideReady")
         self.assertIn("if (pyodide && window.pyodideReady) return pyodide", ensure_block)
@@ -303,7 +340,8 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
     def test_simulation_inputs_are_configuration_library_driven(self):
         self.assertIn("Simulation Inputs", self.index)
         self.assertIn("Weather Source", self.index)
-        self.assertIn("Auto Match EPW", self.index)
+        self.assertIn("Automatic EPW Matching", self.index)
+        self.assertNotIn('id="btnAutoMatchEpw"', self.index)
         for legacy_id in (
             "fileItLoad",
             "fileWeather",
@@ -323,6 +361,20 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             "末端风机性能曲线",
         ):
             self.assertNotIn(legacy_title, self.index)
+
+    def test_configuration_load_and_annual_run_are_separate_actions(self):
+        self.assertIn('id="btnLoadConfigurationLibrary">Load Configuration Library</button>', self.index)
+        self.assertIn('id="btnRun" disabled>Run Annual PUE Simulation</button>', self.index)
+        self.assertNotIn("Run Using Configuration Library", self.index)
+        self.assertNotIn('id="btnRunConfigurationLibrary"', self.index)
+
+        init_block = self._function_source("initStandardDataInputs")
+        self.assertIn('libraryButton.addEventListener("click", loadSelectedConfigurationLibrary)', init_block)
+        self.assertNotIn("runUsingConfigurationLibrary", init_block)
+        self.assertIn('btnRun.addEventListener("click", runUsingConfigurationLibrary)', self.ui)
+
+    def test_configuration_mode_wording_is_not_duplicated(self):
+        self.assertEqual(self.index.count("Configuration Library Direct Solver_Curve Hourly Simulation"), 1)
 
     def test_project_level_heat_gain_defaults_are_preserved(self):
         for element_id, value in (
@@ -369,6 +421,38 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("设备模型由 Configuration Library 自动加载", status_block)
         self.assertIn("Equipment models are automatically loaded from Configuration Library", status_block)
         self.assertNotIn("点击“运行计算”会自动生成 solver 输入", status_block)
+
+    def test_library_load_triggers_existing_epw_matcher_automatically(self):
+        load_block = self._function_source("loadSelectedConfigurationLibrary")
+        self.assertIn("resetAutomaticEpwBindingState()", load_block)
+        self.assertIn("const epwMatched = await autoMatchLocalEpw()", load_block)
+        self.assertIn("btnRun.disabled = !epwMatched", load_block)
+        self.assertIn("Equipment models and EPW weather are ready", load_block)
+        self.assertIn("async function autoMatchLocalEpw()", self.ui)
+
+    def test_epw_status_updates_without_manual_button(self):
+        apply_block = self._function_source("applyMatchedEpw")
+        self.assertIn("✓ Automatic EPW Matching", apply_block)
+        self.assertIn("Climate Station:", apply_block)
+        self.assertIn("hourly weather loaded", apply_block)
+        self.assertNotIn("btnAutoMatchEpw", self.index)
+
+    def test_configuration_change_clears_epw_and_disables_run(self):
+        init_block = self._function_source("initStandardDataInputs")
+        self.assertIn("resetAutomaticEpwBindingState()", init_block)
+        self.assertIn("configurationLibraryData = null", init_block)
+        self.assertIn("btnRun.disabled = true", init_block)
+        reset_block = self._function_source("resetAutomaticEpwBindingState")
+        self.assertIn("automaticEpwReady = false", reset_block)
+        self.assertIn("standardDataFiles.weather = null", reset_block)
+        self.assertIn("Waiting for Configuration Library loading", reset_block)
+
+    def test_annual_run_requires_library_and_epw_ready(self):
+        disable_block = self._function_source("setRunButtonsDisabled")
+        self.assertIn("!configurationLibraryData || !automaticEpwReady", disable_block)
+        run_block = self._function_source("runUsingConfigurationLibrary")
+        self.assertIn("if (!automaticEpwReady)", run_block)
+        self.assertIn("Automatic EPW weather matching must complete successfully", run_block)
 
     def test_configuration_library_workbooks_sync_to_pyodide_as_binary_files(self):
         self.assertIn('const CONFIGURATION_LIBRARY_PYODIDE_ROOT = "Configuration Library"', self.ui)

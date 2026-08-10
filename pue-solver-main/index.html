@@ -149,6 +149,13 @@
             margin-bottom: 6px;
         }
 
+        .coolingDefinitionValue {
+            min-height: 22px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #111827;
+        }
+
         .hint {
             font-size: 12px;
             color: #6b7280;
@@ -445,18 +452,18 @@
         <div class="fileGrid">
             <div class="fileSlot">
                 <div class="panelTitle">Cooling System Type</div>
-                <select id="coolingSystemType"></select>
+                <div id="coolingSystemType" class="coolingDefinitionValue">Not loaded</div>
+                <div id="coolingSystemTypeSource" class="hint">Source: Configuration Library</div>
             </div>
             <div class="fileSlot">
                 <div class="panelTitle">Cooling Unit Capacity</div>
-                <select id="coolingUnitCapacity"></select>
+                <div id="coolingUnitCapacity" class="coolingDefinitionValue">Not loaded</div>
+                <div id="coolingUnitCapacitySource" class="hint">Source: Configuration Library</div>
             </div>
             <div class="fileSlot">
                 <div class="panelTitle">Power Source</div>
-                <select id="powerSource">
-                    <option value="Grid" selected>Grid</option>
-                    <option value="Gas Engine">Gas Engine</option>
-                </select>
+                <div id="powerSource" class="coolingDefinitionValue">Not loaded</div>
+                <div id="powerSourceSource" class="hint">Source: Configuration Library</div>
             </div>
             <div class="fileSlot">
                 <div class="panelTitle">Scenario</div>
@@ -508,11 +515,9 @@
             <select id="configurationLibrarySelect" style="max-width:360px;">
                 <option value="">Loading Configuration Library...</option>
             </select>
-            <span class="hint">Using Configuration Library Direct Solver_Curve hourly simulation.</span>
             <button type="button" class="secondaryButton" id="btnLoadConfigurationLibrary">Load Configuration Library</button>
-            <button type="button" class="primaryButton" id="btnRunConfigurationLibrary" disabled>Run Using Configuration Library</button>
         </div>
-        <div class="hint" style="margin-top:8px;">Calculation Mode: Configuration Library Direct Solver_Curve Hourly Simulation. ACC Engine: ACC V2 Configuration Library Engine.</div>
+        <div class="hint" style="margin-top:8px;">Calculation Mode: Configuration Library Direct Solver_Curve Hourly Simulation.</div>
         <div class="panel" style="margin-top:14px;">
             <div class="panelTitle">Unit Quantity / Redundancy</div>
             <div class="fileGrid" style="margin-top:10px;">
@@ -589,9 +594,9 @@
         <div class="fileGrid">
             <div class="fileSlot">
                 <div class="panelTitle">Weather Source</div>
-                <button type="button" class="secondaryButton" id="btnAutoMatchEpw" style="margin-top:8px;">Auto Match EPW</button>
-                <div id="statusWeather" class="hint">Auto matched EPW: not loaded</div>
-                <div id="autoEpwStatus" class="hint">Weather matching uses Latitude / Longitude. Local match first; online EPW fetch is attempted when API server is running.</div>
+                <div id="automaticEpwModeStatus">Automatic EPW Matching</div>
+                <div id="statusWeather" class="hint">Climate Station: Waiting for Configuration Library loading</div>
+                <div id="autoEpwStatus" class="hint">Weather Data: Waiting for Configuration Library loading</div>
             </div>
             <div class="fileSlot">
                 <div class="panelTitle">Heat Gains / Auxiliary</div>
@@ -626,16 +631,19 @@
             <summary>Advanced Input Override</summary>
             <div class="fileGrid">
                 <div class="fileSlot"><div class="panelTitle">Manual IT Load Profile Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
-                <div class="fileSlot"><div class="panelTitle">Manual Weather File Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
+                <div class="fileSlot"><div class="panelTitle">Manual Weather File Override</div><div class="hint">Future placeholder for manual EPW upload and weather override; not connected in this phase.</div></div>
                 <div class="fileSlot"><div class="panelTitle">Custom Equipment Curve Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
+                <div class="fileSlot"><div class="panelTitle">Debug Input</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
             </div>
         </details>
+        <div class="toolbar" style="margin-top:14px;">
+            <button class="primaryButton" id="btnRun" disabled>Run Annual PUE Simulation</button>
+        </div>
     </div>
 
     <!-- ================= Run ================= -->
     <div class="card">
         <div class="toolbar">
-            <button class="primaryButton" id="btnRun" disabled>运行计算</button>
             <button class="secondaryButton" id="btnExportHtmlReport" disabled>导出 HTML 报告</button>
             <button class="secondaryButton" id="btnExportJson" disabled>Export JSON</button>
             <span id="status" class="muted">正在加载 Pyodide…</span>
