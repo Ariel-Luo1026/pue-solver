@@ -701,8 +701,12 @@
                     <div style="font-size: 20px; font-weight: bold; color: #dc2626;" id="annualFacilityEnergy">-</div>
                 </div>
                 <div class="panel">
-                    <div class="panelTitle" id="summaryPeakLabel">峰值设施功率 (kW)</div>
+                    <div class="panelTitle" id="summaryPeakLabel">Annual Observed Peak Facility Demand</div>
                     <div style="font-size: 20px; font-weight: bold; color: #7c3aed;" id="peakFacilityPower">-</div>
+                </div>
+                <div class="panel">
+                    <div class="panelTitle" id="summaryPeakDesignLabel">Peak Design Facility Demand</div>
+                    <div style="font-size: 20px; font-weight: bold; color: #7c3aed;" id="peakDesignFacilityPower">-</div>
                 </div>
             </div>
             <div class="panel" id="pueContributionSummaryPanel" style="display:none; margin-bottom:20px;">
@@ -772,13 +776,17 @@
 
             <!-- Annual Hourly Peak Summary -->
             <div class="panel" style="margin-top: 20px;">
-                <div class="panelTitle">Annual Hourly Peak Summary</div>
+                <div class="panelTitle">Peak Facility Demand</div>
                 <div id="peakHourDetails" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
                     <!-- Will be populated by JavaScript -->
                 </div>
                 <div class="muted" style="margin-top:12px;">
                     This section reports peak values observed within the 8,760-hour annual EPW simulation and is separate from the ASHRAE-based Peak Design Condition analysis.
                 </div>
+                <details id="peakDemandBreakdown" style="margin-top:12px;">
+                    <summary style="cursor:pointer; font-weight:700;">Peak Demand Breakdown</summary>
+                    <div id="peakDemandBreakdownBody" style="margin-top:10px;"></div>
+                </details>
             </div>
         </div>
         <div id="noResultsMessage" style="text-align: center; color: #6b7280; padding: 40px;">

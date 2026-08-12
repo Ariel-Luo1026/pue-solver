@@ -74,16 +74,16 @@ class TemperatureVsPueFrontendBindingTest(unittest.TestCase):
         end = self.ui.index("\n}", start) + 2
         section_source = self.ui[start:end]
 
-        self.assertIn("Annual Hourly Peak Summary", index)
+        self.assertIn("Peak Facility Demand", index)
         self.assertNotIn("Peak Hour Details", index)
         self.assertNotIn('["Peak PUE"', section_source)
         self.assertIn('["Maximum Hourly PUE", fmtNumber(peakSummary.max_hourly_pue, 3)]', section_source)
         self.assertNotIn("Peak Design PUE", section_source)
-        self.assertIn('["Peak Facility Demand Hour", peakSummary.peak_facility_hour]', section_source)
+        self.assertIn('["Peak Hour", peakSummary.peak_facility_hour]', section_source)
         self.assertIn('["Hour of Maximum Hourly PUE", peakSummary.max_hourly_pue_hour]', section_source)
-        self.assertIn('["Peak Facility Demand", `${fmtInteger(peakSummary.peak_facility_power_kW)} kW`]', section_source)
-        self.assertIn('["IT Load at Peak Facility Demand", `${fmtInteger(peakSummary.peak_it_load_kW)} kW`]', section_source)
-        self.assertIn('["Outdoor Dry-Bulb at Peak Facility Demand", `${fmtNumber(peakSummary.peak_outdoor_dry_bulb_C, 1)} deg C`]', section_source)
+        self.assertIn('["Annual Observed Peak Facility Demand", `${fmtInteger(peakSummary.peak_facility_power_kW)} kW`]', section_source)
+        self.assertIn('["IT Load at Peak", `${fmtInteger(peakSummary.peak_it_load_kW)} kW`]', section_source)
+        self.assertIn('["Outdoor DB at Peak", `${fmtNumber(peakSummary.peak_outdoor_dry_bulb_C, 1)} deg C`]', section_source)
         self.assertIn(
             "This section reports peak values observed within the 8,760-hour annual EPW simulation "
             "and is separate from the ASHRAE-based Peak Design Condition analysis.",
