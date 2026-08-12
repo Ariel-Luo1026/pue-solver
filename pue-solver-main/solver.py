@@ -3340,35 +3340,33 @@ def compute_pue_project(input_obj):
     failure_peak_non_radiator_facility_power_kw = peak_non_radiator_facility_power_kw
     if configuration_library_direct_mode and not input_obj.get("_engine_radiator_failure_reference_mode"):
         try:
-            from pathlib import Path
-            from configuration_library_loader import build_solver_input_from_library
-            from library_solver_adapter import convert_library_input_to_solver_input
-
-            configuration_name = (
-                input_obj.get("configuration_id")
-                or _get(input_obj, ["library_context", "configuration_name"])
-                or project.get("name")
-            )
-            library_root = None
-            metadata_path = _get(
-                input_obj,
-                ["library_context", "engine_radiator", "equipment_metadata", "_metadata_path"],
-            )
-            if metadata_path:
-                library_root = Path(metadata_path).resolve().parents[3]
-            failure_library_input = build_solver_input_from_library(
-                configuration_name,
-                float(design_it_load) / 1000.0,
-                "Failure",
-                library_root=library_root,
-            )
-            failure_reference_input = convert_library_input_to_solver_input(failure_library_input)
+            # Direct Mode has already loaded every curve and binding.  Derive the
+            # one-hour Failure reference from that in-memory input so Pyodide does
+            # not need a physical Configuration Library directory at runtime.
+            failure_reference_input = deepcopy(input_obj)
             failure_project = failure_reference_input.setdefault("project", {})
             failure_it_load = failure_project.setdefault("it_load", {})
+            failure_required_units = _num(
+                failure_project.get("required_units"),
+                _num(_get(failure_reference_input, ["library_context", "required_units"]), library_active_units),
+            )
+            failure_required_units = max(1, int(ceil(float(failure_required_units))))
+            failure_reference_input["scenario_name"] = "Failure"
+            failure_project["scenario_name"] = "Failure"
+            failure_project["active_units"] = failure_required_units
+            failure_project["cooling_unit_count"] = failure_required_units
             failure_it_load["design_it_load_kW"] = float(design_it_load)
             failure_it_load["hourly_it_load_kW"] = [float(design_it_load)]
             failure_it_load["hourly_it_load_percent"] = [100.0]
+            failure_it_load["cooling_unit_count"] = failure_required_units
             failure_project["design_it_load_kW"] = float(design_it_load)
+            failure_cooling = _get(failure_reference_input, ["equipment", "cooling"], {})
+            if isinstance(failure_cooling, dict):
+                failure_cooling["cooling_unit_count"] = failure_required_units
+            failure_library_context = failure_reference_input.get("library_context")
+            if isinstance(failure_library_context, dict):
+                failure_library_context["scenario_name"] = "Failure"
+                failure_library_context["active_units"] = failure_required_units
             peak_design_ambient_c = _num(
                 _get(input_obj, ["project", "peak_design_outdoor_dry_bulb_C"]),
                 None,
@@ -3390,6 +3388,8 @@ def compute_pue_project(input_obj):
             failure_reference_input["_engine_radiator_failure_reference_mode"] = True
             failure_reference_input["_skip_peak_design_pue"] = True
             failure_reference_input["_force_solar_heat_gain_max"] = True
+            if acc_v2_engine is not None:
+                failure_reference_input["_acc_v2_engine_override"] = acc_v2_engine
             failure_reference_result = compute_pue_project(failure_reference_input)
             failure_reference_hour = (
                 failure_reference_result.get("hourly_results", [None])[0]

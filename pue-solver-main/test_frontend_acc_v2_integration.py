@@ -2,6 +2,7 @@ import copy
 import re
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from configuration_library_loader import build_solver_input_from_library
 from library_solver_adapter import convert_library_input_to_solver_input
@@ -257,6 +258,36 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIn("ACC Solver_Curve missing or invalid", result["error"])
         self.assertIn("does not allow ACC legacy fallback", result["error"])
+
+    def test_failure_peak_reference_uses_in_memory_direct_mode_input(self):
+        outputs = {}
+        for scenario in ("Normal", "Failure"):
+            sample = convert_library_input_to_solver_input(
+                build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, scenario)
+            )
+            original = copy.deepcopy(sample)
+            sample["library_context"]["engine_radiator"]["equipment_metadata"][
+                "_metadata_path"
+            ] = "/home/Configuration Library/ACC_1.5MW_GASENGINE_CDU/Equipment/ENGINE_RADIATOR_1/Equipment Information.xlsx"
+            with patch(
+                "configuration_library_loader.build_solver_input_from_library",
+                side_effect=AssertionError("Failure reference must not reload Configuration Library"),
+            ):
+                outputs[scenario] = compute_pue_project(sample)
+
+            self.assertNotIn("error", outputs[scenario])
+            self.assertEqual(len(outputs[scenario]["hourly_results"]), 8760)
+            self.assertEqual(sample["scenario_name"], original["scenario_name"])
+            self.assertEqual(sample["project"]["active_units"], original["project"]["active_units"])
+
+        normal_reference = outputs["Normal"]["peak_results"][
+            "failure_peak_non_radiator_facility_power_kW"
+        ]
+        failure_reference = outputs["Failure"]["peak_results"][
+            "failure_peak_non_radiator_facility_power_kW"
+        ]
+        self.assertGreater(normal_reference, 0.0)
+        self.assertAlmostEqual(normal_reference, failure_reference)
 
     def _function_source(self, function_name):
         match = re.search(rf"(?:async\s+)?function\s+{re.escape(function_name)}\s*\(", self.ui)
