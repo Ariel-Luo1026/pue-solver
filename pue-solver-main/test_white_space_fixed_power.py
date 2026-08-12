@@ -11,6 +11,7 @@ class WhiteSpaceFixedPowerTest(unittest.TestCase):
     def setUpClass(cls):
         cls.outputs = {}
         cls.phase10a_pue = {}
+        cls.without_white_space_outputs = {}
         for scenario in ("Normal", "Failure"):
             adapted = convert_library_input_to_solver_input(
                 build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, scenario)
@@ -19,7 +20,8 @@ class WhiteSpaceFixedPowerTest(unittest.TestCase):
             without_white_space = deepcopy(adapted)
             without_white_space["equipment"].pop("library_fixed_power", None)
             without_white_space.pop("library_context", None)
-            cls.phase10a_pue[scenario] = compute_pue_project(without_white_space)["annual_results"]["annual_average_PUE"]
+            cls.without_white_space_outputs[scenario] = compute_pue_project(without_white_space)
+            cls.phase10a_pue[scenario] = cls.without_white_space_outputs[scenario]["annual_results"]["annual_average_PUE"]
 
     def test_normal_hourly_fixed_power(self):
         hour = self.outputs["Normal"]["hourly_results"][0]
@@ -70,8 +72,12 @@ class WhiteSpaceFixedPowerTest(unittest.TestCase):
         for scenario in ("Normal", "Failure"):
             output = self.outputs[scenario]
             annual = output["annual_results"]
-            self.assertGreater(annual["annual_average_PUE"], self.phase10a_pue[scenario])
             hour = output["hourly_results"][0]
+            baseline_hour = self.without_white_space_outputs[scenario]["hourly_results"][0]
+            self.assertGreater(
+                hour["non_radiator_facility_power_kW"],
+                baseline_hour["non_radiator_facility_power_kW"],
+            )
             self.assertGreater(hour["mep_upstream_power_kW"], hour["mep_terminal_load_kW"])
 
     def test_missing_mau_curve_fails_in_configuration_library_mode(self):

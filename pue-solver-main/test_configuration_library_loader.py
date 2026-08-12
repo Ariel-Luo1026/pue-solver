@@ -151,7 +151,7 @@ class ConfigurationLibraryLoaderTest(unittest.TestCase):
             "ACC_2": ("Solver_Curve", "Solver_Curve"),
             "CHW_PUMP_2": ("Solver_Curve", "Solver_Curve"),
             "ENGINE_2": ("Solver_Curve_Normal", "Solver_Curve_Failure"),
-            "ENGINE_RADIATOR_2": ("Solver_Curve_Normal", "Solver_Curve_Failure"),
+            "ENGINE_RADIATOR_2": ("Solver_Curve", "Solver_Curve"),
             "CDU_2": ("Solver_Curve", "Solver_Curve"),
             "RTC_2": ("Solver_Curve", "Solver_Curve"),
             "MAU_2": ("Solver_Curve", "Solver_Curve"),

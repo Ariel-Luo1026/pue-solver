@@ -26,6 +26,54 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         ):
             self.assertIn(text, self.index)
 
+    def test_simulation_readiness_panel_and_checks_exist(self):
+        for text in (
+            'id="simulationReadinessPanel"',
+            "Simulation Readiness",
+            'id="simulationReadinessChecks"',
+            'id="simulationReadinessStatus"',
+            "READY FOR ANNUAL SIMULATION",
+            "SIMULATION INPUTS NOT READY",
+        ):
+            self.assertIn(text, self.index + self.ui)
+        readiness = self._function_source("getSimulationReadiness")
+        for check in (
+            "configurationReady", "equipmentBindingsReady", "weatherReady",
+            "itLoadReady", "coolingInputsReady", "simulationReady",
+        ):
+            self.assertIn(check, readiness)
+
+    def test_readiness_reuses_current_binding_weather_and_it_load_state(self):
+        readiness = self._function_source("getSimulationReadiness")
+        self.assertIn('validation?.status === "valid"', readiness)
+        self.assertIn("missing_roles", readiness)
+        self.assertIn("missing_curves", readiness)
+        self.assertIn("getWeatherHours(standardDataFiles.weather)", readiness)
+        self.assertIn("[8760, 8784].includes(weatherHours)", readiness)
+        self.assertIn("itLoadHours === weatherHours", readiness)
+
+    def test_cooling_input_readiness_validates_numbers_and_existing_ranges(self):
+        block = self._function_source("coolingLoadAdjustmentInputsReady")
+        for element_id in (
+            "solarHeatGainMaxKw", "solarDaytimeStartHour", "solarDaytimeEndHour",
+            "otherAuxiliaryHeatGainKw", "otherElectricalAuxiliaryPowerKw",
+        ):
+            self.assertIn(element_id, block)
+        self.assertIn("Number.isFinite(value)", block)
+        self.assertIn("value >= minimum", block)
+        self.assertIn("value <= maximum", block)
+
+    def test_run_button_uses_consolidated_readiness_and_existing_handler(self):
+        set_disabled = self._function_source("setRunButtonsDisabled")
+        self.assertIn("!simulationReady", set_disabled)
+        self.assertIn('btnRun.addEventListener("click", runUsingConfigurationLibrary)', self.ui)
+
+    def test_configuration_change_resets_and_cooling_changes_refresh_readiness(self):
+        init_block = self._function_source("initStandardDataInputs")
+        self.assertIn("configurationLibraryData = null", init_block)
+        self.assertIn("window.configurationLibraryData = null", init_block)
+        self.assertGreaterEqual(init_block.count("refreshSimulationReadiness()"), 2)
+
     def test_cooling_advanced_information_is_collapsed_by_default(self):
         start = self.index.index('<details id="coolingAdvancedConfigurationDetails"')
         end = self.index.index("</details>", start)
@@ -84,7 +132,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
     def test_configuration_change_clears_definition_and_requires_reload(self):
         init_block = self._function_source("initStandardDataInputs")
         self.assertIn("configurationLibraryData = null", init_block)
-        self.assertIn("btnRun.disabled = true", init_block)
+        self.assertIn("refreshSimulationReadiness()", init_block)
         self.assertIn('summary.style.display = "none"', init_block)
         self.assertIn("Equipment binding status will appear after the Configuration Library is loaded.", init_block)
         self.assertIn("renderCoolingSystemSelection()", init_block)
@@ -426,7 +474,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         load_block = self._function_source("loadSelectedConfigurationLibrary")
         self.assertIn("resetAutomaticEpwBindingState()", load_block)
         self.assertIn("const epwMatched = await autoMatchLocalEpw()", load_block)
-        self.assertIn("btnRun.disabled = !epwMatched", load_block)
+        self.assertIn("refreshSimulationReadiness()", load_block)
         self.assertIn("Equipment models and EPW weather are ready", load_block)
         self.assertIn("async function autoMatchLocalEpw()", self.ui)
 
@@ -441,7 +489,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         init_block = self._function_source("initStandardDataInputs")
         self.assertIn("resetAutomaticEpwBindingState()", init_block)
         self.assertIn("configurationLibraryData = null", init_block)
-        self.assertIn("btnRun.disabled = true", init_block)
+        self.assertIn("refreshSimulationReadiness()", init_block)
         reset_block = self._function_source("resetAutomaticEpwBindingState")
         self.assertIn("automaticEpwReady = false", reset_block)
         self.assertIn("standardDataFiles.weather = null", reset_block)
@@ -449,7 +497,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
 
     def test_annual_run_requires_library_and_epw_ready(self):
         disable_block = self._function_source("setRunButtonsDisabled")
-        self.assertIn("!configurationLibraryData || !automaticEpwReady", disable_block)
+        self.assertIn("!simulationReady", disable_block)
         run_block = self._function_source("runUsingConfigurationLibrary")
         self.assertIn("if (!automaticEpwReady)", run_block)
         self.assertIn("Automatic EPW weather matching must complete successfully", run_block)

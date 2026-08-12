@@ -2962,8 +2962,56 @@ def compute_pue_project(input_obj):
             fan_curve_value = 0.0
             fan_power_source = "configuration_library_mau_curve_excluded_to_avoid_duplicate"
             terminal_fan_excluded_due_to_mau_curve = mau_power_kw > 0.0
+
+        # Phase 22F-C diagnostic framework.  This parallel demand branch deliberately
+        # stops before ENGINE_RADIATOR_1 so it can support a future non-circular
+        # radiator load-ratio definition without changing today's curve lookup.
+        non_radiator_mep_terminal_power_kw = (
+            cooling_kw
+            + pumps_kw
+            + airflow_kw
+            + aux_kw
+            + other_kw
+            + white_space_equipment_power_kw
+        )
+        non_radiator_terminal_power_kw = it_kw + non_radiator_mep_terminal_power_kw
+        if electrical_path_enabled:
+            non_radiator_it_electrical_loss_kw = max(
+                0.0, (it_kw / it_path_efficiency) - it_kw
+            )
+            non_radiator_mep_electrical_loss_kw = max(
+                0.0,
+                (non_radiator_mep_terminal_power_kw / mep_path_efficiency)
+                - non_radiator_mep_terminal_power_kw,
+            )
+            non_radiator_electrical_loss_kw = (
+                non_radiator_it_electrical_loss_kw
+                + non_radiator_mep_electrical_loss_kw
+            )
+        else:
+            # Preserve the legacy loss model as the diagnostic branch's reference.
+            non_radiator_electrical_loss_kw = max(0.0, float(power_dist_loss or 0.0))
+        non_radiator_facility_power_kw = (
+            non_radiator_terminal_power_kw + non_radiator_electrical_loss_kw
+        )
+        engine_radiator_future_load_ratio_basis = "Non-radiator facility demand ratio"
+        engine_3_power_boundary = "generation_side_excluded_from_facility_power"
+        engine_radiator_power_boundary = "facility_auxiliary_electrical_load"
+
         engine_curve_type = None
         engine_radiator_curve_type = None
+        engine_radiator_demand_kw = cooling_load_kw
+        engine_radiator_active_units = library_active_units
+        engine_radiator_reference_capacity_kw = cooling_unit_capacity_kw
+        engine_radiator_load_ratio = (
+            engine_radiator_demand_kw
+            / (engine_radiator_active_units * engine_radiator_reference_capacity_kw)
+            if engine_radiator_active_units > 0 and engine_radiator_reference_capacity_kw > 0
+            else 0.0
+        )
+        engine_radiator_previous_cooling_load_ratio = engine_radiator_load_ratio
+        engine_radiator_load_ratio_basis = "cooling_demand_per_active_unit_over_cooling_unit_capacity"
+        engine_radiator_load_ratio_lookup = None
         if configuration_library_direct_mode:
             try:
                 engine_binding = {
@@ -3025,17 +3073,10 @@ def compute_pue_project(input_obj):
                             }
                         )
                     )
-                radiator_result = configuration_equipment_engines[radiator_engine_key].lookup_power(
-                    "ENGINE_RADIATOR_1",
-                    project_load_ratio,
-                    ambient_C=oat_c,
-                )
-                if not radiator_result.lookup_success:
-                    raise ValueError("; ".join(radiator_result.errors) or "ENGINE_RADIATOR_1 lookup failed.")
-                radiator_power_per_unit = max(0.0, float(radiator_result.power_kW or radiator_result.power_input_kW or 0.0))
-                engine_radiator_power_kw = radiator_power_per_unit * library_active_units
+                # Final lookup is deferred until the annual non-radiator peak is known.
+                engine_radiator_power_kw = 0.0
                 engine_radiator_curve_source = "configuration_library_solver_curve"
-                engine_radiator_curve_type = radiator_result.curve_type
+                engine_radiator_curve_type = "one_dimensional_power"
             except Exception as exc:
                 error_message = (
                     "ENGINE_RADIATOR_1 Solver_Curve missing or invalid. Configuration Library direct mode "
@@ -3049,9 +3090,8 @@ def compute_pue_project(input_obj):
             engine_output_kw, engine_efficiency, engine_fuel_input_kw, engine_waste_heat_kw, engine_curve_source = _evaluate_engine_curve(
                 engine_curve, project_load_ratio, library_active_units
             )
-            engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
-                engine_radiator_curve, project_load_ratio, library_active_units, engine_waste_heat_kw
-            )
+            engine_radiator_power_kw = 0.0
+            engine_radiator_curve_source = "pending_non_radiator_facility_demand_lookup"
 
         # Total facility power
         it_terminal_load_kw = it_kw
@@ -3247,6 +3287,9 @@ def compute_pue_project(input_obj):
             "electrical_distribution_curve_source": electrical_distribution_curve_source,
             "electrical_distribution_curve_type": electrical_distribution_curve_type,
             "electrical_distribution_base_power_kW": electrical_distribution_base_power_kw,
+            "non_radiator_facility_power_kW": non_radiator_facility_power_kw,
+            "non_radiator_terminal_power_kW": non_radiator_terminal_power_kw,
+            "non_radiator_electrical_loss_kW": non_radiator_electrical_loss_kw,
             "cdu_power_kW": cdu_power_kw,
             "cdu_curve_source": cdu_curve_source,
             "rtc_power_kW": rtc_power_kw,
@@ -3264,13 +3307,234 @@ def compute_pue_project(input_obj):
             "engine_waste_heat_kW": engine_waste_heat_kw,
             "engine_curve_source": engine_curve_source,
             "engine_curve_type": engine_curve_type,
+            "engine_3_power_boundary": engine_3_power_boundary,
             "engine_radiator_power_kW": engine_radiator_power_kw,
+            "engine_radiator_load_ratio": engine_radiator_load_ratio,
+            "engine_radiator_previous_cooling_load_ratio": engine_radiator_previous_cooling_load_ratio,
+            "engine_radiator_load_ratio_lookup": engine_radiator_load_ratio_lookup,
+            "engine_radiator_load_ratio_basis": engine_radiator_load_ratio_basis,
+            "engine_radiator_reference_capacity_kW": engine_radiator_reference_capacity_kw,
+            "engine_radiator_active_units": engine_radiator_active_units,
+            "engine_radiator_demand_kW": engine_radiator_demand_kw,
             "engine_radiator_curve_source": engine_radiator_curve_source,
             "engine_radiator_curve_type": engine_radiator_curve_type,
+            "engine_radiator_future_load_ratio_basis": engine_radiator_future_load_ratio_basis,
+            "engine_radiator_power_boundary": engine_radiator_power_boundary,
             "auxiliary_power_kW": aux_kw + other_kw,
             "auxiliary_power_source": auxiliary_power_source,
             "total_facility_power_kW": total_facility_power,
             "hourly_PUE": pue
+        })
+
+    # Phase 22F-D second stage: the annual peak can only be known after every
+    # pre-radiator hourly demand has been evaluated.  Re-evaluate radiator power
+    # from that fixed series, then refresh downstream facility fields.  Radiator
+    # power and ENGINE_3 output are absent from both numerator and denominator.
+    peak_non_radiator_facility_power_kw = max(
+        (
+            item.get("non_radiator_facility_power_kW", 0.0)
+            for item in result["hourly_results"]
+        ),
+        default=0.0,
+    )
+    failure_peak_non_radiator_facility_power_kw = peak_non_radiator_facility_power_kw
+    if configuration_library_direct_mode and not input_obj.get("_engine_radiator_failure_reference_mode"):
+        try:
+            from pathlib import Path
+            from configuration_library_loader import build_solver_input_from_library
+            from library_solver_adapter import convert_library_input_to_solver_input
+
+            configuration_name = (
+                input_obj.get("configuration_id")
+                or _get(input_obj, ["library_context", "configuration_name"])
+                or project.get("name")
+            )
+            library_root = None
+            metadata_path = _get(
+                input_obj,
+                ["library_context", "engine_radiator", "equipment_metadata", "_metadata_path"],
+            )
+            if metadata_path:
+                library_root = Path(metadata_path).resolve().parents[3]
+            failure_library_input = build_solver_input_from_library(
+                configuration_name,
+                float(design_it_load) / 1000.0,
+                "Failure",
+                library_root=library_root,
+            )
+            failure_reference_input = convert_library_input_to_solver_input(failure_library_input)
+            failure_project = failure_reference_input.setdefault("project", {})
+            failure_it_load = failure_project.setdefault("it_load", {})
+            failure_it_load["design_it_load_kW"] = float(design_it_load)
+            failure_it_load["hourly_it_load_kW"] = [float(design_it_load)]
+            failure_it_load["hourly_it_load_percent"] = [100.0]
+            failure_project["design_it_load_kW"] = float(design_it_load)
+            peak_design_ambient_c = _num(
+                _get(input_obj, ["project", "peak_design_outdoor_dry_bulb_C"]),
+                None,
+            )
+            if peak_design_ambient_c is None:
+                peak_design_ambient_c = _num(
+                    _get(input_obj, ["weather", "peak_design_outdoor_dry_bulb_C"]),
+                    None,
+                )
+            if peak_design_ambient_c is None:
+                peak_design_ambient_c = max(dry_values) if dry_values else 25.0
+            failure_weather = failure_reference_input.setdefault("weather", {}).setdefault(
+                "hourly_data", {}
+            )
+            failure_weather["hour_index"] = [0]
+            failure_weather["dry_bulb_C"] = [float(peak_design_ambient_c)]
+            failure_weather["wet_bulb_C"] = []
+            failure_weather["relative_humidity_percent"] = []
+            failure_reference_input["_engine_radiator_failure_reference_mode"] = True
+            failure_reference_input["_skip_peak_design_pue"] = True
+            failure_reference_input["_force_solar_heat_gain_max"] = True
+            failure_reference_result = compute_pue_project(failure_reference_input)
+            failure_reference_hour = (
+                failure_reference_result.get("hourly_results", [None])[0]
+                if failure_reference_result.get("hourly_results")
+                else None
+            )
+            if not isinstance(failure_reference_hour, dict):
+                raise ValueError(
+                    failure_reference_result.get("error")
+                    or "Failure reference evaluation produced no hourly result."
+                )
+            failure_peak_non_radiator_facility_power_kw = float(
+                failure_reference_hour["non_radiator_facility_power_kW"]
+            )
+        except Exception as exc:
+            error_message = f"ENGINE_RADIATOR_1 Failure peak reference calculation failed. Reason: {exc}"
+            validation.setdefault("errors", []).append(error_message)
+            result["validation"] = validation
+            result["error"] = error_message
+            result["hourly_results"] = []
+            return result
+
+    for item in result["hourly_results"]:
+        non_radiator_facility_power_kw = item.get("non_radiator_facility_power_kW", 0.0)
+        engine_radiator_previous_annual_max_load_ratio = (
+            non_radiator_facility_power_kw / peak_non_radiator_facility_power_kw
+            if peak_non_radiator_facility_power_kw > 0
+            else 0.0
+        )
+        engine_radiator_load_ratio = (
+            non_radiator_facility_power_kw / failure_peak_non_radiator_facility_power_kw
+            if failure_peak_non_radiator_facility_power_kw > 0
+            else 0.0
+        )
+        if configuration_library_direct_mode:
+            radiator_result = configuration_equipment_engines[
+                "engine_radiator:ENGINE_RADIATOR_1"
+            ].lookup_power(
+                "ENGINE_RADIATOR_1",
+                engine_radiator_load_ratio,
+                ambient_C=item.get("dry_bulb_C"),
+            )
+            if not radiator_result.lookup_success:
+                error_message = (
+                    "ENGINE_RADIATOR_1 Solver_Curve missing or invalid. "
+                    "Non-radiator facility demand lookup failed. Reason: "
+                    + ("; ".join(radiator_result.errors) or "unknown lookup error")
+                )
+                validation.setdefault("errors", []).append(error_message)
+                result["validation"] = validation
+                result["error"] = error_message
+                result["hourly_results"] = []
+                return result
+            radiator_power_per_unit = max(
+                0.0,
+                float(radiator_result.power_kW or radiator_result.power_input_kW or 0.0),
+            )
+            engine_radiator_power_kw = radiator_power_per_unit * library_active_units
+            engine_radiator_load_ratio_lookup = radiator_result.load_ratio
+            previous_radiator_result = configuration_equipment_engines[
+                "engine_radiator:ENGINE_RADIATOR_1"
+            ].lookup_power(
+                "ENGINE_RADIATOR_1",
+                engine_radiator_previous_annual_max_load_ratio,
+                ambient_C=item.get("dry_bulb_C"),
+            )
+            engine_radiator_previous_annual_max_power_kw = max(
+                0.0,
+                float(
+                    previous_radiator_result.power_kW
+                    or previous_radiator_result.power_input_kW
+                    or 0.0
+                ),
+            ) * library_active_units
+        else:
+            engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
+                engine_radiator_curve,
+                engine_radiator_load_ratio,
+                library_active_units,
+                item.get("engine_waste_heat_kW", 0.0),
+            )
+            engine_radiator_load_ratio_lookup = engine_radiator_load_ratio
+            engine_radiator_previous_annual_max_power_kw, _ = _evaluate_engine_radiator_curve(
+                engine_radiator_curve,
+                engine_radiator_previous_annual_max_load_ratio,
+                library_active_units,
+                item.get("engine_waste_heat_kW", 0.0),
+            )
+
+        it_terminal_load_kw = item.get("it_terminal_load_kW", item.get("IT_load_kW", 0.0))
+        non_radiator_mep_terminal_power_kw = (
+            item.get("non_radiator_terminal_power_kW", 0.0) - it_terminal_load_kw
+        )
+        mep_terminal_load_kw = non_radiator_mep_terminal_power_kw + engine_radiator_power_kw
+        if electrical_path_enabled:
+            it_electrical_loss_kw = max(
+                0.0, (it_terminal_load_kw / it_path_efficiency) - it_terminal_load_kw
+            )
+            mep_electrical_loss_kw = max(
+                0.0,
+                (mep_terminal_load_kw / mep_path_efficiency) - mep_terminal_load_kw,
+            )
+            it_upstream_power_kw = it_terminal_load_kw + it_electrical_loss_kw
+            mep_upstream_power_kw = mep_terminal_load_kw + mep_electrical_loss_kw
+            power_dist_loss = it_electrical_loss_kw + mep_electrical_loss_kw
+            total_facility_power = it_upstream_power_kw + mep_upstream_power_kw
+        else:
+            it_electrical_loss_kw = item.get("it_electrical_loss_kW", 0.0)
+            mep_electrical_loss_kw = item.get("mep_electrical_loss_kW", 0.0)
+            it_upstream_power_kw = it_terminal_load_kw + it_electrical_loss_kw
+            mep_upstream_power_kw = mep_terminal_load_kw + mep_electrical_loss_kw
+            power_dist_loss = it_electrical_loss_kw + mep_electrical_loss_kw
+            total_facility_power = non_radiator_facility_power_kw + engine_radiator_power_kw
+
+        item.update({
+            "engine_radiator_power_kW": engine_radiator_power_kw,
+            "engine_radiator_curve_source": engine_radiator_curve_source,
+            "engine_radiator_load_ratio": engine_radiator_load_ratio,
+            "engine_radiator_load_ratio_lookup": engine_radiator_load_ratio_lookup,
+            "engine_radiator_load_ratio_basis": "non_radiator_facility_demand_ratio",
+            "engine_radiator_reference_power_kW": failure_peak_non_radiator_facility_power_kw,
+            "engine_radiator_peak_reference_power_kW": failure_peak_non_radiator_facility_power_kw,
+            "engine_radiator_reference_basis": "failure_scenario_peak_non_radiator_facility_demand",
+            "failure_peak_non_radiator_facility_power_kW": failure_peak_non_radiator_facility_power_kw,
+            "engine_radiator_previous_annual_max_reference_kW": peak_non_radiator_facility_power_kw,
+            "engine_radiator_previous_annual_max_load_ratio": engine_radiator_previous_annual_max_load_ratio,
+            "engine_radiator_previous_annual_max_power_kW": engine_radiator_previous_annual_max_power_kw,
+            "mep_terminal_load_kW": mep_terminal_load_kw,
+            "it_upstream_power_kW": it_upstream_power_kw,
+            "mep_upstream_power_kW": mep_upstream_power_kw,
+            "it_electrical_loss_kW": it_electrical_loss_kw,
+            "mep_electrical_loss_kW": mep_electrical_loss_kw,
+            "electrical_loss_kW": power_dist_loss,
+            "electrical_distribution_base_power_kW": it_terminal_load_kw + mep_terminal_load_kw,
+            "total_facility_power_kW": total_facility_power,
+            "hourly_PUE_without_engine_radiator": (
+                non_radiator_facility_power_kw / item.get("IT_load_kW", 0.0)
+                if item.get("IT_load_kW", 0.0) > 0
+                else None
+            ),
+            "hourly_PUE": (
+                total_facility_power / item.get("IT_load_kW", 0.0)
+                if item.get("IT_load_kW", 0.0) > 0
+                else None
+            ),
         })
 
     annual_it = sum(item.get("IT_load_kW", 0.0) for item in result["hourly_results"])
@@ -3364,8 +3628,21 @@ def compute_pue_project(input_obj):
         if item.get("auxiliary_power_source") not in (None, "not_applied")
     ]
     annual_pue = annual_facility / annual_it_terminal if annual_it_terminal > 0 else None
+    annual_non_radiator_facility = sum(
+        item.get("non_radiator_facility_power_kW", 0.0)
+        for item in result["hourly_results"]
+    )
+    annual_pue_without_engine_radiator = (
+        annual_non_radiator_facility / annual_it_terminal
+        if annual_it_terminal > 0
+        else None
+    )
     hourly_pues = [item.get("hourly_PUE") for item in result["hourly_results"] if item.get("hourly_PUE") is not None]
     peak_facility = max(result["hourly_results"], key=lambda x: x.get("total_facility_power_kW", 0.0))
+    peak_non_radiator_facility = max(
+        result["hourly_results"],
+        key=lambda x: x.get("non_radiator_facility_power_kW", 0.0),
+    )
     peak_pue = max(
         [item for item in result["hourly_results"] if item.get("hourly_PUE") is not None],
         key=lambda x: x.get("hourly_PUE", 0.0),
@@ -3373,6 +3650,12 @@ def compute_pue_project(input_obj):
     )
     result["annual_results"] = {
         "annual_average_PUE": annual_pue,
+        "annual_PUE_without_engine_radiator": annual_pue_without_engine_radiator,
+        "annual_PUE_engine_radiator_impact": (
+            annual_pue - annual_pue_without_engine_radiator
+            if annual_pue is not None and annual_pue_without_engine_radiator is not None
+            else None
+        ),
         "annual_IT_energy_kWh": annual_it,
         "annual_it_energy_kWh": annual_it,
         "annual_solar_heat_gain_kWh": annual_solar_heat_gain,
@@ -3453,6 +3736,12 @@ def compute_pue_project(input_obj):
         "peak_outdoor_wet_bulb_C": peak_facility.get("wet_bulb_C"),
         "peak_IT_load_kW": peak_facility.get("IT_load_kW"),
         "peak_total_facility_power_kW": peak_facility.get("total_facility_power_kW"),
+        "peak_non_radiator_facility_power_kW": peak_non_radiator_facility.get(
+            "non_radiator_facility_power_kW"
+        ),
+        "peak_non_radiator_facility_hour_index": peak_non_radiator_facility.get("hour_index"),
+        "peak_non_radiator_facility_definition": "annual_maximum",
+        "failure_peak_non_radiator_facility_power_kW": failure_peak_non_radiator_facility_power_kw,
         "peak_facility_hour_PUE": peak_facility.get("hourly_PUE"),
         "max_hourly_PUE": peak_pue.get("hourly_PUE"),
         "max_hourly_PUE_hour_index": peak_pue.get("hour_index"),
@@ -3548,6 +3837,9 @@ def compute_pue_project(input_obj):
                     "peak_PUE_outdoor_dry_bulb_C": peak_design_ambient_c,
                     "peak_PUE_IT_load_kW": float(design_it_load_source),
                     "peak_design_total_facility_power_kW": peak_design_total_facility,
+                    "peak_design_non_radiator_facility_power_kW": peak_design_hour.get(
+                        "non_radiator_facility_power_kW"
+                    ),
                     "peak_design_facility_electrical_demand_kW": peak_design_total_facility,
                     "peak_design_it_load_kW": float(design_it_load_source),
                     "peak_design_cooling_load_kW": peak_design_hour.get("cooling_load_kW"),

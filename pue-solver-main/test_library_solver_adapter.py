@@ -44,8 +44,8 @@ class LibrarySolverAdapterTest(unittest.TestCase):
         self.assertEqual(self.failure["engine_curve"]["source_sheet"], "Solver_Curve_Failure")
         self.assertTrue(self.normal["engine_curve"]["data"])
         self.assertEqual(self.normal["engine_radiator_curve"]["equipment_id"], "ENGINE_RADIATOR_2")
-        self.assertEqual(self.normal["engine_radiator_curve"]["source_sheet"], "Solver_Curve_Normal")
-        self.assertEqual(self.failure["engine_radiator_curve"]["source_sheet"], "Solver_Curve_Failure")
+        self.assertEqual(self.normal["engine_radiator_curve"]["source_sheet"], "Solver_Curve")
+        self.assertEqual(self.failure["engine_radiator_curve"]["source_sheet"], "Solver_Curve")
         self.assertIn("CHW_PUMP_2_power_vs_load", curves)
         self.assertEqual(
             self.failure["library_context"]["selected_curves"]["ENGINE_2"]["sheet_name"],

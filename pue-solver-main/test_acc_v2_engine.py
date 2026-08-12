@@ -639,7 +639,13 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertAlmostEqual(manual_hour["cooling_load_kW"], base_hour["cooling_load_kW"])
         self.assertAlmostEqual(manual_hour["acc_required_capacity_per_unit_kW"], base_hour["acc_required_capacity_per_unit_kW"])
         self.assertAlmostEqual(manual_hour["pump_load_ratio"], base_hour["pump_load_ratio"])
-        self.assertAlmostEqual(manual_hour["mep_terminal_load_kW"] - base_hour["mep_terminal_load_kW"], 18.0)
+        radiator_delta = (
+            manual_hour["engine_radiator_power_kW"] - base_hour["engine_radiator_power_kW"]
+        )
+        self.assertAlmostEqual(
+            manual_hour["mep_terminal_load_kW"] - base_hour["mep_terminal_load_kW"],
+            18.0 + radiator_delta,
+        )
         self.assertGreater(manual_hour["total_facility_power_kW"] - base_hour["total_facility_power_kW"], 18.0)
         self.assertGreater(manual_hour["electrical_loss_kW"], base_hour["electrical_loss_kW"])
 

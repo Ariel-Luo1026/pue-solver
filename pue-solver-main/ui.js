@@ -157,6 +157,7 @@ window.scenario_results = scenarioResults;
 let configurationLibraryData = null;
 let configurationLibraryCatalog = [];
 let automaticEpwReady = false;
+let simulationReady = false;
 let lastAccCalculationEngineSelection = "acc_v2";
 const equipmentPdfSpecs = {};
 const CONFIGURATION_LIBRARY_DIRECT_CALCULATION_MODE = "acc_v2_direct_solver_curve_hourly";
@@ -738,7 +739,101 @@ function phase19bTrace(label, data = null) {
 }
 
 function setRunButtonsDisabled(disabled) {
-    if (btnRun) btnRun.disabled = disabled || !configurationLibraryData || !automaticEpwReady;
+    refreshSimulationReadiness();
+    if (btnRun) btnRun.disabled = disabled || !simulationReady;
+}
+
+function coolingLoadAdjustmentInputsReady() {
+    return [
+        ["solarHeatGainMaxKw", 0, null],
+        ["solarDaytimeStartHour", 0, 24],
+        ["solarDaytimeEndHour", 0, 24],
+        ["otherAuxiliaryHeatGainKw", 0, null],
+        ["otherElectricalAuxiliaryPowerKw", 0, null]
+    ].every(([id, minimum, maximum]) => {
+        const input = document.getElementById(id);
+        const value = input?.value === "" ? NaN : Number(input?.value);
+        return Number.isFinite(value) && value >= minimum && (maximum === null || value <= maximum);
+    });
+}
+
+function getSimulationReadiness() {
+    const selectedConfigurationId = document.getElementById("configurationLibrarySelect")?.value || "";
+    const loadedConfigurationId = configurationLibraryData?.configuration_id
+        || configurationLibraryData?.configuration_manifest?.configuration_id
+        || "";
+    const configurationReady = Boolean(configurationLibraryData)
+        && Boolean(selectedConfigurationId)
+        && selectedConfigurationId === loadedConfigurationId;
+    const validation = configurationReady
+        ? (configurationLibraryData.configuration_validation || validateFrontendConfigurationLibrary(configurationLibraryData))
+        : null;
+    const equipmentBindingsReady = configurationReady
+        && validation?.status === "valid"
+        && !(validation.missing_roles || []).length
+        && !(validation.missing_curves || []).length;
+    const weatherHours = getWeatherHours(standardDataFiles.weather);
+    const weatherReady = automaticEpwReady && [8760, 8784].includes(weatherHours);
+    const itLoadHours = Number(configurationLibraryData?.it_load?.hours || 0);
+    const itLoadReady = configurationReady
+        && weatherReady
+        && [8760, 8784].includes(itLoadHours)
+        && itLoadHours === weatherHours;
+    const coolingInputsReady = coolingLoadAdjustmentInputsReady();
+    return {
+        configurationReady,
+        equipmentBindingsReady,
+        weatherReady,
+        itLoadReady,
+        coolingInputsReady,
+        weatherHours,
+        itLoadHours,
+        validation,
+        simulationReady: configurationReady && equipmentBindingsReady && weatherReady && itLoadReady && coolingInputsReady
+    };
+}
+
+function refreshSimulationReadiness() {
+    const readiness = getSimulationReadiness();
+    simulationReady = readiness.simulationReady;
+    window.simulationReady = simulationReady;
+    window.simulationReadiness = readiness;
+    const checks = document.getElementById("simulationReadinessChecks");
+    const status = document.getElementById("simulationReadinessStatus");
+    const message = document.getElementById("simulationReadinessMessage");
+    const checkRow = (ready, readyText, notReadyText, detail = "") =>
+        `<div style="margin-top:6px; color:${ready ? "#059669" : "#dc2626"};">${ready ? "✓" : "✕"} ${esc(ready ? readyText : notReadyText)}${detail ? `<div class="hint" style="margin-left:20px;">${esc(detail)}</div>` : ""}</div>`;
+    const missingBindings = [
+        ...(readiness.validation?.missing_roles || []),
+        ...(readiness.validation?.missing_curves || [])
+    ];
+    const weatherMetadata = getWeatherSourceMetadata(standardDataFiles.weather);
+    if (checks) checks.innerHTML = [
+        checkRow(readiness.configurationReady, "Configuration Library Loaded", "Configuration Library Not Loaded", readiness.configurationReady ? loadedConfigurationReadinessName() : ""),
+        checkRow(readiness.equipmentBindingsReady, "Equipment Curves Bound", "Equipment Curves Incomplete", missingBindings.length ? `Missing: ${missingBindings.join(", ")}` : ""),
+        checkRow(readiness.weatherReady, `EPW Weather Loaded — ${readiness.weatherHours} hours`, "EPW Weather Not Ready", readiness.weatherReady ? [weatherMetadata.station, weatherMetadata.source].filter(Boolean).join(" / ") : ""),
+        checkRow(readiness.itLoadReady, `IT Load Profile Ready — ${readiness.itLoadHours} hours`, "IT Load Profile Not Ready"),
+        checkRow(readiness.coolingInputsReady, "Cooling Load Inputs Ready", "Cooling Load Inputs Invalid")
+    ].join("");
+    if (status) {
+        status.textContent = simulationReady ? "READY FOR ANNUAL SIMULATION" : "SIMULATION INPUTS NOT READY";
+        status.style.color = simulationReady ? "#059669" : "#dc2626";
+    }
+    if (message) message.textContent = !readiness.configurationReady ? "Load a Configuration Library before running."
+        : !readiness.equipmentBindingsReady ? "Required equipment curve binding is incomplete."
+        : !readiness.weatherReady ? "EPW weather is not ready."
+        : !readiness.itLoadReady ? "IT load profile must match the annual weather length."
+        : !readiness.coolingInputsReady ? "Check Cooling Load Adjustment inputs."
+        : "All required inputs and bindings are ready.";
+    if (btnRun) btnRun.disabled = !simulationReady;
+    return readiness;
+}
+
+function loadedConfigurationReadinessName() {
+    return configurationLibraryData?.configuration_name
+        || configurationLibraryData?.configuration_display_name
+        || configurationLibraryData?.configuration_id
+        || "";
 }
 
 function clearRuntimeErrorDetails() {
@@ -1443,6 +1538,7 @@ function initCoolingSystemSelection() {
         }
         standardSolverInput = null;
         refreshStandardInputStatus();
+        refreshSimulationReadiness();
     });
 }
 
@@ -4055,6 +4151,7 @@ function resetAutomaticEpwBindingState() {
     setAutoEpwStatus("Weather Data: Waiting for Configuration Library loading", "info");
     const modeStatus = document.getElementById("automaticEpwModeStatus");
     if (modeStatus) modeStatus.textContent = "Automatic EPW Matching";
+    refreshSimulationReadiness();
 }
 
 function getWeatherHours(weatherObj) {
@@ -4176,7 +4273,7 @@ async function autoMatchLocalEpw() {
     const resetWeatherStatusAfterMiss = () => {
         automaticEpwReady = false;
         updateFileStatus("statusWeather", "Climate Station: EPW match unavailable", "error");
-        if (btnRun) btnRun.disabled = true;
+        refreshSimulationReadiness();
     };
     updateFileStatus("statusWeather", "Matching local EPW...", "info");
     setAutoEpwStatus("", "info");
@@ -5945,6 +6042,7 @@ async function loadSelectedConfigurationLibrary() {
             return [resolved.resolvedId, selectLibrarySolverCurve(resolved.equipmentPackage, initialScenario)];
         }));
         configurationLibraryData.configuration_validation = validateFrontendConfigurationLibrary(configurationLibraryData);
+        refreshSimulationReadiness();
         const librarySizing = calculateFrontendUnitRequirements(
             getProjectReportInfo().capacityMw, configurationLibraryData.cooling_unit_capacity_mw
         );
@@ -6003,7 +6101,7 @@ async function loadSelectedConfigurationLibrary() {
                 : `Loaded ${configurationLibraryData.configuration_name}, but automatic EPW weather matching did not complete.`;
             status.style.color = epwMatched ? "#059669" : "#dc2626";
         }
-        if (btnRun) btnRun.disabled = !epwMatched;
+        refreshSimulationReadiness();
     } catch (error) {
         if (status) {
             status.textContent = `Configuration Library load failed: ${String(error.message || error)}`;
@@ -6022,7 +6120,7 @@ function initStandardDataInputs() {
     const librarySelect = document.getElementById("configurationLibrarySelect");
     if (librarySelect) librarySelect.addEventListener("change", () => {
         configurationLibraryData = null;
-        if (btnRun) btnRun.disabled = true;
+        window.configurationLibraryData = null;
         resetAutomaticEpwBindingState();
         const summary = document.getElementById("configurationLibrarySummary");
         if (summary) {
@@ -6040,6 +6138,7 @@ function initStandardDataInputs() {
             status.style.color = manifest.runnable ? "#374151" : "#b45309";
         }
         renderFrameworkDiagnosticsPanel();
+        refreshSimulationReadiness();
     });
     ["unitQuantityMode", "unitRedundancyMode", "manualInstalledUnits", "manualRunningUnits", "manualStandbyUnits"].forEach((id) => {
         const input = document.getElementById(id);
@@ -6099,6 +6198,7 @@ function initStandardDataInputs() {
         input.addEventListener("input", () => {
             updateSolarGainStatus();
             renderSolarGainReportPanel();
+            refreshSimulationReadiness();
         });
     });
     ["peakDesignWeatherAuto", "peakDesignWeatherManual", "manualPeakDesignDryBulbC"].forEach((id) => {
@@ -6161,6 +6261,7 @@ function initStandardDataInputs() {
     updateSolarGainStatus();
     updatePeakDesignWeatherStatus();
     refreshStandardInputStatus();
+    refreshSimulationReadiness();
 }
 
 function showProjectVisualization(outObj) {
