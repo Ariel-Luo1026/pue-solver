@@ -2641,9 +2641,11 @@ def compute_pue_project(input_obj):
         if configuration_library_direct_mode:
             aux_kw = other_electrical_auxiliary_power_kw
             auxiliary_power_source = "manual_input"
+            auxiliary_power_basis = "direct_mode_other_electrical_auxiliary_input"
         else:
             aux_kw = aux_coeff * it_kw
             auxiliary_power_source = "coefficient"
+            auxiliary_power_basis = "legacy_fixed_load_coefficient"
         other_kw = 0.0
 
         dry_cooler_kw = 0.0
@@ -3323,9 +3325,13 @@ def compute_pue_project(input_obj):
             "engine_radiator_future_load_ratio_basis": engine_radiator_future_load_ratio_basis,
             "engine_radiator_power_boundary": engine_radiator_power_boundary,
             "auxiliary_power_kW": aux_kw + other_kw,
+            "other_electrical_auxiliary_power_kW": aux_kw if configuration_library_direct_mode else other_kw,
+            # Backward-compatible alias. In Direct Mode the canonical physical field is
+            # other_electrical_auxiliary_power_kW; do not present this alias as another load.
             "auxiliary_fixed_power_kW": aux_kw,
-            "other_electrical_auxiliary_power_kW": other_kw,
+            "auxiliary_fixed_power_is_compatibility_alias": bool(configuration_library_direct_mode),
             "auxiliary_power_source": auxiliary_power_source,
+            "auxiliary_power_basis": auxiliary_power_basis,
             "total_facility_power_kW": total_facility_power,
             "hourly_PUE": pue
         })
@@ -3726,7 +3732,13 @@ def compute_pue_project(input_obj):
         "engine_radiator_curve_source": engine_radiator_sources[0] if engine_radiator_sources else "not_applied",
         "engine_radiator_curve_type": engine_radiator_curve_types[0] if engine_radiator_curve_types else None,
         "annual_auxiliary_energy_kWh": annual_aux,
+        "annual_other_electrical_auxiliary_energy_kWh": annual_aux,
         "auxiliary_power_source": auxiliary_power_sources[0] if auxiliary_power_sources else None,
+        "auxiliary_power_basis": next((
+            item.get("auxiliary_power_basis")
+            for item in result["hourly_results"]
+            if item.get("auxiliary_power_basis")
+        ), None),
         "min_hourly_PUE": min(hourly_pues) if hourly_pues else None,
         "max_hourly_PUE": max(hourly_pues) if hourly_pues else None
     }
@@ -3871,7 +3883,9 @@ def compute_pue_project(input_obj):
                     "peak_design_RTC_power_kW": peak_design_hour.get("rtc_power_kW"),
                     "peak_design_MAU_power_kW": peak_design_hour.get("mau_power_kW"),
                     "peak_design_engine_radiator_power_kW": peak_design_hour.get("engine_radiator_power_kW"),
-                    "peak_design_other_electrical_auxiliary_power_kW": peak_design_hour.get("auxiliary_power_kW"),
+                    "peak_design_other_electrical_auxiliary_power_kW": peak_design_hour.get(
+                        "other_electrical_auxiliary_power_kW"
+                    ),
                     "peak_design_auxiliary_fixed_power_kW": peak_design_hour.get("auxiliary_fixed_power_kW"),
                     "peak_design_electrical_loss_kW": peak_design_hour.get("electrical_loss_kW"),
                     "peak_design_ACC_required_capacity_per_unit_kW": peak_design_hour.get("acc_required_capacity_per_unit_kW"),

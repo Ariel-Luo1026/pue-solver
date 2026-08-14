@@ -14,7 +14,8 @@ class ReportStructurePolishTest(unittest.TestCase):
         cls.report = cls._function_source("buildHtmlReportFromSections")
 
     def test_chiller_report_contains_cooling_system_performance(self):
-        self.assertIn("3. Cooling System Performance", self.report)
+        self.assertIn("6. Equipment Performance", self.report)
+        self.assertIn("Detailed Cooling System Performance", self.report)
         self.assertIn("Equipment Performance Summary", self.report)
         self.assertIn('${esc(reportKeyLabel(row.equipment))} Performance', self.report)
 
@@ -23,7 +24,7 @@ class ReportStructurePolishTest(unittest.TestCase):
         self.assertNotIn("3. Equipment Curve Register", self.report)
         self.assertGreater(
             self.report.index("Appendix A: Equipment Curve Register"),
-            self.report.index("7. Engineering Conclusion"),
+            self.report.index("Engineering Conclusion"),
         )
 
     def test_export_does_not_render_empty_performance_sections(self):

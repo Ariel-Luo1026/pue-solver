@@ -623,6 +623,7 @@
                         <input id="otherElectricalAuxiliaryPowerKw" type="number" min="0" step="0.1" value="0" />
                     </label>
                 </div>
+                <div class="hint">Miscellaneous electrical loads not otherwise modeled in Configuration Library equipment, such as PLCs, controls, instrumentation, networking, lighting, security, and balance-of-plant loads. This is electrical power and is separate from Other Auxiliary Heat Gains.</div>
                 <div id="statusSolarGain" class="hint">Solar Heat Gain 7.0 kW；Other Auxiliary Heat Gains 71.0 kW；Other Electrical Auxiliary Power 0.0 kW</div>
             </div>
         </div>
@@ -684,6 +685,8 @@
     <div class="card">
         <h3 style="margin:0 0 10px 0;">PUE 计算结果可视化</h3>
         <div id="resultsVisualization" style="display: none;">
+            <h3 id="engineeringSummaryHeading">Engineering Summary</h3>
+            <div id="engineeringContextStrip" class="panel" style="margin-bottom:14px;"></div>
             <div class="calcBox" id="projectInfoReportPanel" style="display:none; margin-bottom:14px;"></div>
             <div class="calcBox" id="calculationPrinciple" style="margin-bottom:14px;"></div>
             <!-- Annual Summary Cards -->
@@ -708,7 +711,39 @@
                     <div class="panelTitle" id="summaryPeakDesignLabel">Peak Design Facility Demand</div>
                     <div style="font-size: 20px; font-weight: bold; color: #7c3aed;" id="peakDesignFacilityPower">-</div>
                 </div>
+                <div class="panel">
+                    <div class="panelTitle">Active Scenario</div>
+                    <div style="font-size: 20px; font-weight: bold; color: #0f766e;" id="activeScenarioValue">-</div>
+                </div>
             </div>
+            <h3>Energy &amp; PUE Summary</h3>
+            <div class="panel" id="annualEnergySummaryPanel" style="margin-bottom:20px;">
+                <div id="annualEnergySummaryBody"></div>
+            </div>
+
+            <h3>Peak Facility Demand</h3>
+            <div class="panel" style="margin-bottom:20px;">
+                <div id="peakHourDetails" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;"></div>
+                <div class="muted" style="margin-top:12px;">This section reports peak values observed within the 8,760-hour annual EPW simulation and is separate from the ASHRAE-based Peak Design Condition analysis.</div>
+                <details id="peakDemandBreakdown" style="margin-top:12px;">
+                    <summary style="cursor:pointer; font-weight:700;">Peak Demand Breakdown</summary>
+                    <div id="peakDemandBreakdownBody" style="margin-top:10px;"></div>
+                </details>
+            </div>
+
+            <h3>Annual Equipment Energy Breakdown</h3>
+            <div class="panel" id="annualEquipmentEnergyPanel" style="margin-bottom:20px;">
+                <div id="annualEquipmentEnergyBody"></div>
+            </div>
+
+            <h3>Equipment Performance</h3>
+            <div class="panel" id="equipmentPerformanceSummaryPanel" style="margin-bottom:20px;">
+                <div id="equipmentPerformanceSummaryBody"></div>
+            </div>
+
+            <details id="engineeringDiagnostics" style="margin-top:20px;">
+                <summary style="cursor:pointer; font-weight:700;">Engineering Diagnostics / Detailed Results</summary>
+                <div style="margin-top:12px;">
             <div class="panel" id="pueContributionSummaryPanel" style="display:none; margin-bottom:20px;">
                 <div class="panelTitle">PUE Contribution Summary</div>
                 <div id="pueContributionSummaryBody" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:12px;"></div>
@@ -774,20 +809,8 @@
                 </div>
             </div>
 
-            <!-- Annual Hourly Peak Summary -->
-            <div class="panel" style="margin-top: 20px;">
-                <div class="panelTitle">Peak Facility Demand</div>
-                <div id="peakHourDetails" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
-                    <!-- Will be populated by JavaScript -->
                 </div>
-                <div class="muted" style="margin-top:12px;">
-                    This section reports peak values observed within the 8,760-hour annual EPW simulation and is separate from the ASHRAE-based Peak Design Condition analysis.
-                </div>
-                <details id="peakDemandBreakdown" style="margin-top:12px;">
-                    <summary style="cursor:pointer; font-weight:700;">Peak Demand Breakdown</summary>
-                    <div id="peakDemandBreakdownBody" style="margin-top:10px;"></div>
-                </details>
-            </div>
+            </details>
         </div>
         <div id="noResultsMessage" style="text-align: center; color: #6b7280; padding: 40px;">
             运行PUE计算后，结果可视化将显示在这里

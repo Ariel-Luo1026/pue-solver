@@ -587,36 +587,43 @@ class ACCV2EngineTest(unittest.TestCase):
 
     def test_configuration_library_direct_auxiliary_power_defaults_to_zero(self):
         config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
-        sample = convert_library_input_to_solver_input(
-            build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
-        )
-        sample["project"]["it_load"]["hourly_it_load_kW"] = [3960]
-        sample["weather"]["hourly_data"] = {
-            "hour_index": [12],
-            "dry_bulb_C": [25],
-            "wet_bulb_C": [],
-        }
-        sample["acc_v2_enabled"] = True
-        sample["acc_v2"] = {"configuration_path": str(config)}
+        for scenario in ("Normal", "Failure"):
+            with self.subTest(scenario=scenario):
+                sample = convert_library_input_to_solver_input(
+                    build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, scenario)
+                )
+                sample["project"]["it_load"]["hourly_it_load_kW"] = [3960]
+                sample["weather"]["hourly_data"] = {
+                    "hour_index": [12],
+                    "dry_bulb_C": [25],
+                    "wet_bulb_C": [],
+                }
+                sample["acc_v2_enabled"] = True
+                sample["acc_v2"] = {"configuration_path": str(config)}
 
-        result = compute_pue_project(sample)
+                result = compute_pue_project(sample)
 
-        self.assertNotIn("error", result)
-        hour = result["hourly_results"][0]
-        self.assertEqual(hour["auxiliary_power_kW"], 0.0)
-        self.assertEqual(hour["auxiliary_power_source"], "manual_input")
-        self.assertEqual(result["annual_results"]["annual_auxiliary_energy_kWh"], 0.0)
-        self.assertEqual(result["annual_results"]["auxiliary_power_source"], "manual_input")
+                self.assertNotIn("error", result)
+                hour = result["hourly_results"][0]
+                self.assertEqual(hour["auxiliary_power_kW"], 0.0)
+                self.assertEqual(hour["other_electrical_auxiliary_power_kW"], 0.0)
+                self.assertEqual(hour["auxiliary_fixed_power_kW"], 0.0)
+                self.assertTrue(hour["auxiliary_fixed_power_is_compatibility_alias"])
+                self.assertEqual(hour["auxiliary_power_basis"], "direct_mode_other_electrical_auxiliary_input")
+                self.assertEqual(hour["auxiliary_power_source"], "manual_input")
+                self.assertEqual(result["annual_results"]["annual_auxiliary_energy_kWh"], 0.0)
+                self.assertEqual(result["annual_results"]["annual_other_electrical_auxiliary_energy_kWh"], 0.0)
+                self.assertEqual(result["annual_results"]["auxiliary_power_source"], "manual_input")
 
     def test_configuration_library_direct_auxiliary_power_uses_manual_kw_not_cooling_load(self):
         config = Path(__file__).resolve().parent.parent / "Configuration Library" / "ACC_1.5MW_GASENGINE_CDU"
         base = convert_library_input_to_solver_input(
             build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
         )
-        base["project"]["it_load"]["hourly_it_load_kW"] = [3960]
+        base["project"]["it_load"]["hourly_it_load_kW"] = [3960, 3960]
         base["weather"]["hourly_data"] = {
-            "hour_index": [12],
-            "dry_bulb_C": [25],
+            "hour_index": [12, 13],
+            "dry_bulb_C": [25, 25],
             "wet_bulb_C": [],
         }
         base["other_auxiliary_heat_gain_kW"] = 71
@@ -634,8 +641,14 @@ class ACCV2EngineTest(unittest.TestCase):
         manual_hour = manual_result["hourly_results"][0]
         self.assertEqual(base_hour["auxiliary_power_kW"], 0.0)
         self.assertEqual(manual_hour["auxiliary_power_kW"], 18.0)
+        self.assertEqual(manual_hour["other_electrical_auxiliary_power_kW"], 18.0)
+        self.assertEqual(manual_hour["auxiliary_fixed_power_kW"], 18.0)
+        self.assertTrue(manual_hour["auxiliary_fixed_power_is_compatibility_alias"])
+        self.assertEqual(manual_hour["auxiliary_power_basis"], "direct_mode_other_electrical_auxiliary_input")
         self.assertEqual(manual_hour["auxiliary_power_source"], "manual_input")
-        self.assertAlmostEqual(manual_result["annual_results"]["annual_auxiliary_energy_kWh"], 18.0)
+        self.assertAlmostEqual(manual_result["annual_results"]["annual_auxiliary_energy_kWh"], 18.0 * 2)
+        self.assertAlmostEqual(manual_result["annual_results"]["annual_other_electrical_auxiliary_energy_kWh"], 18.0 * 2)
+        self.assertGreater(manual_hour["hourly_PUE"], base_hour["hourly_PUE"])
         self.assertAlmostEqual(manual_hour["cooling_load_kW"], base_hour["cooling_load_kW"])
         self.assertAlmostEqual(manual_hour["acc_required_capacity_per_unit_kW"], base_hour["acc_required_capacity_per_unit_kW"])
         self.assertAlmostEqual(manual_hour["pump_load_ratio"], base_hour["pump_load_ratio"])
@@ -913,6 +926,33 @@ class ACCV2EngineTest(unittest.TestCase):
         self.assertAlmostEqual(hour["airflow_power_kW"], 20.0)
         self.assertAlmostEqual(hour["terminal_fan_power_kW"], 20.0)
         self.assertFalse(hour["terminal_fan_excluded_due_to_mau_curve"])
+
+    def test_legacy_auxiliary_fixed_load_coefficient_is_preserved(self):
+        sample = {
+            "project": {
+                "project_mode": True,
+                "calculation_mode": "project_8760",
+                "design_it_load_kW": 1000,
+                "it_load": {
+                    "design_it_load_kW": 1000,
+                    "hourly_it_load_kW": [1000],
+                    "cooling_unit_capacity_kW": 1000,
+                },
+                "cooling_unit_count": 1,
+                "auxiliary_loads": {"auxiliary_fixed_load_coefficient": 0.01},
+            },
+            "weather": {"hourly_data": {"dry_bulb_C": [25], "hour_index": [1]}},
+        }
+
+        result = compute_pue_project(sample)
+
+        self.assertNotIn("error", result)
+        hour = result["hourly_results"][0]
+        self.assertAlmostEqual(hour["auxiliary_fixed_power_kW"], 10.0)
+        self.assertAlmostEqual(hour["auxiliary_power_kW"], 10.0)
+        self.assertEqual(hour["other_electrical_auxiliary_power_kW"], 0.0)
+        self.assertFalse(hour["auxiliary_fixed_power_is_compatibility_alias"])
+        self.assertEqual(hour["auxiliary_power_basis"], "legacy_fixed_load_coefficient")
 
     def test_benchmark_path_not_imported_by_engine(self):
         engine_source = Path(__file__).with_name("acc_v2_engine.py").read_text(encoding="utf-8")

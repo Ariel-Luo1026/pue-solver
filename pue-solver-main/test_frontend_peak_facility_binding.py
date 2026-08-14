@@ -76,13 +76,16 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         self.assertIn('id="peakDemandBreakdown"', self.index)
         self.assertIn('id="peakDemandBreakdownBody"', self.index)
         start = self.ui.index("function buildPeakDemandBreakdown")
-        end = self.ui.index("function showProjectVisualization", start)
+        end = self.ui.index("function renderPeakDemandBreakdown", start)
         breakdown = self.ui[start:end]
         self.assertIn("row?.total_facility_power_kW", breakdown)
         self.assertIn("peak.peak_design_facility_electrical_demand_kW", breakdown)
         self.assertIn("annualRow.engine_radiator_power_kW", breakdown)
         self.assertIn("peak.peak_design_engine_radiator_power_kW", breakdown)
         self.assertEqual(breakdown.count('["ENGINE_RADIATOR Power"'), 1)
+        self.assertIn('direct_mode_other_electrical_auxiliary_input', breakdown)
+        self.assertIn('annualRow.other_electrical_auxiliary_power_kW', breakdown)
+        self.assertNotIn('peak.peak_design_other_electrical_auxiliary_power_kW) -', breakdown)
         self.assertNotIn("engine_output_kW", breakdown)
         self.assertNotIn("failure_peak_non_radiator_facility_power_kW", breakdown)
         self.assertIn("annualRow.it_electrical_loss_kW", breakdown)
@@ -100,6 +103,67 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         self.assertIn("Peak Demand Breakdown", report)
         self.assertIn("Annual Observed Peak", report)
         self.assertIn("Peak Design", report)
+
+    def test_phase23_engineering_results_hierarchy_and_units(self):
+        for heading in (
+            "Engineering Summary",
+            "Energy &amp; PUE Summary",
+            "Peak Facility Demand",
+            "Annual Equipment Energy Breakdown",
+            "Peak Demand Breakdown",
+            "Equipment Performance",
+            "Engineering Diagnostics / Detailed Results",
+        ):
+            self.assertIn(heading, self.index)
+        self.assertIn('id="engineeringDiagnostics"', self.index)
+        self.assertNotIn('id="engineeringDiagnostics" open', self.index)
+        self.assertIn('id="activeScenarioValue"', self.index)
+        self.assertIn("engineeringEnergyDisplay(annual.annual_IT_energy_kWh)", self.ui)
+        self.assertIn("engineeringEnergyDisplay(annual.annual_facility_energy_kWh)", self.ui)
+        self.assertIn('`${fmtNumber(value / 1e6, 3)} GWh`', self.ui)
+        self.assertIn('`${fmtInteger(peakFacilityPowerKw)} kW`', self.ui)
+
+    def test_scenario_context_and_consumption_boundary_are_explicit(self):
+        self.assertIn('["Scenario", project.scenario_name || input.scenario_name', self.ui)
+        self.assertIn("configurationLibraryData || {}", self.ui)
+        self.assertIn('["Weather / Climate Station"', self.ui)
+        self.assertIn("ENGINE_RADIATOR", self.ui[self.ui.index("function annualEquipmentEnergyRows"):self.ui.index("function renderEngineeringResultsSummary")])
+        energy_mapper = self.ui[self.ui.index("function annualEquipmentEnergyRows"):self.ui.index("function renderEngineeringResultsSummary")]
+        self.assertNotIn("ENGINE_3", energy_mapper)
+        self.assertIn(
+            "ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.",
+            self.ui,
+        )
+        self.assertIn("Generation-Side Reference", self.ui)
+        self.assertIn('maximumHourlyValue("engine_radiator_load_ratio")', self.ui)
+
+    def test_direct_mode_auxiliary_is_one_canonical_physical_row(self):
+        start = self.ui.index("function buildPeakDemandBreakdown")
+        end = self.ui.index("function renderPeakDemandBreakdown", start)
+        breakdown = self.ui[start:end]
+        self.assertIn('? [["Other Electrical Auxiliary Power"', breakdown.replace("\n", " "))
+        self.assertEqual(breakdown.count('["Other Electrical Auxiliary Power"'), 1)
+        self.assertEqual(breakdown.count('["Auxiliary Fixed Power"'), 1)
+        self.assertIn("...auxiliaryRows", breakdown)
+        self.assertIn("annual_other_electrical_auxiliary_energy_kWh ?? annual.annual_auxiliary_energy_kWh", self.ui)
+
+    def test_html_report_uses_phase23_hierarchy_and_shared_energy_mapper(self):
+        report_start = self.ui.index("function buildHtmlReportFromSections")
+        report_end = self.ui.index("function ", report_start + 20)
+        report = self.ui[report_start:report_end]
+        for heading in (
+            "1. Engineering Summary",
+            "2. Energy &amp; PUE Summary",
+            "3. Peak Facility Demand",
+            "4. Annual Equipment Energy Breakdown",
+            "5. Peak Demand Breakdown",
+            "6. Equipment Performance",
+            "7. Engineering / Calculation Notes",
+        ):
+            self.assertIn(heading, report)
+        self.assertIn("annualEquipmentEnergyRows(annual)", report)
+        for example in ("5167.249", "5850.222", "5152.550", "5856.754"):
+            self.assertNotIn(example, report)
 
 
 if __name__ == "__main__":
