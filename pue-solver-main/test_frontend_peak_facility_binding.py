@@ -92,6 +92,9 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         self.assertIn("annualRow.mep_electrical_loss_kW", breakdown)
         self.assertIn("peak.peak_design_it_electrical_loss_kW", breakdown)
         self.assertIn("peak.peak_design_mep_electrical_loss_kW", breakdown)
+        self.assertIn("annualRow.cw_pump_power_total_kW ?? annualRow.CW_pump_power_kW", breakdown)
+        self.assertIn("hasSeparateElectricalLosses", breakdown)
+        self.assertIn('["Electrical Distribution Loss", value(annualRow.electrical_loss_kW), value(peak.peak_design_electrical_loss_kW)]', breakdown)
         self.assertIn("Math.abs(annualSum - annualTotal) < 1e-6", breakdown)
         self.assertIn("Math.abs(designSum - designTotal) < 1e-6", breakdown)
 
@@ -164,6 +167,17 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         self.assertIn("annualEquipmentEnergyRows(annual)", report)
         for example in ("5167.249", "5850.222", "5152.550", "5856.754"):
             self.assertNotIn(example, report)
+
+    def test_chiller_context_and_cooling_energy_use_available_schema(self):
+        self.assertIn("input.project?.design_it_load_kW", self.ui)
+        summary_start = self.ui.index("function annualFacilityEnergySummary")
+        summary_end = self.ui.index("function annualEquipmentEnergyRows", summary_start)
+        summary = self.ui[summary_start:summary_end]
+        self.assertIn('topology === "chiller_dry_cooler"', summary)
+        self.assertIn('label: "Annual Cooling System Energy"', summary)
+        self.assertIn("annual.annual_total_cooling_system_energy_kWh", summary)
+        self.assertIn('label: "Annual MEP / Facility Auxiliary Energy"', summary)
+        self.assertIn("annual.annual_MEP_terminal_energy_kWh", summary)
 
 
 if __name__ == "__main__":

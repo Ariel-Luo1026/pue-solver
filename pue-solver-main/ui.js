@@ -3383,7 +3383,7 @@ function buildHtmlReportFromSections(context) {
         ["Annual Average PUE", reportValue(annual.annual_average_PUE, "", 3)],
         ["Annual IT Energy", engineeringEnergyDisplay(annual.annual_IT_energy_kWh)],
         ["Annual Facility Energy", engineeringEnergyDisplay(annual.annual_facility_energy_kWh)],
-        ["Annual MEP / Facility Auxiliary Energy", engineeringEnergyDisplay(annual.annual_MEP_terminal_energy_kWh)],
+        [annualFacilityEnergySummary(outObj).label, engineeringEnergyDisplay(annualFacilityEnergySummary(outObj).energy_kWh)],
         ["Annual Electrical Distribution Loss", engineeringEnergyDisplay(annual.annual_electrical_loss_kWh)]
     ])}</tbody></table>
 </section>
@@ -6333,23 +6333,35 @@ function buildPeakDemandBreakdown(outObj, peakSummary) {
         return !selected || value > selectedValue ? row : selected;
     }, null) || {};
     const value = candidate => Number.isFinite(Number(candidate)) ? Number(candidate) : 0;
+    const hasValue = candidate => candidate !== null && candidate !== undefined && Number.isFinite(Number(candidate));
     const directModeAuxiliary = annualRow.auxiliary_power_basis === "direct_mode_other_electrical_auxiliary_input";
     const auxiliaryRows = directModeAuxiliary
         ? [["Other Electrical Auxiliary Power", value(annualRow.other_electrical_auxiliary_power_kW), value(peak.peak_design_other_electrical_auxiliary_power_kW)]]
         : [["Auxiliary Fixed Power", value(annualRow.auxiliary_fixed_power_kW), value(peak.peak_design_auxiliary_fixed_power_kW)]];
+    const hasSeparateElectricalLosses = [
+        annualRow.it_electrical_loss_kW,
+        annualRow.mep_electrical_loss_kW,
+        peak.peak_design_it_electrical_loss_kW,
+        peak.peak_design_mep_electrical_loss_kW
+    ].some(hasValue);
+    const electricalLossRows = hasSeparateElectricalLosses
+        ? [
+            ["IT Electrical Distribution Loss", value(annualRow.it_electrical_loss_kW), value(peak.peak_design_it_electrical_loss_kW)],
+            ["MEP Electrical Distribution Loss", value(annualRow.mep_electrical_loss_kW), value(peak.peak_design_mep_electrical_loss_kW)]
+        ]
+        : [["Electrical Distribution Loss", value(annualRow.electrical_loss_kW), value(peak.peak_design_electrical_loss_kW)]];
     const rows = [
         ["IT Load", value(annualRow.IT_load_kW ?? annualRow.it_load_kW), value(peak.peak_design_it_load_kW)],
         ["ACC / Chiller Power", value(annualRow.acc_power_kW ?? annualRow.chiller_power_kW), value(peak.peak_design_ACC_power_kW ?? peak.peak_design_chiller_power_kW)],
         ["Dry Cooler Power", value(annualRow.dry_cooler_power_kW), value(peak.peak_design_dry_cooler_power_kW)],
         ["CHW Pump Power", value(annualRow.CHW_pump_power_kW ?? annualRow.pump_power_kW), value(peak.peak_design_CHW_pump_power_kW)],
-        ["CW Pump Power", value(annualRow.CW_pump_power_kW), value(peak.peak_design_CW_pump_power_kW)],
+        ["CW Pump Power", value(annualRow.cw_pump_power_total_kW ?? annualRow.CW_pump_power_kW), value(peak.peak_design_CW_pump_power_kW)],
         ["CDU Power", value(annualRow.cdu_power_kW), value(peak.peak_design_CDU_power_kW)],
         ["RTC Power", value(annualRow.rtc_power_kW), value(peak.peak_design_RTC_power_kW)],
         ["MAU Power", value(annualRow.mau_power_kW), value(peak.peak_design_MAU_power_kW)],
         ...auxiliaryRows,
         ["ENGINE_RADIATOR Power", value(annualRow.engine_radiator_power_kW), value(peak.peak_design_engine_radiator_power_kW)],
-        ["IT Electrical Distribution Loss", value(annualRow.it_electrical_loss_kW), value(peak.peak_design_it_electrical_loss_kW)],
-        ["MEP Electrical Distribution Loss", value(annualRow.mep_electrical_loss_kW), value(peak.peak_design_mep_electrical_loss_kW)]
+        ...electricalLossRows
     ];
     const annualTotal = value(peakSummary?.peak_facility_power_kW ?? annualRow.total_facility_power_kW);
     const designTotal = value(peak.peak_design_facility_electrical_demand_kW ?? peak.peak_design_total_facility_power_kW);
@@ -6385,6 +6397,21 @@ function engineeringEnergyDisplay(kWh) {
     return `${fmtNumber(value / 1e6, 3)} GWh`;
 }
 
+function annualFacilityEnergySummary(outObj = {}) {
+    const annual = outObj.annual_results || {};
+    const topology = outObj.topology_id || outObj.solver_dispatch_key;
+    if (topology === "chiller_dry_cooler") {
+        return {
+            label: "Annual Cooling System Energy",
+            energy_kWh: annual.annual_total_cooling_system_energy_kWh
+        };
+    }
+    return {
+        label: "Annual MEP / Facility Auxiliary Energy",
+        energy_kWh: annual.annual_MEP_terminal_energy_kWh
+    };
+}
+
 function annualEquipmentEnergyRows(annual = {}) {
     const rows = [
         ["IT", annual.annual_IT_energy_kWh],
@@ -6407,7 +6434,7 @@ function engineeringContextRows(outObj = {}, report = {}, input = {}) {
     const manifest = input.configuration_manifest || {};
     const weatherMetadata = outObj.weather?.metadata || standardDataFiles.weather?.metadata || {};
     const capacityMw = Number(input.cooling_unit_capacity_mw);
-    const designItKw = Number(project.design_it_load_kW ?? input.design_it_load_kW ?? input.design_IT_capacity_kW);
+    const designItKw = Number(project.design_it_load_kW ?? input.project?.design_it_load_kW ?? input.design_it_load_kW ?? input.design_IT_capacity_kW);
     return [
         ["Configuration", input.configuration_display_name || input.configuration_name || manifest.display_name || outObj.configuration_display_name || outObj.configuration_id || "N/A"],
         ["Cooling System Type", input.cooling_system_type || manifest.cooling_system_type || report.cooling_system_type || outObj.cooling_system_type || "N/A"],
@@ -6434,7 +6461,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
         <tr><th>Annual Average PUE</th><td>${fmtNumber(annual.annual_average_PUE, 3)}</td></tr>
         <tr><th>Annual IT Energy</th><td>${engineeringEnergyDisplay(annual.annual_IT_energy_kWh)}</td></tr>
         <tr><th>Annual Facility Energy</th><td>${engineeringEnergyDisplay(annual.annual_facility_energy_kWh)}</td></tr>
-        <tr><th>Annual MEP / Facility Auxiliary Energy</th><td>${engineeringEnergyDisplay(annual.annual_MEP_terminal_energy_kWh)}</td></tr>
+        <tr><th>${esc(annualFacilityEnergySummary(outObj).label)}</th><td>${engineeringEnergyDisplay(annualFacilityEnergySummary(outObj).energy_kWh)}</td></tr>
         <tr><th>Annual Electrical Distribution Loss</th><td>${engineeringEnergyDisplay(annual.annual_electrical_loss_kWh)}</td></tr>
     </tbody></table>`;
 
