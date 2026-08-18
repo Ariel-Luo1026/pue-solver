@@ -138,6 +138,7 @@ const elRuntimeErrorDetails = document.getElementById("runtimeErrorDetails");
 const btnRun = document.getElementById("btnRun");
 const btnExportHtmlReport = document.getElementById("btnExportHtmlReport");
 const btnExportJson = document.getElementById("btnExportJson");
+const btnExportTimeAlignmentCsv = document.getElementById("btnExportTimeAlignmentCsv");
 const elSolverDataStatus = document.getElementById("solverDataStatus");
 const resultCharts = {};
 const standardDataFiles = {
@@ -151,7 +152,9 @@ const standardDataFiles = {
 };
 let standardSolverInput = null;
 let preferStandardFiles = false;
+let projectItLoadProfileOverride = null;
 let lastReportContext = null;
+let timeAlignmentAuditCache = null;
 let scenarioResults = [];
 window.scenario_results = scenarioResults;
 let configurationLibraryData = null;
@@ -774,9 +777,15 @@ function getSimulationReadiness() {
         && !(validation.missing_curves || []).length;
     const weatherHours = getWeatherHours(standardDataFiles.weather);
     const weatherReady = automaticEpwReady && [8760, 8784].includes(weatherHours);
-    const itLoadHours = Number(configurationLibraryData?.it_load?.hours || 0);
+    const itProfile = configurationLibraryData?.it_load;
+    const itLoadHours = Number(itProfile?.hours || 0);
+    const calendarAlignment = validateItCalendarAgainstEpw(itProfile, standardDataFiles.weather);
+    if (itProfile) Object.assign(itProfile, calendarAlignment);
+    const profileValid = ["valid", "valid_with_overload_warning"].includes(itProfile?.validation_status);
     const itLoadReady = configurationReady
         && weatherReady
+        && profileValid
+        && calendarAlignment.calendar_epw_match_valid !== false
         && [8760, 8784].includes(itLoadHours)
         && itLoadHours === weatherHours;
     const coolingInputsReady = coolingLoadAdjustmentInputsReady();
@@ -789,6 +798,7 @@ function getSimulationReadiness() {
         weatherHours,
         itLoadHours,
         validation,
+        itProfile,
         simulationReady: configurationReady && equipmentBindingsReady && weatherReady && itLoadReady && coolingInputsReady
     };
 }
@@ -812,7 +822,7 @@ function refreshSimulationReadiness() {
         checkRow(readiness.configurationReady, "Configuration Library Loaded", "Configuration Library Not Loaded", readiness.configurationReady ? loadedConfigurationReadinessName() : ""),
         checkRow(readiness.equipmentBindingsReady, "Equipment Curves Bound", "Equipment Curves Incomplete", missingBindings.length ? `Missing: ${missingBindings.join(", ")}` : ""),
         checkRow(readiness.weatherReady, `EPW Weather Loaded — ${readiness.weatherHours} hours`, "EPW Weather Not Ready", readiness.weatherReady ? [weatherMetadata.station, weatherMetadata.source].filter(Boolean).join(" / ") : ""),
-        checkRow(readiness.itLoadReady, `IT Load Profile Ready — ${readiness.itLoadHours} hours`, "IT Load Profile Not Ready"),
+        checkRow(readiness.itLoadReady, `Annual IT Load Profile Ready — ${readiness.itLoadHours} hours`, "Annual IT Load Profile Invalid", readiness.itProfile?.validation_errors?.join("; ") || readiness.itProfile?.calendar_epw_match_error || (readiness.weatherReady && readiness.itLoadHours !== readiness.weatherHours ? `IT profile hours: ${readiness.itLoadHours}; weather hours: ${readiness.weatherHours}; mismatch` : readiness.itProfile?.validation_warning || readiness.itProfile?.calendar_validation_warning || "")),
         checkRow(readiness.coolingInputsReady, "Cooling Load Inputs Ready", "Cooling Load Inputs Invalid")
     ].join("");
     if (status) {
@@ -822,9 +832,10 @@ function refreshSimulationReadiness() {
     if (message) message.textContent = !readiness.configurationReady ? "Load a Configuration Library before running."
         : !readiness.equipmentBindingsReady ? "Required equipment curve binding is incomplete."
         : !readiness.weatherReady ? "EPW weather is not ready."
-        : !readiness.itLoadReady ? "IT load profile must match the annual weather length."
+        : !readiness.itLoadReady ? (readiness.itProfile?.hour_sequence_error || readiness.itProfile?.calendar_sequence_error || readiness.itProfile?.calendar_epw_match_error || "IT load profile must match the annual weather length.")
         : !readiness.coolingInputsReady ? "Check Cooling Load Adjustment inputs."
         : "All required inputs and bindings are ready.";
+    renderItLoadProfileStatus(readiness.itProfile);
     if (btnRun) btnRun.disabled = !simulationReady;
     return readiness;
 }
@@ -3225,6 +3236,10 @@ function buildHtmlReportFromSections(context) {
     const peakDemandBreakdown = buildPeakDemandBreakdown(output, peakSummary);
     const reportAnnualEnergyRows = annualEquipmentEnergyRows(annual);
     const reportContextRows = engineeringContextRows(output, report, context.input || {});
+    const alignmentAudit = getTimeAlignmentAudit(context.input?.project?.it_load || null, standardDataFiles.weather);
+    const alignmentSummary = alignmentAudit.summary;
+    const alignmentFirst = alignmentAudit.rows[0];
+    const alignmentLast = alignmentAudit.rows[alignmentAudit.rows.length - 1];
     const peakDesignSource = String(peak.peak_design_weather_source || "").trim();
     const peakDesignDryBulbAvailable = peak.peak_design_outdoor_dry_bulb_C != null
         && peak.peak_design_outdoor_dry_bulb_C !== ""
@@ -3376,6 +3391,22 @@ function buildHtmlReportFromSections(context) {
         ["Report Configuration", esc(report.profile_id || "generic_pue")],
         ["Weather Source", esc(weatherSource.source || "N/A")]
     ])}</tbody></table>
+</section>
+<section>
+    <h2>IT / Weather Time Alignment</h2>
+    ${alignmentSummary ? `<table><tbody>${tableRows([
+        ["Annual Rows", esc(alignmentSummary.annual_rows)],
+        ["IT Load Time Basis", esc(alignmentSummary.it_time_basis)],
+        ["Hour Sequence Validation", esc(alignmentSummary.hour_sequence_validation)],
+        ["Calendar Time Basis", esc(alignmentSummary.calendar_time_basis)],
+        ["Calendar Sequence Validation", esc(alignmentSummary.calendar_sequence_validation)],
+        ["Calendar Hour Convention", esc(alignmentSummary.calendar_hour_convention)],
+        ["IT / Weather Calendar Alignment", esc(alignmentSummary.weather_alignment)],
+        ["EPW Hour Convention", esc(alignmentSummary.epw_hour_convention)],
+        ["First Row Alignment", esc(alignmentFirst ? alignmentAuditRowCells(alignmentFirst).join(" | ") : "N/A")],
+        ["Last Row Alignment", esc(alignmentLast ? alignmentAuditRowCells(alignmentLast).join(" | ") : "N/A")],
+        ["Alignment Errors", esc(alignmentSummary.alignment_errors)]
+    ])}</tbody></table><div class="note">Full hourly alignment audit available through CSV export.</div>` : '<div class="empty">Time alignment audit unavailable.</div>'}
 </section>
 <section>
     <h2>2. Energy &amp; PUE Summary</h2>
@@ -3594,6 +3625,134 @@ function timestampForFileName(date = new Date()) {
     return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
+const TIME_ALIGNMENT_CSV_COLUMNS = Object.freeze([
+    "Annual_Row", "Internal_Index", "IT_Hour_ID", "IT_Time_Basis", "IT_Calendar_Time_Basis",
+    "IT_Timestamp", "IT_Month", "IT_Day", "IT_Hour", "IT_Hour_Convention",
+    "EPW_Month", "EPW_Day", "EPW_Hour", "EPW_Hour_Convention", "IT_Load_Input",
+    "IT_Load_Input_Unit", "IT_Load_kW", "Hour_ID_Status", "Calendar_Status",
+    "Weather_Alignment_Status", "Overall_Alignment_Status"
+]);
+
+function alignmentTimestampDisplay(calendar, convention) {
+    if (!calendar) return "Not Provided";
+    const pad = value => String(value).padStart(2, "0");
+    return convention === "0_23_clock_hour"
+        ? `${pad(calendar.month)}-${pad(calendar.day)} ${pad(calendar.hour_of_day)}:00`
+        : `${pad(calendar.month)}-${pad(calendar.day)} Hour ${pad(calendar.hour_of_day)}`;
+}
+
+function buildTimeAlignmentAudit(profile, weatherFile) {
+    if (!profile || !Array.isArray(profile.hourly_it_load_kW)) return { rows: [], summary: null };
+    const weather = weatherFile?.data || weatherFile?.hourly_data || {};
+    const months = Array.isArray(weather.month) ? weather.month : [];
+    const days = Array.isArray(weather.day) ? weather.day : [];
+    const epwHours = Array.isArray(weather.epw_hour) ? weather.epw_hour : [];
+    const rows = profile.hourly_it_load_kW.map((loadKw, index) => {
+        const explicitHour = profile.has_explicit_hour_ids === true;
+        const generatedHour = profile.time_basis === "generated_hour_of_year";
+        const calendar = profile.has_explicit_calendar_ids ? profile.calendar_ids?.[index] : null;
+        const hourStatus = explicitHour ? (profile.hour_sequence_valid ? "PASS" : "ERROR")
+            : generatedHour ? "GENERATED" : "NOT PROVIDED";
+        const calendarStatus = calendar ? (profile.calendar_sequence_valid ? "PASS" : "ERROR") : "NOT PROVIDED";
+        const weatherStatus = calendar ? (profile.calendar_epw_match_valid ? "PASS" : "ERROR") : "NOT CHECKED";
+        const overall = hourStatus === "ERROR" || calendarStatus === "ERROR" || weatherStatus === "ERROR" ? "ERROR"
+            : profile.time_basis === "row_order_only" ? "WARNING — ROW ORDER ONLY"
+            : generatedHour ? "PASS — GENERATED HOUR ID"
+            : calendar && explicitHour ? "PASS"
+            : calendar ? "PASS — CALENDAR" : "PASS — HOUR ID ONLY";
+        const inputValue = profile.source_basis === "percent" ? profile.hourly_it_load_percent?.[index] : loadKw;
+        return {
+            annual_row: index + 1,
+            internal_index: index,
+            hour_of_year: index + 1,
+            it_hour_id: explicitHour || generatedHour ? profile.hour_ids?.[index] ?? index + 1 : null,
+            it_time_basis: profile.time_basis,
+            it_calendar_time_basis: profile.calendar_time_basis || "none",
+            it_timestamp_display: alignmentTimestampDisplay(calendar, profile.calendar_hour_convention),
+            it_month: calendar?.month ?? null,
+            it_day: calendar?.day ?? null,
+            it_hour: calendar?.hour_of_day ?? null,
+            it_calendar_hour_convention: profile.calendar_hour_convention || null,
+            epw_month: months[index] ?? null,
+            epw_day: days[index] ?? null,
+            epw_hour: epwHours[index] ?? null,
+            epw_hour_convention: "1_24_epw_hour",
+            it_load_input: inputValue,
+            it_load_input_unit: profile.source_basis === "percent" ? "%" : "kW",
+            it_load_kW: Number(loadKw),
+            hour_id_status: hourStatus,
+            calendar_status: calendarStatus,
+            weather_alignment_status: weatherStatus,
+            overall_alignment_status: overall
+        };
+    });
+    const errors = rows.filter(row => row.overall_alignment_status === "ERROR").length;
+    return { rows, summary: {
+        annual_rows: rows.length,
+        it_time_basis: profile.time_basis,
+        hour_sequence_validation: profile.hour_sequence_valid === false ? "ERROR" : explicitAuditHourStatus(profile),
+        calendar_time_basis: profile.calendar_time_basis || "none",
+        calendar_sequence_validation: profile.calendar_sequence_valid === true ? "PASS" : profile.calendar_sequence_valid === false ? "ERROR" : "NOT PROVIDED",
+        calendar_hour_convention: profile.calendar_hour_convention || "N/A",
+        weather_alignment: profile.calendar_epw_match_valid === true ? "PASS" : profile.calendar_epw_match_valid === false ? "ERROR" : "NOT CHECKED",
+        epw_hour_convention: "1_24_epw_hour",
+        first_annual_row: rows.length ? 1 : null,
+        last_annual_row: rows.length || null,
+        alignment_errors: errors,
+        warning: profile.time_basis === "row_order_only" ? "Hour and calendar identifiers were not supplied; chronological alignment relies on file row order." : null
+    }};
+}
+
+function explicitAuditHourStatus(profile) {
+    if (profile.time_basis === "generated_hour_of_year") return "GENERATED";
+    return profile.has_explicit_hour_ids ? "PASS" : "WARNING";
+}
+
+function getTimeAlignmentAudit(profile = null, weatherFile = standardDataFiles.weather) {
+    const resolvedProfile = profile || lastReportContext?.input?.project?.it_load || configurationLibraryData?.it_load;
+    const weatherData = weatherFile?.data || weatherFile?.hourly_data || {};
+    const cacheKey = [resolvedProfile, weatherFile, resolvedProfile?.hourly_it_load_kW, resolvedProfile?.calendar_epw_match_valid, weatherData.month, weatherData.day, weatherData.epw_hour];
+    if (timeAlignmentAuditCache && timeAlignmentAuditCache.key.every((value, index) => value === cacheKey[index])) return timeAlignmentAuditCache.audit;
+    const audit = buildTimeAlignmentAudit(resolvedProfile, weatherFile);
+    timeAlignmentAuditCache = { key: cacheKey, audit };
+    return audit;
+}
+
+function csvSafeCell(value) {
+    if (value === null || value === undefined) return "";
+    const numeric = typeof value === "number";
+    let text = numeric ? (Number.isFinite(value) ? String(value) : "") : String(value);
+    if (!numeric && /^[=+\-@]/.test(text)) text = `'${text}`;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function timeAlignmentAuditCsv(audit) {
+    const field = {
+        Annual_Row: "annual_row", Internal_Index: "internal_index", IT_Hour_ID: "it_hour_id", IT_Time_Basis: "it_time_basis",
+        IT_Calendar_Time_Basis: "it_calendar_time_basis", IT_Timestamp: "it_timestamp_display", IT_Month: "it_month",
+        IT_Day: "it_day", IT_Hour: "it_hour", IT_Hour_Convention: "it_calendar_hour_convention", EPW_Month: "epw_month",
+        EPW_Day: "epw_day", EPW_Hour: "epw_hour", EPW_Hour_Convention: "epw_hour_convention", IT_Load_Input: "it_load_input",
+        IT_Load_Input_Unit: "it_load_input_unit", IT_Load_kW: "it_load_kW", Hour_ID_Status: "hour_id_status",
+        Calendar_Status: "calendar_status", Weather_Alignment_Status: "weather_alignment_status", Overall_Alignment_Status: "overall_alignment_status"
+    };
+    return [TIME_ALIGNMENT_CSV_COLUMNS.join(","), ...(audit?.rows || []).map(row => TIME_ALIGNMENT_CSV_COLUMNS.map(column => csvSafeCell(row[field[column]])).join(","))].join("\r\n");
+}
+
+function exportTimeAlignmentAuditCsv() {
+    const audit = getTimeAlignmentAudit();
+    if (!audit.rows.length) return setSolverDataStatus("No time alignment audit is available.", "error");
+    const blob = new Blob(["\uFEFF", timeAlignmentAuditCsv(audit)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "IT_Weather_Time_Alignment_Audit.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setSolverDataStatus(`CSV exported: ${audit.rows.length} alignment rows.`, "ok");
+}
+
 function exportOutputJson() {
     if (!lastReportContext || !lastReportContext.output) {
         setSolverDataStatus("请先运行一次计算，再导出 JSON。", "error");
@@ -3696,6 +3855,311 @@ function percentArrayToKw(values, designCapacityKw) {
         })
         .filter(value => Number.isFinite(value));
     return converted.length > 0 ? converted : null;
+}
+
+function validateItLoadHourSequence(rawHourIds, hours, hasExplicitHourIds) {
+    const generated = Array.from({ length: hours }, (_, index) => index + 1);
+    if (!hasExplicitHourIds) return {
+        hour_ids: generated, has_explicit_hour_ids: false, time_basis: "row_order_only",
+        hour_sequence_valid: true, hour_sequence_error: null,
+        validation_warning: "Hour identifiers were not supplied; chronological alignment relies on file row order."
+    };
+    const ids = Array.isArray(rawHourIds) ? rawHourIds.map(value => {
+        if (value === null || value === undefined || String(value).trim() === "") return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }) : [];
+    let error = null;
+    if (![8760, 8784].includes(hours)) error = `Explicit Hour_of_Year sequence must contain exactly 8760 or 8784 rows; received ${hours}.`;
+    if (!error && ids.length !== hours) error = `Hour identifier count ${ids.length} does not match IT value count ${hours}.`;
+    for (let index = 0; !error && index < ids.length; index += 1) {
+        const found = ids[index];
+        const expected = index + 1;
+        if (!Number.isInteger(found)) {
+            error = `Expected Hour ${expected} but found ${rawHourIds[index] === null || rawHourIds[index] === "" ? "blank" : String(rawHourIds[index])}; hour identifiers must be integers.`;
+        } else if (found !== expected) {
+            const seen = new Set();
+            const firstDuplicate = ids.find(value => seen.has(value) || !seen.add(value));
+            const present = new Set(ids.filter(Number.isInteger));
+            const firstMissing = generated.find(value => !present.has(value));
+            if (firstDuplicate !== undefined && firstMissing !== undefined) {
+                error = `Invalid IT Load Profile: duplicate Hour_of_Year ${firstDuplicate} and missing Hour_of_Year ${firstMissing}.`;
+            } else {
+                error = `Expected Hour ${expected} but found Hour ${found}.`;
+            }
+        }
+    }
+    return {
+        hour_ids: ids, has_explicit_hour_ids: true, time_basis: "hour_of_year",
+        hour_sequence_valid: !error, hour_sequence_error: error, validation_warning: null
+    };
+}
+
+function calendarDaysInMonth(month, leap) {
+    return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] || 0;
+}
+
+function isLeapCalendarYear(year) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function excelSerialCalendarParts(value) {
+    const serial = Number(value);
+    if (!Number.isFinite(serial)) return null;
+    const wholeDays = Math.floor(serial);
+    const milliseconds = Math.round((serial - wholeDays) * 86400000);
+    const date = new Date(Date.UTC(1899, 11, 30) + wholeDays * 86400000 + milliseconds);
+    return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: date.getUTCHours() };
+}
+
+function parseCalendarDateValue(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return { year: value.getFullYear(), month: value.getMonth() + 1, day: value.getDate() };
+    if (typeof value === "number") {
+        const parsed = excelSerialCalendarParts(value);
+        return parsed && { year: parsed.year, month: parsed.month, day: parsed.day };
+    }
+    const text = String(value ?? "").trim();
+    let match = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (match) return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+    match = text.match(/^(\d{1,2})[-/](\d{1,2})(?:[-/](\d{4}))?$/);
+    return match ? { year: match[3] ? Number(match[3]) : null, month: Number(match[1]), day: Number(match[2]) } : null;
+}
+
+function parseCalendarTimeValue(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getHours();
+    if (typeof value === "number") {
+        if (value >= 0 && value < 1) return Math.round(value * 24 * 60) / 60;
+        return value;
+    }
+    const match = String(value ?? "").trim().match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2}(?:\.\d+)?)?$/);
+    if (!match || Number(match[2] || 0) !== 0) return null;
+    return Number(match[1]);
+}
+
+function parseCalendarTimestampValue(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return { year: value.getFullYear(), month: value.getMonth() + 1, day: value.getDate(), hour: value.getHours() };
+    }
+    if (typeof value === "number") return excelSerialCalendarParts(value);
+    const text = String(value ?? "").trim();
+    const match = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2})(?::(\d{2}))?(?::\d{2}(?:\.\d+)?)?(?:\s*(?:Z|[+-]\d{2}:?\d{2}))?$/);
+    if (!match || Number(match[5] || 0) !== 0) return null;
+    return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]), hour: Number(match[4]) };
+}
+
+function expectedAnnualCalendar(hours, hourConvention) {
+    const leap = hours === 8784;
+    const rows = [];
+    for (let month = 1; month <= 12; month += 1) {
+        for (let day = 1; day <= calendarDaysInMonth(month, leap); day += 1) {
+            for (let epwHour = 1; epwHour <= 24; epwHour += 1) {
+                rows.push({ month, day, hour_of_day: hourConvention === "0_23_clock_hour" ? epwHour - 1 : epwHour });
+            }
+        }
+    }
+    return rows;
+}
+
+function validateItLoadCalendar(calendarInput, hours) {
+    const none = {
+        calendar_ids: [], has_explicit_calendar_ids: false, calendar_time_basis: "none",
+        calendar_hour_convention: null, calendar_sequence_valid: null, calendar_sequence_error: null,
+        calendar_validation_warning: "Calendar timestamps were not supplied; IT/weather alignment is validated by Hour-of-Year or row order.",
+        calendar_epw_match_valid: null, calendar_epw_match_error: null
+    };
+    if (!calendarInput) return none;
+    const basis = calendarInput.basis;
+    const source = basis === "timestamp" ? calendarInput.timestamp
+        : basis === "date_time" ? calendarInput.date
+        : calendarInput.month;
+    let error = ![8760, 8784].includes(hours) ? `Calendar sequence must contain exactly 8760 or 8784 rows; received ${hours}.` : null;
+    if (!error && (!Array.isArray(source) || source.length !== hours)) error = `Calendar timestamp count does not match the ${hours}-row IT profile.`;
+    if (!error && basis === "date_time" && (!Array.isArray(calendarInput.date) || !Array.isArray(calendarInput.time))) error = "Date and Time columns must both be supplied.";
+    if (!error && basis === "month_day_hour" && (!Array.isArray(calendarInput.month) || !Array.isArray(calendarInput.day) || !Array.isArray(calendarInput.hour))) error = "Month, Day, and explicit Hour-of-Day columns must all be supplied.";
+    const parsed = [];
+    for (let index = 0; !error && index < hours; index += 1) {
+        let item = null;
+        if (basis === "timestamp") item = parseCalendarTimestampValue(calendarInput.timestamp[index]);
+        if (basis === "date_time") {
+            const date = parseCalendarDateValue(calendarInput.date[index]);
+            const hour = parseCalendarTimeValue(calendarInput.time[index]);
+            if (date && hour !== null) item = { ...date, hour };
+        }
+        if (basis === "month_day_hour") item = {
+            year: Array.isArray(calendarInput.year) ? Number(calendarInput.year[index]) : null,
+            month: Number(calendarInput.month[index]), day: Number(calendarInput.day[index]), hour: Number(calendarInput.hour[index])
+        };
+        if (!item || !Number.isInteger(item.month) || !Number.isInteger(item.day) || !Number.isInteger(item.hour)
+            || (basis === "month_day_hour" && Array.isArray(calendarInput.year) && !Number.isInteger(item.year))) {
+            error = `Invalid calendar timestamp at annual row ${index + 1}.`;
+            break;
+        }
+        const leapForDate = item.year ? isLeapCalendarYear(item.year) : hours === 8784;
+        if (item.month < 1 || item.month > 12 || item.day < 1 || item.day > calendarDaysInMonth(item.month, leapForDate)) {
+            error = `Invalid calendar date at annual row ${index + 1}.`;
+            break;
+        }
+        parsed.push(item);
+    }
+    const hoursSeen = parsed.map(item => item.hour);
+    const hasZero = hoursSeen.includes(0);
+    const has24 = hoursSeen.includes(24);
+    let convention = null;
+    if (!error && hasZero && !has24 && hoursSeen.every(hour => hour >= 0 && hour <= 23)) convention = "0_23_clock_hour";
+    else if (!error && has24 && !hasZero && hoursSeen.every(hour => hour >= 1 && hour <= 24)) convention = "1_24_epw_hour";
+    else if (!error) error = "Calendar hour convention is ambiguous or inconsistent; expected a complete 0–23 or 1–24 sequence.";
+    const expected = convention ? expectedAnnualCalendar(hours, convention) : [];
+    for (let index = 0; !error && index < parsed.length; index += 1) {
+        const found = parsed[index];
+        const wanted = expected[index];
+        if (found.month !== wanted.month || found.day !== wanted.day || found.hour !== wanted.hour_of_day) {
+            error = `Invalid IT Load Profile: calendar chronology mismatch at annual row ${index + 1}.`;
+        }
+    }
+    const explicitYears = parsed.map(item => item.year).filter(year => Number.isInteger(year));
+    if (!error && explicitYears.length) {
+        const year = explicitYears[0];
+        if (explicitYears.length !== parsed.length || explicitYears.some(value => value !== year)) error = "Calendar year values must be present and consistent for every row.";
+        else if (isLeapCalendarYear(year) !== (hours === 8784)) error = `Calendar year ${year} is incompatible with a ${hours}-hour profile.`;
+    }
+    return {
+        calendar_ids: parsed.map(item => ({ month: item.month, day: item.day, hour_of_day: item.hour })),
+        has_explicit_calendar_ids: true, calendar_time_basis: basis, calendar_hour_convention: convention,
+        calendar_sequence_valid: !error, calendar_sequence_error: error, calendar_validation_warning: null,
+        calendar_epw_match_valid: null, calendar_epw_match_error: null
+    };
+}
+
+function validateItCalendarAgainstEpw(profile, weatherFile) {
+    if (!profile?.has_explicit_calendar_ids) return { calendar_epw_match_valid: null, calendar_epw_match_error: null };
+    if (profile.calendar_sequence_valid !== true) return { calendar_epw_match_valid: false, calendar_epw_match_error: profile.calendar_sequence_error };
+    const weather = weatherFile?.data || weatherFile?.hourly_data || {};
+    const months = weather.month;
+    const days = weather.day;
+    const hours = weather.epw_hour;
+    if (!Array.isArray(months) || !Array.isArray(days) || !Array.isArray(hours)) {
+        return { calendar_epw_match_valid: false, calendar_epw_match_error: "Loaded weather does not expose EPW calendar fields for timestamp cross-validation." };
+    }
+    if (months.length !== profile.hours || days.length !== profile.hours || hours.length !== profile.hours) {
+        return { calendar_epw_match_valid: false, calendar_epw_match_error: `IT calendar has ${profile.hours} rows but EPW calendar has ${months.length} rows.` };
+    }
+    for (let index = 0; index < profile.calendar_ids.length; index += 1) {
+        const it = profile.calendar_ids[index];
+        const itEpwHour = profile.calendar_hour_convention === "0_23_clock_hour" ? it.hour_of_day + 1 : it.hour_of_day;
+        if (it.month !== Number(months[index]) || it.day !== Number(days[index]) || itEpwHour !== Number(hours[index])) {
+            const pad = value => String(value).padStart(2, "0");
+            return {
+                calendar_epw_match_valid: false,
+                calendar_epw_match_error: `Invalid IT Load Profile: calendar alignment mismatch at annual row ${index + 1}. IT timestamp is ${pad(it.month)}-${pad(it.day)} Hour ${pad(itEpwHour)}, but EPW timestamp is ${pad(months[index])}-${pad(days[index])} Hour ${pad(hours[index])}.`
+            };
+        }
+    }
+    return { calendar_epw_match_valid: true, calendar_epw_match_error: null };
+}
+
+function canonicalItLoadProfile({ hourlyKw, hourlyPercent = null, hourIds = null, hasExplicitHourIds = false, timeBasis = null, calendarInput = null, designItKw, sourceType, sourceName, sourceBasis = "kW" }) {
+    const kw = Array.isArray(hourlyKw) ? hourlyKw.map(Number) : [];
+    const percent = Array.isArray(hourlyPercent)
+        ? hourlyPercent.map(Number)
+        : kw.map(value => designItKw > 0 ? value / designItKw * 100 : null);
+    const errors = [];
+    if (![8760, 8784].includes(kw.length)) errors.push(`expected 8760 or 8784 hourly rows; received ${kw.length}`);
+    if (kw.some(value => !Number.isFinite(value))) errors.push("all hourly IT values must be numeric");
+    if (kw.some(value => value < 0)) errors.push("hourly IT values must not be negative");
+    const sequence = validateItLoadHourSequence(hourIds, kw.length, hasExplicitHourIds);
+    const calendar = validateItLoadCalendar(calendarInput, kw.length);
+    if (timeBasis === "generated_hour_of_year") sequence.validation_warning = null;
+    if (!sequence.hour_sequence_valid) errors.push(sequence.hour_sequence_error);
+    if (calendar.calendar_sequence_valid === false) errors.push(calendar.calendar_sequence_error);
+    const overloadHours = designItKw > 0 ? kw.filter(value => value > designItKw).length : 0;
+    const valid = errors.length === 0;
+    const averageKw = kw.length ? kw.reduce((sum, value) => sum + value, 0) / kw.length : null;
+    return {
+        design_it_load_kW: designItKw,
+        source_type: sourceType,
+        source_name: sourceName,
+        source_basis: sourceBasis,
+        hours: kw.length,
+        hourly_it_load_kW: kw,
+        hourly_it_load_percent: percent,
+        hour_ids: sequence.hour_ids,
+        has_explicit_hour_ids: sequence.has_explicit_hour_ids,
+        time_basis: timeBasis || sequence.time_basis,
+        hour_sequence_valid: sequence.hour_sequence_valid,
+        hour_sequence_error: sequence.hour_sequence_error,
+        validation_warning: sequence.validation_warning,
+        calendar_input: calendarInput,
+        ...calendar,
+        validation_status: valid ? (overloadHours ? "valid_with_overload_warning" : "valid") : "error",
+        validation_errors: errors,
+        overload_hours: overloadHours,
+        average_kW: averageKw,
+        average_ratio: averageKw !== null && designItKw > 0 ? averageKw / designItKw : null,
+        min_kW: kw.length ? Math.min(...kw) : null,
+        max_kW: kw.length ? Math.max(...kw) : null
+    };
+}
+
+function canonicalItLoadFromPercent(percentages, designItKw, sourceType, sourceName, timeOptions = {}) {
+    const values = Array.isArray(percentages) ? percentages.map(Number) : [];
+    return canonicalItLoadProfile({
+        hourlyKw: values.map(value => designItKw * value / 100),
+        hourlyPercent: values,
+        designItKw,
+        sourceType,
+        sourceName,
+        sourceBasis: "percent",
+        ...timeOptions
+    });
+}
+
+function refreshCanonicalItLoadForCapacity(profile, designItKw) {
+    if (!profile) return null;
+    let refreshed;
+    if (profile.source_basis === "percent") {
+        refreshed = canonicalItLoadFromPercent(profile.hourly_it_load_percent, designItKw, profile.source_type, profile.source_name, {
+            hourIds: profile.hour_ids, hasExplicitHourIds: profile.has_explicit_hour_ids, timeBasis: profile.time_basis,
+            calendarInput: profile.calendar_input || null
+        });
+    } else {
+        refreshed = canonicalItLoadProfile({
+            hourlyKw: profile.hourly_it_load_kW,
+            designItKw,
+            sourceType: profile.source_type,
+            sourceName: profile.source_name,
+            sourceBasis: "kW",
+            hourIds: profile.hour_ids,
+            hasExplicitHourIds: profile.has_explicit_hour_ids,
+            timeBasis: profile.time_basis,
+            calendarInput: profile.calendar_input || null
+        });
+    }
+    refreshed.calendar_epw_match_valid = profile.calendar_epw_match_valid ?? refreshed.calendar_epw_match_valid;
+    refreshed.calendar_epw_match_error = profile.calendar_epw_match_error ?? refreshed.calendar_epw_match_error;
+    return refreshed;
+}
+
+function renderItLoadProfileStatus(profile = configurationLibraryData?.it_load) {
+    const target = document.getElementById("itLoadProfileStatus");
+    if (!target) return;
+    if (!profile) {
+        target.innerHTML = '<span style="color:#dc2626;">IT Load Profile Not Ready</span>';
+        return;
+    }
+    const ready = profile.validation_status === "valid" || profile.validation_status === "valid_with_overload_warning";
+    const warning = profile.overload_hours ? `; overload hours: ${profile.overload_hours}` : "";
+    const timeDetail = profile.has_explicit_hour_ids || profile.time_basis === "generated_hour_of_year"
+        ? `Hour sequence: ${profile.hour_sequence_valid ? `Valid (1–${profile.hours})` : "Error"}`
+        : "Time basis: Row Order<br>Warning: No Hour_of_Year column supplied.";
+    const calendarDetail = profile.has_explicit_calendar_ids
+        ? `Calendar: ${profile.calendar_sequence_valid ? "Valid" : "Error"} (${esc(profile.calendar_time_basis)}; ${esc(profile.calendar_hour_convention || "undetermined")})<br>` +
+            `IT / EPW alignment: ${profile.calendar_epw_match_valid === true ? "PASS" : profile.calendar_epw_match_valid === false ? "ERROR" : "PENDING"}`
+        : "Calendar: Not Provided";
+    target.innerHTML = `<b style="color:${ready ? "#059669" : "#dc2626"};">${ready ? "✓ Loaded" : "✕ Invalid"}</b><br>` +
+        `Source: ${esc(profile.source_name || profile.source_type || "Unknown")}<br>` +
+        `Hours: ${profile.hours || 0}; Average: ${fmtNumber(profile.average_kW, 1)} kW (${fmtNumber((profile.average_ratio || 0) * 100, 1)}%); ` +
+        `Min/Max: ${fmtNumber(profile.min_kW, 1)} / ${fmtNumber(profile.max_kW, 1)} kW${esc(warning)}<br>${timeDetail}<br>${calendarDetail}` +
+        `${profile.validation_errors?.length ? `<br>${esc(profile.validation_errors.join("; "))}` : ""}`;
 }
 
 function findItLoadPercentArray(obj) {
@@ -4826,8 +5290,30 @@ async function handleStandardFile(slot, statusId, file) {
             ? await window.PueImportAdapter.adaptFile(slot, file)
             : await readJsonFile(file);
         if (json && typeof json === "object") json.source_file = file.name;
+        const uploadedRawKw = slot === "itLoad" ? (getPath(json, ["data", "hourly_it_load_kW"]) ?? getPath(json, ["hourly_it_load_kW"])) : null;
+        const uploadedRawPercent = slot === "itLoad" ? (getPath(json, ["data", "hourly_it_load_percent"]) ?? getPath(json, ["hourly_it_load_percent"])) : null;
+        const uploadedItHadKw = Array.isArray(uploadedRawKw);
         if (slot === "itLoad") {
             normalizeItLoadPercentFile(json);
+            const designItKw = projectDesignCapacityKw();
+            const hourlyKw = uploadedItHadKw ? uploadedRawKw : [];
+            const hourlyPercent = Array.isArray(uploadedRawPercent) ? uploadedRawPercent : [];
+            const uploadedHourIds = getPath(json, ["data", "hour_index"]) ?? getPath(json, ["hour_ids"]);
+            const timeOptions = {
+                hourIds: uploadedHourIds,
+                hasExplicitHourIds: json.has_explicit_hour_ids === true || Array.isArray(uploadedHourIds),
+                calendarInput: getPath(json, ["data", "calendar_input"]) || null
+            };
+            projectItLoadProfileOverride = uploadedItHadKw
+                ? canonicalItLoadProfile({ hourlyKw, designItKw, sourceType: "user_uploaded", sourceName: `User Uploaded — ${file.name}`, sourceBasis: "kW", ...timeOptions })
+                : canonicalItLoadFromPercent(hourlyPercent, designItKw, "user_uploaded", `User Uploaded — ${file.name}`, timeOptions);
+            if (projectItLoadProfileOverride.validation_status === "error") {
+                throw new Error(`IT Load Profile Upload Failed: ${projectItLoadProfileOverride.validation_errors.join("; ")}`);
+            }
+            if (configurationLibraryData) {
+                configurationLibraryData.it_load = projectItLoadProfileOverride;
+                configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
+            }
         }
         if (slot === "weather" && json && json.source_format === "epw") {
             setWeatherSourceMetadata(json, {
@@ -4859,13 +5345,29 @@ async function handleStandardFile(slot, statusId, file) {
         renderWeatherReportPanel();
         renderTemperatureDistributionPanel();
         refreshStandardInputStatus();
+        if (slot === "itLoad") renderItLoadProfileStatus(projectItLoadProfileOverride);
+        refreshSimulationReadiness();
     } catch (e) {
+        if (slot === "itLoad") {
+            projectItLoadProfileOverride = {
+                design_it_load_kW: projectDesignCapacityKw(), source_type: "user_uploaded",
+                source_name: `User Uploaded — ${file?.name || "unknown file"}`, source_basis: "unknown",
+                hours: 0, hourly_it_load_kW: [], hourly_it_load_percent: [], validation_status: "error",
+                hour_ids: [], has_explicit_hour_ids: false, time_basis: "unknown", hour_sequence_valid: false,
+                hour_sequence_error: String(e.message || e), validation_warning: null,
+                validation_errors: [String(e.message || e)], overload_hours: 0,
+                average_kW: null, average_ratio: null, min_kW: null, max_kW: null
+            };
+            if (configurationLibraryData) configurationLibraryData.it_load = projectItLoadProfileOverride;
+        }
         standardDataFiles[slot] = null;
         standardSolverInput = null;
         preferStandardFiles = true;
         updateFileStatus(statusId, `读取失败：${String(e.message || e)}`, "error");
         renderCoolingSystemSelection();
         refreshStandardInputStatus();
+        if (slot === "itLoad") renderItLoadProfileStatus(projectItLoadProfileOverride);
+        refreshSimulationReadiness();
     }
 }
 
@@ -5281,8 +5783,8 @@ function defaultConfigurationLibraryScenarios() {
 }
 
 function defaultConfigurationLibraryItLoad(configurationName, hours = 8760) {
-    const percentages = Array(hours).fill(100);
-    const ratios = Array(hours).fill(1);
+    const percentages = Array(hours).fill(90);
+    const ratios = Array(hours).fill(0.9);
     return {
         standard_file: {
             schema_version: "pue.timeseries.it_load.v1",
@@ -5292,7 +5794,9 @@ function defaultConfigurationLibraryItLoad(configurationName, hours = 8760) {
             data: { hourly_it_load_percent: percentages, "hourly_it_load_%": percentages, hourly_it_load_ratio: ratios },
             hours
         },
-        payload: { hours, hourly_it_load_percent: percentages, hourly_it_load_ratio: ratios }
+        payload: { hours, hourly_it_load_percent: percentages, hourly_it_load_ratio: ratios },
+        source_type: "compatibility_default",
+        source_name: "Compatibility Default — 90% Constant"
     };
 }
 
@@ -5537,8 +6041,9 @@ function buildGenericConfigurationLibraryPayload(data, scenarioNameOverride = nu
         peakDesignWeather,
         assigned_ashrae_design_conditions_url: libraryAshraeUrl
     });
-    const percentages = data.it_load.hourly_it_load_percent || [];
-    const hourlyItLoadKw = percentages.map(percent => designItLoadKw * Number(percent) / 100);
+    const resolvedItProfile = refreshCanonicalItLoadForCapacity(data.it_load, designItLoadKw);
+    const percentages = resolvedItProfile?.hourly_it_load_percent || [];
+    const hourlyItLoadKw = resolvedItProfile?.hourly_it_load_kW || [];
     const hours = hourlyItLoadKw.length;
     const dryBulbWeather = standardDataArray(standardDataFiles.weather || {}, [["data", "dry_bulb_C"], ["hourly_data", "dry_bulb_C"]]);
     const wetBulbWeather = standardDataArray(standardDataFiles.weather || {}, [["data", "wet_bulb_C"], ["hourly_data", "wet_bulb_C"]]);
@@ -5651,9 +6156,8 @@ function buildGenericConfigurationLibraryPayload(data, scenarioNameOverride = nu
                 other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw
             },
             it_load: {
-                design_it_load_kW: designItLoadKw,
-                hourly_it_load_percent: percentages,
-                hourly_it_load_kW: hourlyItLoadKw
+                ...resolvedItProfile,
+                design_it_load_kW: designItLoadKw
             }
         },
         unit_quantity: unitQuantity,
@@ -5680,6 +6184,22 @@ function buildGenericConfigurationLibraryPayload(data, scenarioNameOverride = nu
             ashrae_design_conditions_url: libraryAshraeUrl
         },
         other_electrical_auxiliary_power_kW: heatGains.otherElectricalAuxiliaryPowerKw,
+        it_load_profile_source_type: resolvedItProfile?.source_type,
+        it_load_profile_source_name: resolvedItProfile?.source_name,
+        it_load_profile_hours: resolvedItProfile?.hours,
+        it_load_profile_average_kW: resolvedItProfile?.average_kW,
+        it_load_profile_average_ratio: resolvedItProfile?.average_ratio,
+        it_load_profile_min_kW: resolvedItProfile?.min_kW,
+        it_load_profile_max_kW: resolvedItProfile?.max_kW,
+        it_load_profile_validation_status: resolvedItProfile?.validation_status,
+        it_load_profile_time_basis: resolvedItProfile?.time_basis,
+        it_load_profile_hour_sequence_validation: resolvedItProfile?.hour_sequence_valid
+            ? (resolvedItProfile?.has_explicit_hour_ids || resolvedItProfile?.time_basis === "generated_hour_of_year" ? "PASS" : "WARNING")
+            : "ERROR",
+        it_load_profile_calendar_time_basis: resolvedItProfile?.calendar_time_basis,
+        it_load_profile_calendar_sequence_validation: resolvedItProfile?.calendar_sequence_valid,
+        it_load_profile_calendar_epw_match_valid: resolvedItProfile?.calendar_epw_match_valid,
+        it_load_profile_calendar_hour_convention: resolvedItProfile?.calendar_hour_convention,
         selected_curves: selectedCurves,
         configuration_manifest: JSON.parse(JSON.stringify(manifest))
     };
@@ -6028,6 +6548,7 @@ async function loadSelectedConfigurationLibrary() {
         let percentages = [];
         let ratios = [];
         let equipmentEntries = [];
+        let packagedHourIds = null;
 
         if (loadMode === "legacy") {
             configurationSheets = await fetchConfigurationWorkbook(`${base}/configuration.xlsx`);
@@ -6049,6 +6570,7 @@ async function loadSelectedConfigurationLibrary() {
             }));
             percentages = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_percent)).filter(Number.isFinite);
             ratios = (itSheets.IT_Load || []).map(row => Number(row.hourly_it_load_ratio)).filter(Number.isFinite);
+            packagedHourIds = (itSheets.IT_Load || []).map(row => row.Hour_of_Year ?? row["Hour of Year"] ?? row.hour_index ?? row.Hour);
             itLoadSourceFile = "input/IT_LOAD_90_PERCENT.xlsx";
         } else {
             equipmentEntries = await loadConfigurationEquipmentEntries(configurationName, selectedManifest);
@@ -6062,6 +6584,15 @@ async function loadSelectedConfigurationLibrary() {
                 "Power Source": manifestPowerSource(configurationName, selectedManifest)
             };
         }
+        const sourceType = loadMode === "legacy" ? "configuration_library_profile" : "compatibility_default";
+        const sourceName = loadMode === "legacy" ? "Configuration Library Profile — IT_LOAD_90_PERCENT.xlsx" : "Compatibility Default — 90% Constant";
+        const designItKw = projectDesignCapacityKw();
+        const packagedProfile = canonicalItLoadFromPercent(percentages, designItKw, sourceType, sourceName, loadMode === "legacy"
+            ? { hourIds: packagedHourIds, hasExplicitHourIds: true, timeBasis: "hour_of_year" }
+            : { hourIds: Array.from({ length: percentages.length }, (_, index) => index + 1), hasExplicitHourIds: false, timeBasis: "generated_hour_of_year" });
+        const resolvedProfile = projectItLoadProfileOverride
+            ? refreshCanonicalItLoadForCapacity(projectItLoadProfileOverride, designItKw)
+            : packagedProfile;
         const itLoad = {
             schema_version: "pue.timeseries.it_load.v1",
             type: "annual_it_load",
@@ -6092,7 +6623,7 @@ async function loadSelectedConfigurationLibrary() {
             equipment_per_cooling_unit: equipmentPerUnit,
             equipment_count: equipmentEntries.length,
             scenarios,
-            it_load: { hours: percentages.length, hourly_it_load_percent: percentages, hourly_it_load_ratio: ratios },
+            it_load: resolvedProfile,
             equipment: Object.fromEntries(equipmentEntries)
         };
         const initialScenario = document.getElementById("scenarioSelect")?.value === "one_failure_three_active" ? "Failure" : "Normal";
@@ -6138,6 +6669,7 @@ async function loadSelectedConfigurationLibrary() {
         };
         configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
         window.configurationLibraryData = configurationLibraryData;
+        renderItLoadProfileStatus(resolvedProfile);
 
         renderCoolingSystemSelection();
         renderConfigurationLibrarySummary(configurationLibraryData);
@@ -6146,7 +6678,7 @@ async function loadSelectedConfigurationLibrary() {
             "statusItLoad",
             loadMode === "legacy"
                 ? `Configuration Library: IT_LOAD_90_PERCENT.xlsx (${percentages.length} hours)`
-                : `Configuration Library: manifest default IT load (${percentages.length} hours)`,
+                : `Compatibility Default — 90% Constant (${percentages.length} hours)`,
             "ok"
         );
         resetAutomaticEpwBindingState();
@@ -6154,6 +6686,8 @@ async function loadSelectedConfigurationLibrary() {
         configurationLibraryData.standardized_solver_input = buildFrontendSolverInputFromLibrary(configurationLibraryData);
         renderConfigurationLibrarySummary(configurationLibraryData);
         refreshStandardInputStatus();
+        renderItLoadProfileStatus(configurationLibraryData.it_load);
+        refreshSimulationReadiness();
         if (status) {
             status.textContent = epwMatched
                 ? `Loaded ${configurationLibraryData.configuration_name}. Equipment models and EPW weather are ready.`
@@ -6279,7 +6813,8 @@ function initStandardDataInputs() {
             renderProjectInfoReportPanel();
             if (id === "projectCapacityMwInput" && configurationLibraryData) {
                 try {
-                    normalizeItLoadPercentFile(standardDataFiles.itLoad);
+                    configurationLibraryData.it_load = refreshCanonicalItLoadForCapacity(configurationLibraryData.it_load, projectDesignCapacityKw());
+                    if (projectItLoadProfileOverride) projectItLoadProfileOverride = refreshCanonicalItLoadForCapacity(projectItLoadProfileOverride, projectDesignCapacityKw());
                     if (configurationLibraryData.library_bound_input) {
                         const updatedSizing = calculateFrontendUnitRequirements(
                             getProjectReportInfo().capacityMw,
@@ -6293,6 +6828,7 @@ function initStandardDataInputs() {
                     refreshStandardInputStatus();
                     renderConfigurationLibrarySummary(configurationLibraryData);
                     renderScenarioSummary();
+                    renderItLoadProfileStatus(configurationLibraryData.it_load);
                 } catch (_) {
                     // Capacity is incomplete while the user is still typing.
                 }
@@ -6435,6 +6971,19 @@ function engineeringContextRows(outObj = {}, report = {}, input = {}) {
     const weatherMetadata = outObj.weather?.metadata || standardDataFiles.weather?.metadata || {};
     const capacityMw = Number(input.cooling_unit_capacity_mw);
     const designItKw = Number(project.design_it_load_kW ?? input.project?.design_it_load_kW ?? input.design_it_load_kW ?? input.design_IT_capacity_kW);
+    const itProfile = input.project?.it_load || input.it_load || {};
+    const timeBasis = itProfile.time_basis === "hour_of_year" ? "Hour of Year"
+        : itProfile.time_basis === "generated_hour_of_year" ? "Generated Hour of Year"
+        : itProfile.time_basis === "row_order_only" ? "Row Order Only" : "N/A";
+    const sequenceStatus = itProfile.hour_sequence_valid === false ? "ERROR"
+        : itProfile.has_explicit_hour_ids || itProfile.time_basis === "generated_hour_of_year" ? "PASS" : "WARNING";
+    const calendarBasis = itProfile.calendar_time_basis === "date_time" ? "Date + Time"
+        : itProfile.calendar_time_basis === "month_day_hour" ? "Month + Day + Hour"
+        : itProfile.calendar_time_basis === "timestamp" ? "Timestamp" : "None";
+    const calendarStatus = itProfile.calendar_sequence_valid === true ? "PASS"
+        : itProfile.calendar_sequence_valid === false ? "ERROR" : "NOT PROVIDED";
+    const alignmentStatus = itProfile.calendar_epw_match_valid === true ? "PASS"
+        : itProfile.calendar_epw_match_valid === false ? "ERROR" : "NOT PROVIDED";
     return [
         ["Configuration", input.configuration_display_name || input.configuration_name || manifest.display_name || outObj.configuration_display_name || outObj.configuration_id || "N/A"],
         ["Cooling System Type", input.cooling_system_type || manifest.cooling_system_type || report.cooling_system_type || outObj.cooling_system_type || "N/A"],
@@ -6442,8 +6991,69 @@ function engineeringContextRows(outObj = {}, report = {}, input = {}) {
         ["Power Source", input.power_source || outObj.power_source || "N/A"],
         ["Scenario", project.scenario_name || input.scenario_name || report.operating_scenario?.scenario_name || "N/A"],
         ["Design IT Capacity", Number.isFinite(designItKw) ? `${fmtNumber(designItKw / 1000, 3)} MW` : "N/A"],
-        ["Weather / Climate Station", weatherMetadata.station_name || weatherMetadata.source || getWeatherSourceMetadata(standardDataFiles.weather || {}).station_name || "Loaded annual weather"]
+        ["Weather / Climate Station", weatherMetadata.station_name || weatherMetadata.source || getWeatherSourceMetadata(standardDataFiles.weather || {}).station_name || "Loaded annual weather"],
+        ["IT Load Time Basis", timeBasis],
+        ["Hour Sequence Validation", sequenceStatus],
+        ["IT Calendar Time Basis", calendarBasis],
+        ["Calendar Sequence Validation", calendarStatus],
+        ["IT / Weather Calendar Alignment", alignmentStatus],
+        ["Calendar Hour Convention", itProfile.calendar_hour_convention || "N/A"]
     ];
+}
+
+function alignmentAuditRowCells(row) {
+    return [
+        row.annual_row,
+        row.it_hour_id ?? "Not Provided",
+        row.it_timestamp_display,
+        row.epw_month === null ? "Not Available" : `${String(row.epw_month).padStart(2, "0")}-${String(row.epw_day).padStart(2, "0")} H${String(row.epw_hour).padStart(2, "0")}`,
+        Number.isFinite(row.it_load_kW) ? row.it_load_kW.toFixed(3) : "N/A",
+        row.overall_alignment_status
+    ];
+}
+
+function renderTimeAlignmentAudit() {
+    const audit = getTimeAlignmentAudit();
+    const summary = document.getElementById("timeAlignmentAuditSummary");
+    const preview = document.getElementById("timeAlignmentAuditPreview");
+    if (btnExportTimeAlignmentCsv) btnExportTimeAlignmentCsv.disabled = !audit.rows.length;
+    if (!audit.summary) {
+        if (summary) summary.textContent = "Run a validated annual simulation to inspect alignment.";
+        if (preview) preview.innerHTML = "";
+        return;
+    }
+    const s = audit.summary;
+    if (summary) summary.innerHTML = [
+        ["Annual Rows", s.annual_rows], ["IT Load Time Basis", s.it_time_basis], ["Hour Sequence", s.hour_sequence_validation],
+        ["Calendar Time Basis", s.calendar_time_basis], ["Calendar Sequence", s.calendar_sequence_validation],
+        ["Calendar Hour Convention", s.calendar_hour_convention], ["IT / Weather Alignment", s.weather_alignment],
+        ["EPW Hour Convention", s.epw_hour_convention], ["Alignment Errors", s.alignment_errors]
+    ].map(([label, value]) => `<span style="display:inline-block;margin:3px 16px 3px 0;"><b>${esc(label)}:</b> ${esc(value)}</span>`).join("") +
+        (s.warning ? `<div style="color:#b45309;margin-top:6px;">${esc(s.warning)}</div>` : "");
+    if (preview) {
+        const sample = audit.rows.length <= 10 ? audit.rows : [...audit.rows.slice(0, 5), null, ...audit.rows.slice(-5)];
+        preview.innerHTML = `<table><thead><tr><th>Row</th><th>IT Hour</th><th>IT Time</th><th>EPW Time</th><th>IT Load kW</th><th>Status</th></tr></thead><tbody>${sample.map(row => row
+            ? `<tr>${alignmentAuditRowCells(row).map(value => `<td>${esc(value)}</td>`).join("")}</tr>`
+            : '<tr><td colspan="6" style="text-align:center;">…</td></tr>').join("")}</tbody></table>`;
+    }
+}
+
+function inspectTimeAlignmentAuditRow() {
+    const audit = getTimeAlignmentAudit();
+    const input = document.getElementById("timeAlignmentAuditRowInput");
+    const target = document.getElementById("timeAlignmentAuditLookup");
+    const annualRow = Number(input?.value);
+    const record = Number.isInteger(annualRow) && annualRow >= 1 ? audit.rows[annualRow - 1] : null;
+    if (!target) return;
+    if (!record) {
+        target.textContent = `Enter an annual row from 1 to ${audit.rows.length || 0}.`;
+        return;
+    }
+    target.innerHTML = `<b>Annual Row ${record.annual_row}</b> → Internal Index ${record.internal_index}<br>` +
+        `IT Hour ID: ${esc(record.it_hour_id ?? "Not Provided")}; IT timestamp: ${esc(record.it_timestamp_display)}; ` +
+        `EPW: ${esc(record.epw_month)}-${esc(record.epw_day)} Hour ${esc(record.epw_hour)}; ` +
+        `IT input: ${esc(record.it_load_input)} ${esc(record.it_load_input_unit)}; IT load: ${record.it_load_kW.toFixed(3)} kW; ` +
+        `Status: ${esc(record.overall_alignment_status)}`;
 }
 
 function renderEngineeringResultsSummary(outObj, report, peakSummary) {
@@ -6455,6 +7065,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
     if (context) context.innerHTML = engineeringContextRows(outObj, report, configurationLibraryData || {})
         .map(([label, value]) => `<span style="display:inline-block; margin:4px 18px 4px 0;"><b>${esc(label)}:</b> ${esc(value)}</span>`).join("");
     setText("activeScenarioValue", scenario);
+    renderTimeAlignmentAudit();
 
     const energy = document.getElementById("annualEnergySummaryBody");
     if (energy) energy.innerHTML = `<table><tbody>
@@ -7407,6 +8018,8 @@ json.dumps(out, indent=2)
 btnRun.addEventListener("click", runUsingConfigurationLibrary);
 if (btnExportHtmlReport) btnExportHtmlReport.addEventListener("click", exportHtmlReport);
 if (btnExportJson) btnExportJson.addEventListener("click", exportOutputJson);
+if (btnExportTimeAlignmentCsv) btnExportTimeAlignmentCsv.addEventListener("click", exportTimeAlignmentAuditCsv);
+document.getElementById("btnInspectTimeAlignment")?.addEventListener("click", inspectTimeAlignmentAuditRow);
 elIn.addEventListener("input", () => {
     preferStandardFiles = false;
     if (standardSolverInput) {

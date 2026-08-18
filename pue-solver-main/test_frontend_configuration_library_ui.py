@@ -391,7 +391,6 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn("Automatic EPW Matching", self.index)
         self.assertNotIn('id="btnAutoMatchEpw"', self.index)
         for legacy_id in (
-            "fileItLoad",
             "fileWeather",
             "fileDryCooler",
             "fileChiller",
@@ -400,6 +399,8 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
             "fileFans",
         ):
             self.assertNotIn(f'id="{legacy_id}"', self.index)
+        self.assertIn('id="fileItLoad"', self.index)
+        self.assertIn('accept=".xlsx,.xls,.csv"', self.index)
         for legacy_title in (
             "IT负载全年曲线",
             "干冷器性能曲线",
@@ -434,7 +435,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         ):
             self.assertRegex(self.index, rf'id="{element_id}"[^>]*value="{value}"')
 
-    def test_advanced_input_override_is_closed_and_unconnected(self):
+    def test_advanced_input_override_is_closed_with_connected_it_profile(self):
         start = self.index.index('<details id="advancedInputOverrideDetails"')
         opening_tag = self.index[start:self.index.index(">", start)]
         end = self.index.index("</details>", start)
@@ -442,12 +443,30 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertNotIn(" open", opening_tag)
         for title in (
             "Advanced Input Override",
-            "Manual IT Load Profile Override",
+            "Annual IT Load Profile",
             "Manual Weather File Override",
             "Custom Equipment Curve Override",
-            "not connected in this phase",
         ):
             self.assertIn(title, details)
+        self.assertIn('id="fileItLoad"', details)
+        self.assertIn("Project-level override", details)
+        self.assertNotIn("Manual IT Load Profile Override", details)
+
+    def test_canonical_it_profile_precedence_and_validation_are_wired(self):
+        load_block = self._function_source("loadSelectedConfigurationLibrary")
+        builder = self._function_source("buildGenericConfigurationLibraryPayload")
+        readiness = self._function_source("getSimulationReadiness")
+        upload = self._function_source("handleStandardFile")
+        self.assertIn("projectItLoadProfileOverride", load_block)
+        self.assertNotIn('slot === "itLoad"', load_block)
+        self.assertIn("configuration_library_profile", load_block)
+        self.assertIn("compatibility_default", load_block)
+        self.assertIn("Compatibility Default — 90% Constant", load_block)
+        self.assertIn("resolvedItProfile?.hourly_it_load_kW", builder)
+        self.assertIn("it_load_profile_source_type", builder)
+        self.assertIn("valid_with_overload_warning", readiness)
+        self.assertIn("itLoadHours === weatherHours", readiness)
+        self.assertIn("IT Load Profile Upload Failed", upload)
 
     def test_configuration_library_binding_status_uses_existing_bindings(self):
         self.assertIn('id="configurationLibraryBindingStatus"', self.index)

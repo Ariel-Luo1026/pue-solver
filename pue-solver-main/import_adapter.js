@@ -133,6 +133,17 @@
         return json;
     }
 
+    function rowsRawColumnWithKey(rows, candidates) {
+        if (!Array.isArray(rows) || rows.length === 0) return null;
+        const keys = Object.keys(rows[0] || {});
+        const map = new Map(keys.map(k => [normalizeHeader(k), k]));
+        for (const candidate of candidates) {
+            const key = map.get(normalizeHeader(candidate));
+            if (key) return { key, normalizedKey: normalizeHeader(key), values: rows.map(row => row[key]) };
+        }
+        return null;
+    }
+
     // Adds cooling-selection metadata without reshaping any existing
     // standardized input or calculation fields.
     function applyCoolingSystemSelection(input, systemType, capacityMw, powerSource, scenarioKey) {
@@ -290,37 +301,64 @@
     }
 
     function adaptItExcelRows(rows) {
-        const it = rowsColumn(rows, [
+        const itColumn = rowsRawColumnWithKey(rows, [
             "hourly_it_load_kW",
             "IT_load_kW",
             "it_load_kw",
             "IT Load kW",
+            "IT Load (kW)",
             "load_kw",
             "power_kw"
         ]);
-        const itPercent = !it ? rowsColumn(rows, [
+        const itPercentColumn = !itColumn ? rowsRawColumnWithKey(rows, [
             "hourly_it_load_%",
             "hourly_it_load_percent",
             "hourly_it_load_pct",
             "IT_load_%",
             "IT Load %",
+            "IT Load (%)",
+            "IT %",
+            "Load Ratio",
             "it_load_percent",
             "it_load_pct",
             "load_percent",
             "load_%"
         ]) : null;
-        if (!it && !itPercent) throw new Error("Could not find IT load column. Expected IT_load_kW/hourly_it_load_kW or hourly_it_load_%.");
-        const values = it || itPercent;
-        const hour = rowsColumn(rows, ["hour_index", "hour", "hour_of_year"]) ||
-            Array.from({ length: values.length }, (_, i) => i + 1);
-        const data = { hour_index: hour.slice(0, values.length) };
-        if (it) data.hourly_it_load_kW = it;
-        if (itPercent) data.hourly_it_load_percent = itPercent;
+        if (!itColumn && !itPercentColumn) throw new Error("Could not find IT load column. Expected IT_load_kW/hourly_it_load_kW or hourly_it_load_%.");
+        const loadColumn = itColumn || itPercentColumn;
+        const hourColumn = rowsRawColumnWithKey(rows, ["Hour_of_Year", "Hour of Year", "Hour", "hour_index"]);
+        const timestampColumn = rowsRawColumnWithKey(rows, ["Timestamp", "DateTime", "Datetime", "date_time", "datetime"]);
+        const dateColumn = rowsRawColumnWithKey(rows, ["Date"]);
+        const timeColumn = rowsRawColumnWithKey(rows, ["Time"]);
+        const monthColumn = rowsRawColumnWithKey(rows, ["Month"]);
+        const dayColumn = rowsRawColumnWithKey(rows, ["Day", "Day_of_Month", "day_of_month"]);
+        const clockHourColumn = rowsRawColumnWithKey(rows, ["Hour_of_Day", "Hour of Day", "Clock_Hour", "clock_hour"]);
+        const yearColumn = rowsRawColumnWithKey(rows, ["Year"]);
+        let calendarInput = null;
+        if (timestampColumn) {
+            calendarInput = { basis: "timestamp", timestamp: timestampColumn.values };
+        } else if (dateColumn || timeColumn) {
+            calendarInput = { basis: "date_time", date: dateColumn?.values || null, time: timeColumn?.values || null };
+        } else if (monthColumn || dayColumn || clockHourColumn || yearColumn) {
+            calendarInput = {
+                basis: "month_day_hour", month: monthColumn?.values || null, day: dayColumn?.values || null,
+                hour: clockHourColumn?.values || null, year: yearColumn?.values || null
+            };
+        }
+        const data = {};
+        if (hourColumn) data.hour_index = hourColumn.values;
+        if (itColumn) data.hourly_it_load_kW = loadColumn.values;
+        if (itPercentColumn) data.hourly_it_load_percent = loadColumn.values;
+        if (calendarInput) data.calendar_input = calendarInput;
         return {
             schema_version: "pue.timeseries.it_load.v1",
             type: "annual_it_load",
             source_format: "excel",
-            units: { hour_index: "1-8760", hourly_it_load_kW: "kW", hourly_it_load_percent: "%" },
+            units: { hour_index: "annual hour identifier", hourly_it_load_kW: "kW", hourly_it_load_percent: "%" },
+            has_explicit_hour_ids: Boolean(hourColumn),
+            has_explicit_calendar_ids: Boolean(calendarInput),
+            hour_id_column: hourColumn?.key || null,
+            calendar_time_basis: calendarInput?.basis || "none",
             data
         };
     }
@@ -635,6 +673,15 @@
         if (ext === ".xml") return adaptXml(await readText(file), slot);
         if (EXCEL_EXTS.includes(ext)) {
             const rows = await readWorkbookRows(file);
+            if (slot === "itLoad") return adaptItExcelRows(rows);
+            if (slot === "weather") return adaptWeatherExcelRows(rows);
+            return adaptCurveExcelRows(rows, slot);
+        }
+        if (ext === ".csv") {
+            if (typeof XLSX === "undefined") throw new Error("CSV parser is not loaded. Check the SheetJS script in index.html.");
+            const workbook = XLSX.read(await readText(file), { type: "string" });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
             if (slot === "itLoad") return adaptItExcelRows(rows);
             if (slot === "weather") return adaptWeatherExcelRows(rows);
             return adaptCurveExcelRows(rows, slot);

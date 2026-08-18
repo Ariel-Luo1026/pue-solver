@@ -631,7 +631,13 @@
         <details id="advancedInputOverrideDetails" class="advancedDetails" style="margin-top:14px; margin-bottom:0;">
             <summary>Advanced Input Override</summary>
             <div class="fileGrid">
-                <div class="fileSlot"><div class="panelTitle">Manual IT Load Profile Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
+                <div class="fileSlot">
+                    <div class="panelTitle">Annual IT Load Profile</div>
+                    <input id="fileItLoad" type="file" accept=".xlsx,.xls,.csv" />
+                    <div class="hint">Project-level override. Accepted annual lengths: 8760 or 8784 hours. IT and weather lengths must match.</div>
+                    <div id="statusItLoad" class="hint">No user override loaded.</div>
+                    <div id="itLoadProfileStatus" class="hint" style="margin-top:8px;">IT Load Profile Not Ready</div>
+                </div>
                 <div class="fileSlot"><div class="panelTitle">Manual Weather File Override</div><div class="hint">Future placeholder for manual EPW upload and weather override; not connected in this phase.</div></div>
                 <div class="fileSlot"><div class="panelTitle">Custom Equipment Curve Override</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
                 <div class="fileSlot"><div class="panelTitle">Debug Input</div><div class="hint">Reserved for future engineering debugging; not connected in this phase.</div></div>
@@ -744,6 +750,17 @@
             <details id="engineeringDiagnostics" style="margin-top:20px;">
                 <summary style="cursor:pointer; font-weight:700;">Engineering Diagnostics / Detailed Results</summary>
                 <div style="margin-top:12px;">
+            <div class="panel" id="timeAlignmentAuditPanel" style="margin-bottom:20px;">
+                <div class="panelTitle">IT / Weather Alignment Audit</div>
+                <div id="timeAlignmentAuditSummary" class="hint" style="margin-top:8px;"></div>
+                <div id="timeAlignmentAuditPreview" style="margin-top:10px; overflow-x:auto;"></div>
+                <div class="toolbar" style="margin-top:10px;">
+                    <label class="muted">Inspect Annual Row <input id="timeAlignmentAuditRowInput" type="number" min="1" step="1" style="width:110px;" /></label>
+                    <button class="secondaryButton" id="btnInspectTimeAlignment" type="button">Inspect Row</button>
+                    <button class="secondaryButton" id="btnExportTimeAlignmentCsv" type="button" disabled>Export Alignment CSV</button>
+                </div>
+                <div id="timeAlignmentAuditLookup" class="hint" style="margin-top:10px;"></div>
+            </div>
             <div class="panel" id="pueContributionSummaryPanel" style="display:none; margin-bottom:20px;">
                 <div class="panelTitle">PUE Contribution Summary</div>
                 <div id="pueContributionSummaryBody" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:12px;"></div>
