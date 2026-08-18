@@ -2429,7 +2429,11 @@ def compute_pue_project(input_obj):
 
         # Simplified variable loads (pumps, fans, etc.)
         pumps_kw = 0.01 * it_kw  # 1% of IT load
-        from pump_load_framework import PUMP_LOAD_RATIO_BASIS, resolve_pump_reference_capacity
+        from pump_load_framework import (
+            COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS,
+            PUMP_LOAD_RATIO_BASIS,
+            resolve_pump_reference_capacity,
+        )
         chw_pump_reference_capacity_kw, chw_pump_reference_capacity_source = resolve_pump_reference_capacity(
             equipment_metadata=pumps_cfg.get("equipment_metadata"),
             cooling_unit_capacity_kW=cooling_unit_capacity_kw,
@@ -2438,7 +2442,11 @@ def compute_pue_project(input_obj):
         pump_required_load_per_unit_kw = cooling_load_kw / pump_active_unit_count if pump_active_unit_count > 0 else 0.0
         pump_load_ratio_raw = pump_required_load_per_unit_kw / chw_pump_reference_capacity_kw
         pump_load_ratio = pump_load_ratio_raw
-        chw_pump_load_ratio_basis = PUMP_LOAD_RATIO_BASIS
+        chw_pump_load_ratio_basis = (
+            COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS
+            if chw_pump_reference_capacity_source == "cooling_unit_rated_capacity_kW"
+            else PUMP_LOAD_RATIO_BASIS
+        )
         chw_pump_load_ratio_warning = None
         chw_pump_power_per_unit_kw = 0.0
         cw_pump_power_per_unit_kw = 0.0
@@ -3257,6 +3265,19 @@ def compute_pue_project(input_obj):
             "pump_load_ratio_basis": chw_pump_load_ratio_basis,
             "chw_pump_load_ratio_basis": chw_pump_load_ratio_basis,
             "chw_pump_reference_capacity_kW": chw_pump_reference_capacity_kw,
+            "chw_pump_reference_capacity_source": chw_pump_reference_capacity_source,
+            "chw_pump_reference_capacity_basis": (
+                "Cooling Unit Rated Design Capacity"
+                if chw_pump_reference_capacity_source == "cooling_unit_rated_capacity_kW"
+                else chw_pump_reference_capacity_source
+            ),
+            "chw_pump_design_basis_limitation": (
+                "CHW Pump load-ratio normalization currently uses the configured cooling-unit rated design "
+                "capacity as the design reference. This is an engineering assumption pending vendor confirmation "
+                "of pump design flow, head, water-side DeltaT, and performance curve data."
+                if chw_pump_reference_capacity_source == "cooling_unit_rated_capacity_kW"
+                else None
+            ),
             "peak_design_required_capacity_per_acc_unit_kW": peak_design_required_capacity_per_acc_unit_kw,
             "chw_pump_load_ratio_warning": chw_pump_load_ratio_warning,
             "chw_pump_power_per_unit_kW": chw_pump_power_per_unit_kw,

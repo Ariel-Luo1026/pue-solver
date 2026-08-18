@@ -3196,6 +3196,11 @@ function buildHtmlReportFromSections(context) {
     const annualEnergyBreakdown = report.annual_energy_breakdown || {};
     const pumpRows = hourly.filter(row => Number.isFinite(Number(row.pump_load_ratio_raw)));
     const pumpReference = pumpRows[0]?.pump_reference_capacity_per_unit_kW;
+    const pumpReferenceSource = pumpRows[0]?.chw_pump_reference_capacity_source || pumpRows[0]?.pump_reference_capacity_source;
+    const pumpReferenceBasis = pumpRows[0]?.chw_pump_reference_capacity_basis ||
+        (pumpReferenceSource === "cooling_unit_rated_capacity_kW" ? "Cooling Unit Rated Design Capacity" : pumpReferenceSource);
+    const pumpLoadRatioBasis = pumpRows[0]?.chw_pump_load_ratio_basis || pumpRows[0]?.pump_load_ratio_basis;
+    const pumpDesignBasisLimitation = pumpRows[0]?.chw_pump_design_basis_limitation;
     const pumpActiveCount = pumpRows[0]?.pump_active_unit_count ?? pumpRows[0]?.active_pump_units;
     const pumpMaxRawRatio = pumpRows.length ? Math.max(...pumpRows.map(row => Number(row.pump_load_ratio_raw))) : null;
     const pumpOverloadHours = pumpRows.filter(row => row.pump_overload || row.pump_clamped_high).length;
@@ -3512,10 +3517,10 @@ function buildHtmlReportFromSections(context) {
 <section>
     <h3>Simulation Methodology</h3>
     <p>Hourly cooling loads combine IT load, solar heat gain, and other auxiliary heat gain. Equipment power is obtained from the selected Configuration Library performance lookup, and annual PUE is calculated from annual facility and IT energy.</p>
-    <p>CHW Pump Load Ratio = Cooling Load per Active CHW Pump ÷ Fixed Single-CHW-Pump Reference Capacity.</p>
+    <p>CHW Pump Load Ratio = Cooling Load per Active Unit / Cooling Unit Rated Design Capacity.</p>
     <p>CW Pump Load Ratio = Heat Rejection Load per Active CW Pump ÷ Fixed Single-CW-Pump Reference Capacity.</p>
     <p>Normal and Failure use the same Solver_Curve for each pump type; only scenario-specific active pump counts change.</p>
-    <p>Each hourly ratio uses a fixed single-pump reference capacity; it is not derived from peak load.</p>
+    <p>The current CHW Pump reference is the configured modular cooling-unit rated design capacity, not the ACC performance-envelope maximum.</p>
     <p>Dry Cooler Power Model: Single-unit dry-cooler input power is determined from outdoor dry-bulb temperature using the DRYCOOLER_6 Solver_Curve. Total dry-cooler power equals per-unit curve power multiplied by active dry-cooler count.</p>
     <p>Engineering temperature-only power estimate based on the supplied dry-cooler capacity data and fan-affinity assumptions.</p>
     ${Number.isFinite(Number(annual.dry_cooler_curve_min_temperature_C)) ? `<h3>Dry Cooler Power Diagnostics</h3><table><tbody>${tableRows([
@@ -3529,13 +3534,17 @@ function buildHtmlReportFromSections(context) {
         ["Temperature Clamp Hours", esc(annual.dry_cooler_temperature_clamp_hours)]
     ])}</tbody></table>` : ""}
     ${pumpRows.length ? `<h3>Pump Annual Diagnostics</h3><table><tbody>${tableRows([
-        ["Fixed Reference Capacity per Pump", reportValue(pumpReference, " kW", 1)],
+        ["CHW Pump Reference Capacity", reportValue(pumpReference, " kW", 1)],
+        ["CHW Pump Reference Source", esc(pumpReferenceBasis || pumpReferenceSource || "N/A")],
+        ["CHW Pump Load Ratio Basis", pumpLoadRatioBasis === "cooling_load_per_active_unit_over_cooling_unit_rated_capacity"
+            ? "Cooling Load per Active Unit / Cooling Unit Rated Design Capacity"
+            : esc(pumpLoadRatioBasis || "N/A")],
         ["Active Pump Count", esc(pumpActiveCount)],
         ["Maximum Raw Pump Load Ratio", reportValue(pumpMaxRawRatio, "", 3)],
         ["Overload Hours", esc(pumpOverloadHours)],
         ["Clamped Hours", esc(pumpClampedHours)],
         ["Annual Pump Energy (CHW)", reportValue(annual.annual_chw_pump_energy_kWh ?? annual.annual_pump_energy_kWh, " kWh", 1)]
-    ])}</tbody></table>` : ""}
+    ])}</tbody></table>${pumpDesignBasisLimitation ? `<div class="note">${esc(pumpDesignBasisLimitation)}</div>` : ""}` : ""}
     ${cwPumpRows.length ? `<h3>CW Pump Annual Diagnostics</h3><table><tbody>${tableRows([
         ["Fixed Reference Capacity per CW Pump", reportValue(cwPumpReference, " kW", 1)],
         ["Active CW Pump Count", esc(cwPumpActiveCount)],
@@ -7060,6 +7069,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
     const annual = outObj.annual_results || {};
     const project = outObj.project || {};
     const hourly = Array.isArray(outObj.hourly_results) ? outObj.hourly_results : [];
+    const chwPumpDiagnostic = hourly.find(row => Number.isFinite(Number(row.chw_pump_reference_capacity_kW ?? row.pump_reference_capacity_per_unit_kW)));
     const context = document.getElementById("engineeringContextStrip");
     const scenario = project.scenario_name || outObj.scenario_name || report?.operating_scenario?.scenario_name || "N/A";
     if (context) context.innerHTML = engineeringContextRows(outObj, report, configurationLibraryData || {})
@@ -7097,6 +7107,16 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
         ["ACC Maximum COP", annual.max_acc_cop],
         ["Maximum ACC Power", Number.isFinite(Number(annual.max_acc_power_kW)) ? `${fmtNumber(annual.max_acc_power_kW, 3)} kW` : null],
         ["ACC Capacity-Clamped Hours", annual.acc_capacity_clamped_hours],
+        ["CHW Pump Reference Capacity", Number.isFinite(Number(chwPumpDiagnostic?.chw_pump_reference_capacity_kW ?? chwPumpDiagnostic?.pump_reference_capacity_per_unit_kW))
+            ? `${fmtNumber(chwPumpDiagnostic?.chw_pump_reference_capacity_kW ?? chwPumpDiagnostic?.pump_reference_capacity_per_unit_kW, 1)} kW`
+            : null],
+        ["CHW Pump Reference Basis", chwPumpDiagnostic?.chw_pump_reference_capacity_basis ||
+            ((chwPumpDiagnostic?.chw_pump_reference_capacity_source || chwPumpDiagnostic?.pump_reference_capacity_source) === "cooling_unit_rated_capacity_kW"
+                ? "Cooling Unit Rated Design Capacity"
+                : null)],
+        ["CHW Pump Load Ratio Basis", chwPumpDiagnostic?.chw_pump_load_ratio_basis === "cooling_load_per_active_unit_over_cooling_unit_rated_capacity"
+            ? "Cooling Load per Active Unit / Cooling Unit Rated Design Capacity"
+            : chwPumpDiagnostic?.chw_pump_load_ratio_basis],
         ["Maximum CHW Pump Load Ratio", maximumHourlyValue("pump_load_ratio_raw")],
         ["Maximum CHW Pump Power", Number.isFinite(maximumHourlyValue("pump_power_kW")) ? `${fmtNumber(maximumHourlyValue("pump_power_kW"), 3)} kW` : null],
         ["Maximum CW Pump Load Ratio", maximumHourlyValue("cw_pump_load_ratio_raw")],
@@ -7111,6 +7131,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
             ["Average Efficiency", Number.isFinite(Number(annual.average_engine_efficiency)) ? fmtNumber(annual.average_engine_efficiency, 3) : null],
             ["Annual Waste Heat", engineeringEnergyDisplay(annual.annual_engine_waste_heat_kWh)]
         ].filter(([, value]) => value !== null && value !== undefined && value !== "N/A").map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join("")}</tbody></table>` : ""}
+        ${chwPumpDiagnostic?.chw_pump_design_basis_limitation ? `<div class="muted">${esc(chwPumpDiagnostic.chw_pump_design_basis_limitation)}</div>` : ""}
         <div class="muted">ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.</div>`;
 }
 

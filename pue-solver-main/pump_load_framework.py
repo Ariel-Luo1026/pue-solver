@@ -1,6 +1,9 @@
 """Shared single-curve pump load and power calculation."""
 
 PUMP_LOAD_RATIO_BASIS = "hourly cooling load / (active pump count * fixed single-pump reference capacity)"
+COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS = (
+    "cooling_load_per_active_unit_over_cooling_unit_rated_capacity"
+)
 
 
 class PumpLoadFrameworkError(ValueError):
