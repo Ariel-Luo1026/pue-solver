@@ -73,8 +73,8 @@ class ReportCompletenessPolishTest(unittest.TestCase):
         self.assertIn("Design Outdoor Dry-Bulb Temperature, deg C", report_source)
         self.assertIn("peak.peak_design_outdoor_dry_bulb_C", report_source)
         self.assertIn("Annual EPW Peak Dry-Bulb Temperature", report_source)
-        self.assertIn("Annual Simulation Weather Source", report_source)
-        self.assertIn("EPW / 8760-hour TMY data", report_source)
+        self.assertIn("Weather Data Source", report_source)
+        self.assertIn("Project EPW Weather File", report_source)
         self.assertIn("Peak Design Weather Source", report_source)
         self.assertIn("ASHRAE 20-year extreme outdoor dry-bulb design condition", report_source)
 

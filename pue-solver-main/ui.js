@@ -401,7 +401,7 @@ function dispatchReportProfile(topologyId, solverResult = {}) {
     }
     const operatingScenario = buildOperatingScenarioSummary(solverResult);
     const capacityValidation = buildCapacityValidationSummary(topologyId, solverResult, operatingScenario);
-    const annualEnergyBreakdown = buildAnnualEnergyBreakdown(solverResult);
+    const annualEnergyBreakdown = topologyAwareAnnualEnergyBreakdown(topologyId, buildAnnualEnergyBreakdown(solverResult));
     const reportSections = buildReportSections(topologyId, solverResult, profile, operatingScenario, capacityValidation, annualEnergyBreakdown);
     const visualizationData = buildReportVisualizationData(hourly);
     const equipmentCurveRegister = buildEquipmentCurveRegister(solverResult);
@@ -533,6 +533,17 @@ function buildAnnualEnergyBreakdown(solverResult = {}) {
         PUE: annual.annual_average_PUE,
         warnings: []
     };
+}
+
+function topologyAwareAnnualEnergyBreakdown(topologyId, breakdown = {}) {
+    const topology = String(topologyId || "").toLowerCase();
+    const allowed = topology === "acc_gas_engine_cdu"
+        ? new Set(["ACC", "CHW_PUMP", "CDU", "RTC", "MAU", "INDOOR_EQUIPMENT", "ENGINE_RADIATOR", "OTHER_ELECTRICAL_AUXILIARY", "ELECTRICAL_LOSS"])
+        : topology === "chiller_dry_cooler"
+            ? new Set(["CHILLER", "DRY_COOLER", "CHW_PUMP", "CW_PUMP", "OTHER_ELECTRICAL_AUXILIARY", "ELECTRICAL_LOSS"])
+            : null;
+    if (!allowed) return breakdown;
+    return { ...breakdown, components: Object.fromEntries(Object.entries(breakdown.components || {}).filter(([key]) => allowed.has(String(key).toUpperCase()))) };
 }
 
 function buildOperatingScenarioSummary(solverResult = {}) {
@@ -1924,6 +1935,14 @@ function temperatureDistributionTableHtml(distribution, maxRows = Infinity) {
     }</tbody></table>`;
 }
 
+function temperatureDistributionChartHtml(distribution) {
+    if (!distribution || !Array.isArray(distribution.rows) || !distribution.rows.length) return "";
+    return `<div class="card"><h3>Annual Outdoor Temperature Distribution</h3>${svgBarChart(
+        distribution.rows.map(row => ({ label: row.label, value: row.hours, color: REPORT_COLORS.temperature })),
+        { yLabel: "Annual Hours", showValueLabels: false, barWidthScale: 0.92 }
+    )}<div class="caption">Outdoor dry-bulb temperature bins (°C); ${esc(distribution.totalHours)} annual weather hours.</div></div>`;
+}
+
 function renderTemperatureDistributionPanel() {
     const panel = document.getElementById("temperatureDistributionPanel");
     const summary = document.getElementById("temperatureDistributionSummary");
@@ -3135,16 +3154,21 @@ function epwChartSection(weatherData) {
     `).join("")}</div>`;
 }
 
-function formulasHtml() {
+function formulasHtml(topologyId = "") {
+    const isChiller = String(topologyId).toLowerCase() === "chiller_dry_cooler";
     const formulas = [
         ["Annual PUE", `<span class="math"><i>PUE</i><sub>annual</sub> = <span class="frac"><span>∑<sub>h=1</sub><sup>N</sup> <i>P</i><sub>facility,h</sub></span><span>∑<sub>h=1</sub><sup>N</sup> <i>P</i><sub>IT,h</sub></span></span></span>`],
-        ["Facility Power Balance", `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>chiller,h</sub> + <i>P</i><sub>drycooler,h</sub> + <i>P</i><sub>pump,h</sub> + <i>P</i><sub>fan,h</sub> + <i>P</i><sub>aux,h</sub></span>`],
+        ["Facility Power Balance", isChiller
+            ? `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>chiller,h</sub> + <i>P</i><sub>drycooler,h</sub> + <i>P</i><sub>CHW pump,h</sub> + <i>P</i><sub>CW pump,h</sub> + <i>P</i><sub>aux,h</sub></span>`
+            : `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>ACC,h</sub> + <i>P</i><sub>CHW pump,h</sub> + <i>P</i><sub>indoor,h</sub> + <i>P</i><sub>radiator,h</sub> + <i>P</i><sub>aux,h</sub></span>`],
         ["UPS Efficiency Loss", `<span class="math"><i>P</i><sub>UPS,loss</sub> = <i>P</i><sub>IT</sub> · (η<sub>UPS</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
         ["Transformer Loss", `<span class="math"><i>P</i><sub>TR,loss</sub> = <i>P</i><sub>out</sub> · (η<sub>TR</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
         ["Cooling Load Assembly", `<span class="math"><i>Q</i><sub>cooling,h</sub> = <i>Q</i><sub>IT,h</sub> + <i>Q</i><sub>solar,h</sub> + <i>Q</i><sub>other_aux,h</sub></span>`],
         ["Equipment Performance Lookup", `<span class="math"><i>P</i><sub>equipment,h</sub> = <i>f</i>(<i>T</i><sub>outdoor,h</sub>, <i>load</i><sub>h</sub>, <i>Solver_Curve</i>)</span>`],
-        ["Dry Cooler Leaving Water", `<span class="math"><i>T</i><sub>LWT,h</sub> = <i>T</i><sub>OA,h</sub> + Δ<i>T</i><sub>approach</sub></span>`],
-        ["Affinity Law", `<span class="math"><i>P</i><sub>variable</sub> = <i>P</i><sub>rated</sub> · <i>s</i><sup>3</sup></span>`],
+        ...(isChiller ? [
+            ["Dry Cooler Leaving Water", `<span class="math"><i>T</i><sub>LWT,h</sub> = <i>T</i><sub>OA,h</sub> + Δ<i>T</i><sub>approach</sub></span>`],
+            ["Affinity Law", `<span class="math"><i>P</i><sub>variable</sub> = <i>P</i><sub>rated</sub> · <i>s</i><sup>3</sup></span>`]
+        ] : []),
         ["Peak Facility Hour", `<span class="math"><i>h</i><sub>peak</sub> = arg max<sub>h</sub>(<i>P</i><sub>facility,h</sub>)</span>`]
     ];
     return `<div class="formulaGrid">${formulas.map(([name, eq]) => `
@@ -3188,6 +3212,9 @@ function buildHtmlReportFromSections(context) {
         pickHourlyValue(row, ["it_load_kW", "IT_load_kW"]),
         pickHourlyValue(row, ["facility_power_kW", "total_facility_power_kW"])
     ]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+    const itLoadValues = facilityVsIt.map(([itLoad]) => itLoad);
+    const itLoadVariation = itLoadValues.length ? Math.max(...itLoadValues) - Math.min(...itLoadValues) : 0;
+    const hasVariableItLoad = itLoadValues.length > 1 && itLoadVariation > 1e-6;
     const monthlyPue = report.visualization_data.monthly_pue;
     const reportCurves = collectReportCurves();
     const curveGroups = groupReportCurves(reportCurves);
@@ -3213,8 +3240,7 @@ function buildHtmlReportFromSections(context) {
     const cwPumpClampedHours = cwPumpRows.filter(row => row.cw_pump_load_ratio_clamped_low || row.cw_pump_load_ratio_clamped_high).length;
     const energyRows = [
         ["IT Energy", annualEnergyBreakdown.annual_it_energy_kWh ?? annual.annual_IT_energy_kWh],
-        ...Object.entries(annualEnergyBreakdown.components || {}).map(([key, data]) => [reportKeyLabel(key), data?.energy_kWh]),
-        ["Facility Energy", annualEnergyBreakdown.annual_facility_energy_kWh ?? annual.annual_facility_energy_kWh]
+        ...Object.entries(annualEnergyBreakdown.components || {}).map(([key, data]) => [reportKeyLabel(key), data?.energy_kWh])
     ].filter(([, value]) => Number(value) > 0);
     const energyChart = energyRows.length ? svgBarChart(energyRows.map(([label, value]) => ({
         label: label.replace(" Energy", "").replace("Electrical ", "Elec "),
@@ -3222,29 +3248,37 @@ function buildHtmlReportFromSections(context) {
         color: reportEnergyColor(label)
     })), { yLabel: "MWh", showValueLabels: true, valueLabelDigits: 0 }) : "";
     const annualResultCharts = [
-        ...(energyChart ? [["Annual Energy Breakdown", energyChart]] : []),
+        ...(energyChart ? [["Annual Facility Energy Composition", energyChart]] : []),
         ...(monthlyPue.length ? [["Monthly Average PUE", svgBarChart(monthlyPue.map(row => ({ label: row.month, value: row.average_pue, color: REPORT_COLORS.pueLine })), { yLabel: "PUE", yTickCount: 5, yTickDigits: 2, barWidthScale: 0.86 })]] : [])
     ];
     const operatingCharts = [
         ...(pueSeries.length > 1 ? [["PUE Hourly Profile", svgLineChart(pueSeries, { yLabel: "PUE", xLabel: "Hour of Year", color: REPORT_COLORS.pueLine })]] : []),
-        ...(facilityVsIt.length > 1 ? [["Facility Power vs IT Load", svgXYLineChart(facilityVsIt, { xLabel: "IT Load (kW)", yLabel: "Facility Power (kW)", color: REPORT_COLORS.coolingEnergy })]] : []),
+        ...(hasVariableItLoad ? [["Facility Power vs IT Load", svgXYLineChart(facilityVsIt, { xLabel: "IT Load (kW)", yLabel: "Facility Power (kW)", color: REPORT_COLORS.coolingEnergy })]] : []),
         ...(report.visualization_data.temperature_vs_pue.length > 1 ? [["Outdoor Temperature vs PUE", svgXYLineChart(
             report.visualization_data.temperature_vs_pue.map(row => [row.temperature_C, row.pue]),
             { xLabel: "Outdoor Dry Bulb (deg C)", yLabel: "PUE", color: REPORT_COLORS.pueLine }
         )]] : [])
     ];
     const reportTitle = "Annual Data Center PUE Performance Assessment";
-    const generated = new Date().toISOString();
-    const coolingSystemDisplay = report.cooling_system_type || context.input?.cooling_system_type || "N/A";
+    const generated = new Date().toLocaleString(undefined, { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const coolingTechnology = solverTopology === "acc_gas_engine_cdu" ? "ACC" : solverTopology === "chiller_dry_cooler" ? "Chiller + Dry Cooler" : (report.cooling_system_type || context.input?.cooling_system_type || "N/A");
+    const powerSource = context.input?.power_source || output.power_source || (solverTopology === "acc_gas_engine_cdu" ? "Gas Engine" : solverTopology === "chiller_dry_cooler" ? "Grid" : "N/A");
+    const systemArchitecture = solverTopology === "acc_gas_engine_cdu" ? "ACC + Gas Engine + CDU" : solverTopology === "chiller_dry_cooler" ? "Chiller + Dry Cooler + Grid" : (report.cooling_system_type || context.input?.cooling_system_type || "N/A");
     const scenarioName = output.project?.scenario_name || report.operating_scenario?.scenario_name || "Normal";
     const peakSummary = report.visualization_data.peak_summary;
-    const peakDemandBreakdown = buildPeakDemandBreakdown(output, peakSummary);
-    const reportAnnualEnergyRows = annualEquipmentEnergyRows(annual);
+    const peakDemandBreakdown = buildPeakDemandBreakdown(output, peakSummary, solverTopology);
+    const reportAnnualEnergyRows = annualEquipmentEnergyRows(annual, solverTopology);
     const reportContextRows = engineeringContextRows(output, report, context.input || {});
     const alignmentAudit = getTimeAlignmentAudit(context.input?.project?.it_load || null, standardDataFiles.weather);
     const alignmentSummary = alignmentAudit.summary;
     const alignmentFirst = alignmentAudit.rows[0];
     const alignmentLast = alignmentAudit.rows[alignmentAudit.rows.length - 1];
+    const alignmentHours = alignmentSummary?.annual_rows ?? hourly.length;
+    const itSequenceStatus = alignmentSummary?.hour_sequence_validation === "ERROR" ? "ERROR" : "PASS";
+    const weatherSequenceStatus = Number(alignmentHours) === Number(getWeatherHours(weather) || alignmentHours) ? "PASS" : "ERROR";
+    const hourlyAlignmentStatus = Number(alignmentSummary?.alignment_errors || 0) === 0 ? "PASS" : "ERROR";
+    const weatherStationCandidate = weatherSource.station_name || weatherSource.station || weather.metadata?.station_name || weather.metadata?.station;
+    const weatherStation = weatherStationCandidate && String(weatherStationCandidate).toLowerCase() !== "loaded_weather" ? weatherStationCandidate : "Project EPW Weather File";
     const peakDesignSource = String(peak.peak_design_weather_source || "").trim();
     const peakDesignDryBulbAvailable = peak.peak_design_outdoor_dry_bulb_C != null
         && peak.peak_design_outdoor_dry_bulb_C !== ""
@@ -3277,21 +3311,29 @@ function buildHtmlReportFromSections(context) {
     const peakDesignFacilityPower = peak.peak_design_facility_electrical_demand_kW
         ?? peak.peak_design_total_facility_power_kW;
     const peakDesignEquipmentRows = [
-        ["ACC Total Power, kW", peak.peak_design_ACC_power_kW],
+        ...(solverTopology === "chiller_dry_cooler" ? [
         ["Chiller Total Power, kW", peak.peak_design_chiller_power_kW],
         ["Chiller COP", peak.peak_design_chiller_COP],
         ["Dry Cooler Total Power, kW", peak.peak_design_dry_cooler_power_kW],
+        ["CW Pump Power, kW", peak.peak_design_CW_pump_power_kW]
+        ] : [["ACC Total Power, kW", peak.peak_design_ACC_power_kW]]),
         ["CHW Pump Power, kW", peak.peak_design_CHW_pump_power_kW],
-        ["CW Pump Power, kW", peak.peak_design_CW_pump_power_kW],
-        ["RTC Power, kW", peak.peak_design_RTC_power_kW],
-        ["CDU Power, kW", peak.peak_design_CDU_power_kW],
-        ["MAU Power, kW", peak.peak_design_MAU_power_kW],
-        ["Engine Radiator Power, kW", peak.peak_design_engine_radiator_power_kW],
+        ...(solverTopology === "acc_gas_engine_cdu" ? [
+            ["RTC Power, kW", peak.peak_design_RTC_power_kW],
+            ["CDU Power, kW", peak.peak_design_CDU_power_kW],
+            ["MAU Power, kW", peak.peak_design_MAU_power_kW],
+            ["Engine Radiator Power, kW", peak.peak_design_engine_radiator_power_kW]
+        ] : []),
         ["Other Active Equipment Power, kW", peak.peak_design_other_electrical_auxiliary_power_kW],
         ["Electrical Loss, kW", peak.peak_design_electrical_loss_kW]
     ].filter(([, value]) => Number.isFinite(Number(value)))
         .map(([label, value]) => [label, reportValue(value, "", label === "Chiller COP" ? 3 : 1)]);
-    const importedCurveRows = reportCurves.map(curve => [
+    const importedCurveRows = reportCurves.filter(curve => {
+        const category = String(curve.category || "").toLowerCase();
+        if (solverTopology === "acc_gas_engine_cdu") return !/chiller|dry cooler|cw pump/.test(category);
+        if (solverTopology === "chiller_dry_cooler") return !/\bacc\b|cdu|rtc|mau|engine radiator/.test(category);
+        return true;
+    }).map(curve => [
         curve.category,
         esc(curve.curveId),
         esc(curve.sourceFile),
@@ -3300,7 +3342,13 @@ function buildHtmlReportFromSections(context) {
             : `${esc(curve.xAxis)} ${reportValue(curve.xMin, "", 2)}-${reportValue(curve.xMax, "", 2)}; ${esc(curve.yAxis)} ${reportValue(curve.yMin, "", 2)}-${reportValue(curve.yMax, "", 2)}`,
         esc(curve.pointCount)
     ]);
-    const libraryCurveRows = report.equipment_curve_register.map(curve => [
+    const curveApplicable = curve => {
+        const family = equipmentRoleFamily(curve.equipment_id || curve.category);
+        if (solverTopology === "acc_gas_engine_cdu") return !["chiller", "dry_cooler", "cw_pump"].includes(family);
+        if (solverTopology === "chiller_dry_cooler") return !["acc", "cdu", "rtc", "mau", "engine_radiator"].includes(family);
+        return true;
+    };
+    const libraryCurveRows = report.equipment_curve_register.filter(curveApplicable).map(curve => [
         esc(curve.equipment_id),
         esc(curve.curve_source),
         esc(curve.curve_type),
@@ -3369,9 +3417,9 @@ function buildHtmlReportFromSections(context) {
     <div class="pageHeaderLine">JUNO | Cooling System | Annual PUE Assessment</div>
     <h1>${esc(reportTitle)}</h1>
     <div class="subtitle">Project: JUNO</div>
-    <div class="subtitle">Cooling Architecture: ${esc(coolingSystemDisplay)}</div>
+    <div class="subtitle">System Architecture: ${esc(systemArchitecture)}</div>
     <div class="subtitle">Scenario: ${esc(scenarioName)}</div>
-    <div class="subtitle">Generated: ${esc(generated)}</div>
+    <div class="subtitle">Report Generated: ${esc(generated)}</div>
 </header>
 <section>
     <h2>1. Engineering Summary</h2>
@@ -3388,30 +3436,26 @@ function buildHtmlReportFromSections(context) {
     <div class="note">Annual Observed Peak Facility Demand is the maximum facility electrical demand observed during the annual hourly simulation using the IT load profile and EPW weather data. Peak Design Facility Demand is the facility electrical demand at 100% design IT load and the selected ASHRAE peak design outdoor condition.</div>
     ${peakDesignPueAvailable ? "" : `<div class="note">Peak Design PUE is unavailable because no valid peak design condition result was produced. Maximum Hourly PUE is reported separately and has not been substituted.</div>`}
     <h3>Configuration Context</h3>
-    <table><tbody>${tableRows(reportContextRows.map(([label, value]) => [label, esc(value)]))}</tbody></table>
+    <table><tbody>${tableRows(reportContextRows.filter(([label]) => ["Cooling Unit Capacity", "Scenario", "Design IT Capacity"].includes(label)).map(([label, value]) => [label, esc(value)]))}</tbody></table>
     <table><tbody>${tableRows([
         ["Site Location", esc(projectInfo.location || weatherSource.project_location || "N/A")],
-        ["Cooling System Type", esc(coolingSystemDisplay)],
-        ["Cooling Architecture", esc(solverTopology)],
-        ["Report Configuration", esc(report.profile_id || "generic_pue")],
-        ["Weather Source", esc(weatherSource.source || "N/A")]
+        ["Cooling Technology", esc(coolingTechnology)],
+        ["Power Source", esc(powerSource)],
+        ["System Architecture", esc(systemArchitecture)],
+        ["Weather Station", esc(weatherStation)],
+        ["Weather Data Source", "EPW"],
+        ["Annual Weather Hours", esc(getWeatherHours(weather) || hourly.length || "Unavailable")]
     ])}</tbody></table>
 </section>
 <section>
-    <h2>IT / Weather Time Alignment</h2>
+    <h2>Annual Data Alignment</h2>
     ${alignmentSummary ? `<table><tbody>${tableRows([
-        ["Annual Rows", esc(alignmentSummary.annual_rows)],
-        ["IT Load Time Basis", esc(alignmentSummary.it_time_basis)],
-        ["Hour Sequence Validation", esc(alignmentSummary.hour_sequence_validation)],
-        ["Calendar Time Basis", esc(alignmentSummary.calendar_time_basis)],
-        ["Calendar Sequence Validation", esc(alignmentSummary.calendar_sequence_validation)],
-        ["Calendar Hour Convention", esc(alignmentSummary.calendar_hour_convention)],
-        ["IT / Weather Calendar Alignment", esc(alignmentSummary.weather_alignment)],
-        ["EPW Hour Convention", esc(alignmentSummary.epw_hour_convention)],
-        ["First Row Alignment", esc(alignmentFirst ? alignmentAuditRowCells(alignmentFirst).join(" | ") : "N/A")],
-        ["Last Row Alignment", esc(alignmentLast ? alignmentAuditRowCells(alignmentLast).join(" | ") : "N/A")],
+        ["Annual Simulation Hours", esc(alignmentHours)],
+        ["IT Load Sequence", itSequenceStatus],
+        ["Weather Sequence", weatherSequenceStatus],
+        ["IT / Weather Hourly Alignment", hourlyAlignmentStatus],
         ["Alignment Errors", esc(alignmentSummary.alignment_errors)]
-    ])}</tbody></table><div class="note">Full hourly alignment audit available through CSV export.</div>` : '<div class="empty">Time alignment audit unavailable.</div>'}
+    ])}</tbody></table><div class="note">IT load and EPW weather data are aligned on an Hour-of-Year basis for all annual simulation hours.</div>` : '<div class="empty">Time alignment audit unavailable.</div>'}
 </section>
 <section>
     <h2>2. Energy &amp; PUE Summary</h2>
@@ -3419,9 +3463,10 @@ function buildHtmlReportFromSections(context) {
         ["Annual Average PUE", reportValue(annual.annual_average_PUE, "", 3)],
         ["Annual IT Energy", engineeringEnergyDisplay(annual.annual_IT_energy_kWh)],
         ["Annual Facility Energy", engineeringEnergyDisplay(annual.annual_facility_energy_kWh)],
-        [annualFacilityEnergySummary(outObj).label, engineeringEnergyDisplay(annualFacilityEnergySummary(outObj).energy_kWh)],
+        [annualFacilityEnergySummary(output).label, engineeringEnergyDisplay(annualFacilityEnergySummary(output).energy_kWh)],
         ["Annual Electrical Distribution Loss", engineeringEnergyDisplay(annual.annual_electrical_loss_kWh)]
     ])}</tbody></table>
+    <div class="note">Annual Cooling &amp; MEP Terminal Energy includes cooling equipment, pumps, airflow and indoor cooling auxiliaries, other modeled MEP loads, and Engine Radiator where applicable. It excludes IT energy and upstream electrical distribution losses.</div>
 </section>
 <section>
     <h2>3. Peak Facility Demand</h2>
@@ -3437,11 +3482,12 @@ function buildHtmlReportFromSections(context) {
     ])}</tbody></table>
 </section>
 <section>
-    <h2>4. Annual Equipment Energy Breakdown</h2>
+    <h2>4. Annual Facility Energy Composition</h2>
     <table><thead><tr><th>Component</th><th>Annual Energy</th><th>% of Facility Energy</th></tr></thead><tbody>${[
         ...reportAnnualEnergyRows,
         ["Total Facility Energy", annual.annual_facility_energy_kWh]
     ].map(([label, energy]) => `<tr><th>${esc(label)}</th><td>${engineeringEnergyDisplay(energy)}</td><td>${Number(annual.annual_facility_energy_kWh) > 0 ? reportValue(Number(energy) / Number(annual.annual_facility_energy_kWh) * 100, "%", 2) : "N/A"}</td></tr>`).join("")}</tbody></table>
+    <div class="note">Total Facility Energy is the reconciled total and is shown separately from the component loads; it is not an additional energy component.</div>
 </section>
 <section>
     <h2>5. Peak Demand Breakdown</h2>
@@ -3463,7 +3509,9 @@ function buildHtmlReportFromSections(context) {
     <div class="note">ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.</div>
 </section>
 <section>
-    <h2>7. Engineering / Calculation Notes</h2>
+    <h2>7. Annual Performance Charts</h2>
+    ${annualResultCharts.length ? `<div class="grid">${annualResultCharts.map(([title, chart]) => `<div class="card"><h3>${esc(title)}</h3>${chart}</div>`).join("")}</div>` : ""}
+    <h2>Appendix A — Input Assumptions</h2>
     <h3>Weather and Input Data</h3>
     <div class="grid">
         <div class="card"><h3>Weather Summary</h3><table><tbody>${tableRows([
@@ -3472,7 +3520,8 @@ function buildHtmlReportFromSections(context) {
             ["Dry Bulb Minimum", reportValue(drySummary?.min, " deg C", 1)]
         ])}</tbody></table></div>
         <div class="card"><h3>Weather Source</h3><table><tbody>${tableRows([
-            ["Annual Simulation Weather Source", `EPW / 8760-hour TMY data (${esc(weatherSource.source || "source unavailable")})`],
+            ["Weather Station", esc(weatherStation)],
+            ["Weather Data Source", "EPW"],
             ["EPW File", esc(weatherSource.epw_file || weather.source_file || "N/A")],
             ["Weather Data Period", esc(getWeatherPeriod(weather) || "N/A")]
         ])}</tbody></table></div>
@@ -3499,12 +3548,11 @@ function buildHtmlReportFromSections(context) {
             ? `<div class="note">Peak Design PUE is calculated using the displayed manual-override outdoor dry-bulb design condition and is independent of the maximum dry-bulb temperature contained in the annual EPW weather file.</div>`
             : "")}
     ${peakDesignWarning ? `<div class="note">${peakDesignWarning}</div>` : ""}
-    ${tempDistribution ? temperatureDistributionTableHtml(tempDistribution) : `<div class="empty">Temperature distribution unavailable.</div>`}
+    ${tempDistribution ? temperatureDistributionChartHtml(tempDistribution) : `<div class="empty">Temperature distribution unavailable.</div>`}
     ${epwChartSection(weatherData)}
 </section>
 <section>
     <h3>Detailed Cooling System Performance</h3>
-    ${performanceCards.length ? `<h3>Equipment Performance Summary</h3><div class="grid">${performanceCards.join("")}</div>` : ""}
     <h3>Cooling Load Breakdown</h3>
     <table><tbody>${tableRows([
         ["Annual IT Load", reportValue(coolingLoad.annual_it_load_kWh, " kWh", 3)],
@@ -3518,12 +3566,12 @@ function buildHtmlReportFromSections(context) {
     <h3>Simulation Methodology</h3>
     <p>Hourly cooling loads combine IT load, solar heat gain, and other auxiliary heat gain. Equipment power is obtained from the selected Configuration Library performance lookup, and annual PUE is calculated from annual facility and IT energy.</p>
     <p>CHW Pump Load Ratio = Cooling Load per Active Unit / Cooling Unit Rated Design Capacity.</p>
-    <p>CW Pump Load Ratio = Heat Rejection Load per Active CW Pump ÷ Fixed Single-CW-Pump Reference Capacity.</p>
+    ${solverTopology === "chiller_dry_cooler" ? `<p>CW Pump Load Ratio = Heat Rejection Load per Active CW Pump ÷ Fixed Single-CW-Pump Reference Capacity.</p>` : ""}
     <p>Normal and Failure use the same Solver_Curve for each pump type; only scenario-specific active pump counts change.</p>
     <p>The current CHW Pump reference is the configured modular cooling-unit rated design capacity, not the ACC performance-envelope maximum.</p>
-    <p>Dry Cooler Power Model: Single-unit dry-cooler input power is determined from outdoor dry-bulb temperature using the DRYCOOLER_6 Solver_Curve. Total dry-cooler power equals per-unit curve power multiplied by active dry-cooler count.</p>
-    <p>Engineering temperature-only power estimate based on the supplied dry-cooler capacity data and fan-affinity assumptions.</p>
-    ${Number.isFinite(Number(annual.dry_cooler_curve_min_temperature_C)) ? `<h3>Dry Cooler Power Diagnostics</h3><table><tbody>${tableRows([
+    ${solverTopology === "chiller_dry_cooler" ? `<p>Dry Cooler Power Model: Single-unit dry-cooler input power is determined from outdoor dry-bulb temperature using the configured Solver_Curve. Total dry-cooler power equals per-unit curve power multiplied by active dry-cooler count.</p>
+    <p>Engineering temperature-only power estimate based on the supplied dry-cooler capacity data and fan-affinity assumptions.</p>` : ""}
+    ${solverTopology === "chiller_dry_cooler" && Number.isFinite(Number(annual.dry_cooler_curve_min_temperature_C)) ? `<h3>Dry Cooler Power Diagnostics</h3><table><tbody>${tableRows([
         ["Minimum Curve Temperature", reportValue(annual.dry_cooler_curve_min_temperature_C, " deg C", 1)],
         ["Maximum Curve Temperature", reportValue(annual.dry_cooler_curve_max_temperature_C, " deg C", 1)],
         ["Minimum Curve Power", reportValue(annual.dry_cooler_curve_min_power_kW, " kW", 2)],
@@ -3545,7 +3593,7 @@ function buildHtmlReportFromSections(context) {
         ["Clamped Hours", esc(pumpClampedHours)],
         ["Annual Pump Energy (CHW)", reportValue(annual.annual_chw_pump_energy_kWh ?? annual.annual_pump_energy_kWh, " kWh", 1)]
     ])}</tbody></table>${pumpDesignBasisLimitation ? `<div class="note">${esc(pumpDesignBasisLimitation)}</div>` : ""}` : ""}
-    ${cwPumpRows.length ? `<h3>CW Pump Annual Diagnostics</h3><table><tbody>${tableRows([
+    ${solverTopology === "chiller_dry_cooler" && cwPumpRows.length ? `<h3>CW Pump Annual Diagnostics</h3><table><tbody>${tableRows([
         ["Fixed Reference Capacity per CW Pump", reportValue(cwPumpReference, " kW", 1)],
         ["Active CW Pump Count", esc(cwPumpActiveCount)],
         ["Maximum CW Pump Load Ratio", reportValue(cwPumpMaxRawRatio, "", 3)],
@@ -3553,7 +3601,7 @@ function buildHtmlReportFromSections(context) {
         ["CW Pump Clamped Hours", esc(cwPumpClampedHours)],
         ["Annual CW Pump Energy", reportValue(annual.annual_cw_pump_energy_kWh, " kWh", 1)]
     ])}</tbody></table>` : ""}
-    ${formulasHtml()}
+    ${formulasHtml(solverTopology)}
 </section>
 <section>
     <h3>Detailed Annual Performance Results</h3>
@@ -3567,23 +3615,44 @@ function buildHtmlReportFromSections(context) {
             ["Reported Components", esc(Object.keys(annualEnergyBreakdown.components || {}).map(reportKeyLabel).join(", ") || "N/A")]
         ])}</tbody></table></div>
     </div>
-    ${annualResultCharts.length ? `<div class="grid">${annualResultCharts.map(([title, chart]) => `<div class="card"><h3>${esc(title)}</h3>${chart}</div>`).join("")}</div>` : ""}
 </section>
 <section>
     <h3>Operating Characteristics</h3>
     ${operatingCharts.length ? `<div class="grid">${operatingCharts.map(([title, chart]) => `<div class="card"><h3>${esc(title)}</h3>${chart}</div>`).join("")}</div>` : ""}
 </section>
 <section>
-    <h3>Engineering Conclusion</h3>
+    <h2>8. Engineering Conclusions</h2>
     <div class="note"><b>${esc(engineeringConclusion.status || "WARNING")}</b><br>${esc(engineeringConclusion.text || "Cooling capacity margin is limited under selected scenario.")}</div>
     <p>Values not produced by the solver are explicitly marked as contextual or not modeled.</p>
 </section>
 <section>
-    <h2>Appendix A: Equipment Curve Register</h2>
+    <h2>Appendix B — Equipment Model Basis</h2>
     <p>Imported equipment parameter curves are retained here for technical traceability.</p>
     ${libraryCurveRows.length ? `<table><thead><tr><th>Equipment</th><th>Curve Source</th><th>Curve Type</th><th>Model Basis</th></tr></thead><tbody>${libraryCurveRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`
     : (importedCurveRows.length ? `<table><thead><tr><th>Category</th><th>Curve ID</th><th>Source File</th><th>Domain / Range</th><th>Points</th></tr></thead><tbody>${importedCurveRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "")}
     ${curveGroups.length ? `<div class="curveGrid">${curveGroups.map((group, index) => `<div class="card"><h3>Figure A-${index + 1}. ${esc(group.category)} input curves</h3>${svgCurveGroupChart(group)}<div class="caption">Input equipment curve set from ${esc(group.sourceFile)}.</div></div>`).join("")}</div>` : ""}
+</section>
+<section>
+    <h2>Appendix C — IT / Weather Alignment</h2>
+    ${alignmentSummary ? `<table><tbody>${tableRows([
+        ["IT Load Time Basis", esc(alignmentSummary.it_time_basis)],
+        ["Hour Sequence Validation", esc(alignmentSummary.hour_sequence_validation)],
+        ["Calendar Time Basis", esc(alignmentSummary.calendar_time_basis)],
+        ["Calendar Sequence Validation", esc(alignmentSummary.calendar_sequence_validation)],
+        ["Calendar Hour Convention", esc(alignmentSummary.calendar_hour_convention)],
+        ["EPW Hour Convention", esc(alignmentSummary.epw_hour_convention)],
+        ["First Row Alignment", esc(alignmentFirst ? alignmentAuditRowCells(alignmentFirst).join(" | ") : "Unavailable")],
+        ["Last Row Alignment", esc(alignmentLast ? alignmentAuditRowCells(alignmentLast).join(" | ") : "Unavailable")],
+        ["Full CSV Audit", "Available in the application"]
+    ])}</tbody></table>` : '<div class="empty">Detailed alignment diagnostics unavailable.</div>'}
+</section>
+<section>
+    <h2>Appendix D — Engineering Diagnostics</h2>
+    <table><tbody>${tableRows([
+        ["Solver", esc(output.solver || output.solver_name || "dispatch_topology")],
+        ["Topology Identifier", esc(solverTopology)],
+        ["Report Profile", esc(report.profile_id || "generic_pue")]
+    ])}</tbody></table>
 </section>
 </main>
 </body>
@@ -3599,8 +3668,9 @@ function exportHtmlReport() {
         setSolverDataStatus("请先运行一次计算，再导出 HTML 报告。", "error");
         return;
     }
-    let html = buildHtmlReport(lastReportContext);
-    const finalLogoMarkup = `<div class="reportLogoBlock" style="display:block;width:210px;height:auto;margin:0 0 14px 0;">
+    try {
+        let html = buildHtmlReport(lastReportContext);
+        const finalLogoMarkup = `<div class="reportLogoBlock" style="display:block;width:210px;height:auto;margin:0 0 14px 0;">
   <img
     class="reportLogo"
     src="${SKYVAULT_REPORT_LOGO}"
@@ -3608,25 +3678,33 @@ function exportHtmlReport() {
     style="display:block !important;width:210px !important;height:auto !important;max-width:210px !important;visibility:visible !important;opacity:1 !important;"
   />
 </div>`;
-    html = html.replace(/<div\s+class="reportLogoBlock"[\s\S]*?<\/div>\s*/g, "");
-    html = html.replace(/<img\s+class="reportLogo"[^>]*>\s*/g, "");
-    const headerTopOpen = '<div class="reportHeaderTop">';
-    if (html.includes(headerTopOpen)) {
-        html = html.replace(headerTopOpen, `${headerTopOpen}
+        html = html.replace(/<div\s+class="reportLogoBlock"[\s\S]*?<\/div>\s*/g, "");
+        html = html.replace(/<img\s+class="reportLogo"[^>]*>\s*/g, "");
+        const headerTopOpen = '<div class="reportHeaderTop">';
+        if (html.includes(headerTopOpen)) {
+            html = html.replace(headerTopOpen, `${headerTopOpen}
         ${finalLogoMarkup}`);
+        }
+        const projectName = getProjectReportInfo().name || "pue-report";
+        const safeName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pue-report";
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        let link = null;
+        try {
+            link = document.createElement("a");
+            link.href = url;
+            link.download = `${safeName}.html`;
+            document.body.appendChild(link);
+            link.click();
+        } finally {
+            if (link) link.remove();
+            URL.revokeObjectURL(url);
+        }
+        setSolverDataStatus("HTML 报告已生成。", "ok");
+    } catch (error) {
+        console.error("HTML report export failed:", error);
+        setSolverDataStatus(`HTML 报告导出失败：${String(error?.message || error)}`, "error");
     }
-    const projectName = getProjectReportInfo().name || "pue-report";
-    const safeName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pue-report";
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${safeName}.html`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setSolverDataStatus("HTML 报告已生成。", "ok");
 }
 
 function timestampForFileName(date = new Date()) {
@@ -6868,7 +6946,7 @@ function initStandardDataInputs() {
     refreshSimulationReadiness();
 }
 
-function buildPeakDemandBreakdown(outObj, peakSummary) {
+function buildPeakDemandBreakdown(outObj, peakSummary, topologyId = outObj?.topology_id || outObj?.solver_dispatch_key) {
     const hourly = Array.isArray(outObj?.hourly_results) ? outObj.hourly_results : [];
     const peak = outObj?.peak_results || {};
     const annualRow = hourly.reduce((selected, row) => {
@@ -6895,17 +6973,24 @@ function buildPeakDemandBreakdown(outObj, peakSummary) {
             ["MEP Electrical Distribution Loss", value(annualRow.mep_electrical_loss_kW), value(peak.peak_design_mep_electrical_loss_kW)]
         ]
         : [["Electrical Distribution Loss", value(annualRow.electrical_loss_kW), value(peak.peak_design_electrical_loss_kW)]];
-    const rows = [
+    const commonRows = [
         ["IT Load", value(annualRow.IT_load_kW ?? annualRow.it_load_kW), value(peak.peak_design_it_load_kW)],
-        ["ACC / Chiller Power", value(annualRow.acc_power_kW ?? annualRow.chiller_power_kW), value(peak.peak_design_ACC_power_kW ?? peak.peak_design_chiller_power_kW)],
+        ["CHW Pump Power", value(annualRow.CHW_pump_power_kW ?? annualRow.pump_power_kW), value(peak.peak_design_CHW_pump_power_kW)]
+    ];
+    const topologyRows = String(topologyId).toLowerCase() === "chiller_dry_cooler" ? [
+        ["Chiller Power", value(annualRow.chiller_power_kW), value(peak.peak_design_chiller_power_kW)],
         ["Dry Cooler Power", value(annualRow.dry_cooler_power_kW), value(peak.peak_design_dry_cooler_power_kW)],
-        ["CHW Pump Power", value(annualRow.CHW_pump_power_kW ?? annualRow.pump_power_kW), value(peak.peak_design_CHW_pump_power_kW)],
-        ["CW Pump Power", value(annualRow.cw_pump_power_total_kW ?? annualRow.CW_pump_power_kW), value(peak.peak_design_CW_pump_power_kW)],
+        ["CW Pump Power", value(annualRow.cw_pump_power_total_kW ?? annualRow.CW_pump_power_kW), value(peak.peak_design_CW_pump_power_kW)]
+    ] : [
+        ["ACC Power", value(annualRow.acc_power_kW), value(peak.peak_design_ACC_power_kW)],
         ["CDU Power", value(annualRow.cdu_power_kW), value(peak.peak_design_CDU_power_kW)],
         ["RTC Power", value(annualRow.rtc_power_kW), value(peak.peak_design_RTC_power_kW)],
         ["MAU Power", value(annualRow.mau_power_kW), value(peak.peak_design_MAU_power_kW)],
+        ["ENGINE_RADIATOR Power", value(annualRow.engine_radiator_power_kW), value(peak.peak_design_engine_radiator_power_kW)]
+    ];
+    const rows = [
+        commonRows[0], ...topologyRows, commonRows[1],
         ...auxiliaryRows,
-        ["ENGINE_RADIATOR Power", value(annualRow.engine_radiator_power_kW), value(peak.peak_design_engine_radiator_power_kW)],
         ...electricalLossRows
     ];
     const annualTotal = value(peakSummary?.peak_facility_power_kW ?? annualRow.total_facility_power_kW);
@@ -6947,27 +7032,32 @@ function annualFacilityEnergySummary(outObj = {}) {
     const topology = outObj.topology_id || outObj.solver_dispatch_key;
     if (topology === "chiller_dry_cooler") {
         return {
-            label: "Annual Cooling System Energy",
+            label: "Annual Cooling & MEP Terminal Energy",
             energy_kWh: annual.annual_total_cooling_system_energy_kWh
         };
     }
     return {
-        label: "Annual MEP / Facility Auxiliary Energy",
+        label: "Annual Cooling & MEP Terminal Energy",
         energy_kWh: annual.annual_MEP_terminal_energy_kWh
     };
 }
 
-function annualEquipmentEnergyRows(annual = {}) {
-    const rows = [
+function annualEquipmentEnergyRows(annual = {}, topologyId = "") {
+    const common = [
         ["IT", annual.annual_IT_energy_kWh],
-        [annual.annual_acc_energy_kWh > 0 ? "ACC" : "Chiller", annual.annual_acc_energy_kWh || annual.annual_chiller_energy_kWh],
-        ["Dry Cooler", annual.annual_dry_cooler_energy_kWh],
-        ["CHW Pump", annual.annual_chw_pump_energy_kWh ?? annual.annual_pump_energy_kWh],
-        ["CW Pump", annual.annual_cw_pump_energy_kWh],
+        ["CHW Pump", annual.annual_chw_pump_energy_kWh ?? annual.annual_pump_energy_kWh]
+    ];
+    const topologyRows = String(topologyId).toLowerCase() === "chiller_dry_cooler" ? [
+        ["Chiller", annual.annual_chiller_energy_kWh], ["Dry Cooler", annual.annual_dry_cooler_energy_kWh], ["CW Pump", annual.annual_cw_pump_energy_kWh]
+    ] : [
+        ["ACC", annual.annual_acc_energy_kWh],
         ["CDU", annual.annual_cdu_energy_kWh],
         ["RTC", annual.annual_rtc_energy_kWh],
         ["MAU", annual.annual_mau_energy_kWh],
-        ["ENGINE_RADIATOR", annual.annual_engine_radiator_energy_kWh],
+        ["Engine Radiator", annual.annual_engine_radiator_energy_kWh]
+    ];
+    const rows = [
+        common[0], ...topologyRows, common[1],
         ["Other Electrical Auxiliary Energy", annual.annual_other_electrical_auxiliary_energy_kWh ?? annual.annual_auxiliary_energy_kWh],
         ["Electrical Distribution Loss", annual.annual_electrical_loss_kWh]
     ];

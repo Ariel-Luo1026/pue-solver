@@ -102,7 +102,7 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         report_start = self.ui.index("function buildHtmlReportFromSections")
         report_end = self.ui.index("function ", report_start + 20)
         report = self.ui[report_start:report_end]
-        self.assertIn("buildPeakDemandBreakdown(output, peakSummary)", report)
+        self.assertIn("buildPeakDemandBreakdown(output, peakSummary, solverTopology)", report)
         self.assertIn("Peak Demand Breakdown", report)
         self.assertIn("Annual Observed Peak", report)
         self.assertIn("Peak Design", report)
@@ -130,8 +130,9 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         self.assertIn('["Scenario", project.scenario_name || input.scenario_name', self.ui)
         self.assertIn("configurationLibraryData || {}", self.ui)
         self.assertIn('["Weather / Climate Station"', self.ui)
-        self.assertIn("ENGINE_RADIATOR", self.ui[self.ui.index("function annualEquipmentEnergyRows"):self.ui.index("function renderEngineeringResultsSummary")])
         energy_mapper = self.ui[self.ui.index("function annualEquipmentEnergyRows"):self.ui.index("function renderEngineeringResultsSummary")]
+        self.assertIn("Engine Radiator", energy_mapper)
+        self.assertIn("annual_engine_radiator_energy_kWh", energy_mapper)
         self.assertNotIn("ENGINE_3", energy_mapper)
         self.assertIn(
             "ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.",
@@ -158,13 +159,13 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
             "1. Engineering Summary",
             "2. Energy &amp; PUE Summary",
             "3. Peak Facility Demand",
-            "4. Annual Equipment Energy Breakdown",
+            "4. Annual Facility Energy Composition",
             "5. Peak Demand Breakdown",
             "6. Equipment Performance",
-            "7. Engineering / Calculation Notes",
+            "7. Annual Performance Charts",
         ):
             self.assertIn(heading, report)
-        self.assertIn("annualEquipmentEnergyRows(annual)", report)
+        self.assertIn("annualEquipmentEnergyRows(annual, solverTopology)", report)
         for example in ("5167.249", "5850.222", "5152.550", "5856.754"):
             self.assertNotIn(example, report)
 
@@ -174,9 +175,9 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         summary_end = self.ui.index("function annualEquipmentEnergyRows", summary_start)
         summary = self.ui[summary_start:summary_end]
         self.assertIn('topology === "chiller_dry_cooler"', summary)
-        self.assertIn('label: "Annual Cooling System Energy"', summary)
+        self.assertIn('label: "Annual Cooling & MEP Terminal Energy"', summary)
         self.assertIn("annual.annual_total_cooling_system_energy_kWh", summary)
-        self.assertIn('label: "Annual MEP / Facility Auxiliary Energy"', summary)
+        self.assertEqual(summary.count('label: "Annual Cooling & MEP Terminal Energy"'), 2)
         self.assertIn("annual.annual_MEP_terminal_energy_kWh", summary)
 
 

@@ -16,14 +16,15 @@ class ReportStructurePolishTest(unittest.TestCase):
     def test_chiller_report_contains_cooling_system_performance(self):
         self.assertIn("6. Equipment Performance", self.report)
         self.assertIn("Detailed Cooling System Performance", self.report)
-        self.assertIn("Equipment Performance Summary", self.report)
+        self.assertIn("6. Equipment Performance", self.report)
+        self.assertEqual(self.report.count('${performanceCards.length ? `<div class="grid">${performanceCards.join("")}</div>`'), 1)
         self.assertIn('${esc(reportKeyLabel(row.equipment))} Performance', self.report)
 
     def test_equipment_curve_register_is_appendix(self):
-        self.assertIn("Appendix A: Equipment Curve Register", self.report)
+        self.assertIn("Appendix B — Equipment Model Basis", self.report)
         self.assertNotIn("3. Equipment Curve Register", self.report)
         self.assertGreater(
-            self.report.index("Appendix A: Equipment Curve Register"),
+            self.report.index("Appendix B — Equipment Model Basis"),
             self.report.index("Engineering Conclusion"),
         )
 
@@ -41,7 +42,7 @@ class ReportStructurePolishTest(unittest.TestCase):
             "Peak Design PUE",
             "PUE Contribution Breakdown",
             "Outdoor Temperature vs PUE",
-            "Annual Energy Breakdown",
+            "Annual Facility Energy Composition",
         ):
             self.assertIn(text, self.report)
         self.assertIn('profile_id: "acc_gas_engine_cdu"', self.ui)
@@ -66,10 +67,10 @@ class ReportStructurePolishTest(unittest.TestCase):
         self.assertNotIn("Q</i><sub>pump,h</sub>", formula)
 
     def test_engineering_terminology_is_used(self):
-        self.assertIn('"Cooling Architecture"', self.report)
-        self.assertIn('"Report Configuration"', self.report)
+        self.assertIn('"Cooling Technology"', self.report)
+        self.assertIn('"System Architecture"', self.report)
         self.assertNotIn('["Solver Topology"', self.report)
-        self.assertNotIn('["Report Profile"', self.report)
+        self.assertIn('["Report Profile"', self.report[self.report.index("Appendix D — Engineering Diagnostics"):])
 
     @classmethod
     def _function_source(cls, name):

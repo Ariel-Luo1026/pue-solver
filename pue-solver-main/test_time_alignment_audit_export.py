@@ -108,8 +108,9 @@ class TimeAlignmentAuditExportTest(unittest.TestCase):
 
     def test_html_report_contains_summary_not_full_rows(self):
         report = function(self.ui, "buildHtmlReportFromSections")
-        self.assertIn("IT / Weather Time Alignment", report)
-        self.assertIn("Full hourly alignment audit available through CSV export", report)
+        self.assertIn("Annual Data Alignment", report)
+        self.assertIn("Appendix C — IT / Weather Alignment", report)
+        self.assertIn("Full CSV Audit", report)
         self.assertIn("alignmentFirst", report)
         self.assertIn("alignmentLast", report)
         self.assertNotIn("alignmentAudit.rows.map", report)

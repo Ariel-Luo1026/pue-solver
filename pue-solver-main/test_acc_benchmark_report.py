@@ -22,7 +22,7 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
         for text in (
             "Annual Data Center PUE Performance Assessment",
             "JUNO | Cooling System | Annual PUE Assessment",
-            "Cooling Architecture: ${esc(coolingSystemDisplay)}",
+            "System Architecture: ${esc(systemArchitecture)}",
             "dispatchReportProfile(solverTopology, output)",
             "report.equipment_performance",
         ):
@@ -63,8 +63,8 @@ class AccBenchmarkReportContractTest(unittest.TestCase):
             "annualResultCharts.length",
             "operatingCharts.length",
             "pueSeries.length > 1",
-            "facilityVsIt.length > 1",
-            "Annual Energy Breakdown",
+            "hasVariableItLoad",
+            "Annual Facility Energy Composition",
             "Monthly Average PUE",
         ):
             self.assertIn(text, report_block)

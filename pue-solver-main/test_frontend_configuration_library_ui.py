@@ -724,9 +724,9 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         report_block = self._function_source("buildHtmlReportFromSections")
         for text in (
             "dispatchReportProfile(solverTopology, output)",
-            "Cooling System Type",
-            "Cooling Architecture",
-            "Report Configuration",
+            "Cooling Technology",
+            "System Architecture",
+            "Appendix D — Engineering Diagnostics",
         ):
             self.assertIn(text, report_block)
 
