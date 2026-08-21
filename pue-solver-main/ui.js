@@ -4696,6 +4696,12 @@ function findLocalEpwMatch(locationText, epwIndex) {
 }
 
 const MAX_EPW_MATCH_DISTANCE_KM = 500;
+const EPW_SELECTION_PROVENANCE = Object.freeze({
+    ONLINE_DOWNLOADED: "ONLINE_DOWNLOADED",
+    ONLINE_CACHE_HIT: "ONLINE_CACHE_HIT",
+    LOCAL_FALLBACK: "LOCAL_FALLBACK",
+    MANUAL: "MANUAL"
+});
 
 function haversineDistanceKm(lat1, lon1, lat2, lon2) {
     const radius = 6371.0088;
@@ -4738,6 +4744,15 @@ function findNearestLocalEpwByCoordinates(latitude, longitude, epwIndex) {
         }
     });
     return best && bestDistance <= MAX_EPW_MATCH_DISTANCE_KM ? best : null;
+}
+
+function findLocalEpwByFile(epwFile, epwIndex) {
+    const target = String(epwFile || "").trim().toLowerCase();
+    if (!target) return null;
+    return epwIndex.find(item => {
+        const indexedFile = item?.epw_file || String(item?.epw_path || "").split("/").pop();
+        return String(indexedFile || "").trim().toLowerCase() === target;
+    }) || null;
 }
 
 function setAutoEpwStatus(text, tone = "info") {
@@ -4819,7 +4834,10 @@ async function fetchOnlineEpw(latitude, longitude, locationText) {
     return payload;
 }
 
-async function applyMatchedEpw(match, locationText, coordinates = null, statusText = "", autoStatusText = "") {
+async function applyMatchedEpw(match, locationText, coordinates = null, selection = {}) {
+    const provenance = selection.provenance || EPW_SELECTION_PROVENANCE.LOCAL_FALLBACK;
+    const sourceLabel = selection.sourceLabel || "Local EPW Fallback";
+    const fallbackReason = selection.fallbackReason || "";
     const epwUrl = new URL(match.epw_path, window.location.href).href;
     const response = await fetch(epwUrl, { cache: "no-cache" });
     if (!response.ok) {
@@ -4836,7 +4854,10 @@ async function applyMatchedEpw(match, locationText, coordinates = null, statusTe
     json.local_epw_match = {
         city: match.city || "",
         country: match.country || "",
-        source: match.source || "Local EPW",
+        source: sourceLabel,
+        storage_source: match.source || "Local EPW",
+        selection_provenance: provenance,
+        fallback_reason: fallbackReason,
         station: match.station || "",
         lat: match.lat,
         lon: match.lon,
@@ -4844,7 +4865,10 @@ async function applyMatchedEpw(match, locationText, coordinates = null, statusTe
         matched_at: new Date().toISOString()
     };
     setWeatherSourceMetadata(json, {
-        source: match.source || "Local EPW",
+        source: sourceLabel,
+        storage_source: match.source || "Local EPW",
+        selection_provenance: provenance,
+        fallback_reason: fallbackReason,
         station: match.station || "",
         matched_station: match.station || "",
         epw_file: json.source_file,
@@ -4860,13 +4884,15 @@ async function applyMatchedEpw(match, locationText, coordinates = null, statusTe
     automaticEpwReady = weatherHours === 8760 || weatherHours === 8784;
     standardSolverInput = null;
     preferStandardFiles = true;
-    updateFileStatus("statusWeather", `Climate Station: ${match.station || match.city} / ${match.source || "Local EPW"}`, "ok");
+    const distanceText = Number.isFinite(Number(match.distance_km)) ? `${Number(match.distance_km).toFixed(1)} km` : "N/A";
+    updateFileStatus("statusWeather", `Climate Station: ${match.station || match.city}; Weather Source: ${sourceLabel}; Match Distance: ${distanceText}`, "ok");
     const modeStatus = document.getElementById("automaticEpwModeStatus");
     if (modeStatus) modeStatus.textContent = automaticEpwReady ? "✓ Automatic EPW Matching" : "Automatic EPW Matching";
     if (weatherHours !== 8760 && weatherHours !== 8784) {
         setAutoEpwStatus(`Weather Data: EPW loaded, but weather hours are unusual: ${weatherHours}`, "error");
     } else {
-        setAutoEpwStatus(`Weather Data: ${weatherHours} hourly weather loaded`, "ok");
+        const fallbackText = fallbackReason ? `; Fallback Reason: ${fallbackReason}` : "";
+        setAutoEpwStatus(`Weather Source: ${sourceLabel}; Weather Data: ${weatherHours} hourly weather loaded${fallbackText}`, "ok");
     }
     previewInputCurves(standardDataFiles);
     renderWeatherReportPanel();
@@ -4885,51 +4911,58 @@ async function autoMatchLocalEpw() {
         updateFileStatus("statusWeather", "Climate Station: EPW match unavailable", "error");
         refreshSimulationReadiness();
     };
-    updateFileStatus("statusWeather", "Matching local EPW...", "info");
+    updateFileStatus("statusWeather", "Searching online EPW...", "info");
     setAutoEpwStatus("", "info");
     if (!coordinates) {
         resetWeatherStatusAfterMiss();
         setAutoEpwStatus("Please enter valid Latitude and Longitude for EPW matching.", "error");
         return false;
     }
+    let onlineFailureReason = "";
     try {
-        let epwIndex = await loadLocalEpwIndex();
-        let match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
-        if (match && match.epw_path) {
-            await applyMatchedEpw(match, locationText, coordinates);
-            return automaticEpwReady;
-        }
-
-        setAutoEpwStatus("No local EPW matched. Searching online EPW...", "info");
         const onlineResult = await fetchOnlineEpw(coordinates.latitude, coordinates.longitude, locationText);
         if (!onlineResult || !onlineResult.success) {
-            resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("No suitable online EPW found. Check the local EPW library or EPW API service.", "error");
-            return false;
+            onlineFailureReason = onlineResult?.message || "Online EPW provider returned no suitable station.";
+        } else {
+            const epwIndex = await loadLocalEpwIndex();
+            const match = findLocalEpwByFile(onlineResult.epw_file, epwIndex);
+            if (!match || !match.epw_path) {
+                throw new Error(`Online EPW result file was not found in the local cache: ${onlineResult.epw_file || "unknown"}`);
+            }
+            const selectedMatch = {
+                ...match,
+                station: onlineResult.matched_station || match.station || match.city,
+                distance_km: Number.isFinite(Number(onlineResult.distance_km)) ? Number(onlineResult.distance_km) : match.distance_km
+            };
+            const cacheHit = onlineResult.already_cached === true;
+            await applyMatchedEpw(selectedMatch, locationText, coordinates, {
+                provenance: cacheHit ? EPW_SELECTION_PROVENANCE.ONLINE_CACHE_HIT : EPW_SELECTION_PROVENANCE.ONLINE_DOWNLOADED,
+                sourceLabel: cacheHit ? "Online EPW Cache Hit" : "Online EPW"
+            });
+            return automaticEpwReady;
         }
+    } catch (error) {
+        onlineFailureReason = String(error?.message || error || "Online EPW provider unavailable");
+    }
 
-        epwIndex = await loadLocalEpwIndex();
-        match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
+    setAutoEpwStatus(`Online EPW unavailable: ${onlineFailureReason}. Searching local EPW fallback...`, "info");
+    try {
+        const epwIndex = await loadLocalEpwIndex();
+        const match = findNearestLocalEpwByCoordinates(coordinates.latitude, coordinates.longitude, epwIndex);
         if (!match || !match.epw_path) {
             resetWeatherStatusAfterMiss();
-            setAutoEpwStatus("Online EPW downloaded, but the local EPW index did not match.", "error");
+            setAutoEpwStatus(`Weather matching failed. Online: ${onlineFailureReason}. Local fallback: no station within ${MAX_EPW_MATCH_DISTANCE_KM} km.`, "error");
             return false;
         }
-        const station = onlineResult.matched_station || match.station || match.city;
-        const distance = Number.isFinite(Number(onlineResult.distance_km))
-            ? `${Number(onlineResult.distance_km).toFixed(1)} km`
-            : "distance N/A";
-        await applyMatchedEpw(
-            match,
-            locationText,
-            coordinates,
-            `Climate matched: ${match.station || match.city} / ${match.source || "Local EPW"}`,
-            `Online EPW downloaded: ${station} / ${distance}`
-        );
+        await applyMatchedEpw(match, locationText, coordinates, {
+            provenance: EPW_SELECTION_PROVENANCE.LOCAL_FALLBACK,
+            sourceLabel: "Local EPW Fallback",
+            fallbackReason: onlineFailureReason
+        });
         return automaticEpwReady;
-    } catch (e) {
+    } catch (error) {
         resetWeatherStatusAfterMiss();
-        setAutoEpwStatus("Local EPW not found. Start the EPW API server or check the local EPW library.", "error");
+        setAutoEpwStatus(`Weather matching failed. Online: ${onlineFailureReason}. Local fallback: ${String(error?.message || error)}.`, "error");
         return false;
     }
 }
@@ -5405,6 +5438,7 @@ async function handleStandardFile(slot, statusId, file) {
         if (slot === "weather" && json && json.source_format === "epw") {
             setWeatherSourceMetadata(json, {
                 source: "Manual Upload",
+                selection_provenance: EPW_SELECTION_PROVENANCE.MANUAL,
                 station: json.location && json.location.city ? json.location.city : "",
                 epw_file: file.name,
                 location: [json.location?.city, json.location?.country].filter(Boolean).join(", "),
