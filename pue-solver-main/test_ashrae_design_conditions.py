@@ -147,6 +147,74 @@ class AshraeDesignConditionsTest(unittest.TestCase):
             diagnostics["request_meteo_parametres"]["first_meteo_station_keys"],
         )
 
+    def test_ashrae_meteo_skips_nearer_stations_without_20_year_extreme_db(self):
+        places_payload = {
+            "meteo_stations": [
+                {"wmo": "725340", "place": "CHICAGO MIDWAY, IL, USA", "lat": "41.784", "long": "-87.755", "tt": "0.002404972633163618"},
+                {"wmo": "998499", "place": "NORTHERLY ISLAND, IL, USA", "lat": "41.856", "long": "-87.609", "tt": "0.000407755758920508"},
+                {"wmo": "997338", "place": "HARRISON-DEVER CRIB, IL, USA", "lat": "41.916", "long": "-87.572", "tt": "0.0010699965734062063"},
+            ]
+        }
+        parameters = {
+            "998499": {"meteo_stations": [{"place": "NORTHERLY ISLAND, IL, USA", "wmo": "998499", "lat": "41.856", "long": "-87.609", "cooling_DB_MCWB_0.4_DB": "32.2", "n-year_return_period_values_of_extreme_DB_20_max": "N/A"}]},
+            "997338": {"meteo_stations": [{"place": "HARRISON-DEVER CRIB, IL, USA", "wmo": "997338", "lat": "41.916", "long": "-87.572", "n-year_return_period_values_of_extreme_DB_20_max": "37.4"}]},
+            "725340": {"meteo_stations": [{"place": "CHICAGO MIDWAY, IL, USA", "wmo": "725340", "lat": "41.784", "long": "-87.755", "n-year_return_period_values_of_extreme_DB_20_max": "39.5"}]},
+        }
+        requested = []
+
+        def fetch_parameters(wmo, *_args, **_kwargs):
+            requested.append(wmo)
+            return parameters[wmo]
+
+        with patch("ashrae_online_lookup._fetch_ashrae_meteo_places", return_value=places_payload), patch(
+            "ashrae_online_lookup._fetch_ashrae_meteo_parameters", side_effect=fetch_parameters
+        ):
+            online = query_ashrae_online(41.8781, -87.6298)
+
+        self.assertEqual(requested, ["998499", "997338"])
+        self.assertEqual(online["lookup_status"], "success")
+        self.assertEqual(online["station_name"], "HARRISON-DEVER CRIB, IL, USA")
+        self.assertEqual(online["station_id"], "997338")
+        self.assertAlmostEqual(online["distance_km"], 6.81694816917094)
+        self.assertIsInstance(online["design_db_max_C"], float)
+        self.assertEqual(online["design_db_max_C"], 37.4)
+
+    def test_ashrae_meteo_selects_third_eligible_station(self):
+        places_payload = {"meteo_stations": [
+            {"wmo": "ONE", "place": "ONE", "lat": "41.88", "long": "-87.63", "tt": "0.001"},
+            {"wmo": "TWO", "place": "TWO", "lat": "41.89", "long": "-87.64", "tt": "0.002"},
+            {"wmo": "THREE", "place": "THREE", "lat": "41.90", "long": "-87.65", "tt": "0.003"},
+        ]}
+        values = {"ONE": "N/A", "TWO": None, "THREE": "39.5"}
+
+        def fetch_parameters(wmo, *_args, **_kwargs):
+            return {"meteo_stations": [{"place": wmo, "wmo": wmo, "lat": "41.9", "long": "-87.65", "n-year_return_period_values_of_extreme_DB_20_max": values[wmo]}]}
+
+        with patch("ashrae_online_lookup._fetch_ashrae_meteo_places", return_value=places_payload), patch(
+            "ashrae_online_lookup._fetch_ashrae_meteo_parameters", side_effect=fetch_parameters
+        ):
+            online = query_ashrae_online(41.8781, -87.6298)
+
+        self.assertEqual(online["station_id"], "THREE")
+        self.assertEqual(online["design_db_max_C"], 39.5)
+
+    def test_ashrae_meteo_all_candidates_missing_20_year_extreme_db_fails(self):
+        places_payload = {"meteo_stations": [
+            {"wmo": "ONE", "place": "ONE", "lat": "41.88", "long": "-87.63", "tt": "0.001"},
+            {"wmo": "TWO", "place": "TWO", "lat": "41.89", "long": "-87.64", "tt": "0.002"},
+        ]}
+
+        def fetch_parameters(wmo, *_args, **_kwargs):
+            return {"meteo_stations": [{"place": wmo, "wmo": wmo, "lat": "41.88", "long": "-87.63", "cooling_DB_MCWB_0.4_DB": "32.2", "n-year_return_period_values_of_extreme_DB_20_max": "N/A"}]}
+
+        with patch("ashrae_online_lookup._fetch_ashrae_meteo_places", return_value=places_payload), patch(
+            "ashrae_online_lookup._fetch_ashrae_meteo_parameters", side_effect=fetch_parameters
+        ):
+            online = query_ashrae_online(41.8781, -87.6298)
+
+        self.assertEqual(online["lookup_status"], "failed")
+        self.assertEqual(online["failure_reason"], "ASHRAE online response missing design temperature")
+
     def test_peak_design_condition_uses_online_result_when_provider_succeeds(self):
         with patch(
             "ashrae_design_conditions.lookup_online_ashrae_design_condition",

@@ -295,7 +295,7 @@ def _meteo_stations(payload):
     return []
 
 
-def _nearest_meteo_station(latitude, longitude, places):
+def _ordered_meteo_stations(latitude, longitude, places):
     candidates = []
     for row in _meteo_stations(places):
         station_name = row.get("place")
@@ -319,9 +319,12 @@ def _nearest_meteo_station(latitude, longitude, places):
                     "distance_km": float(distance),
                 }
             )
-    if not candidates:
-        return None
-    return min(candidates, key=lambda row: row["distance_km"])
+    return sorted(candidates, key=lambda row: row["distance_km"])
+
+
+def _nearest_meteo_station(latitude, longitude, places):
+    candidates = _ordered_meteo_stations(latitude, longitude, places)
+    return candidates[0] if candidates else None
 
 
 def _normalize_ashrae_meteo_station(station, latitude, longitude):
@@ -349,8 +352,8 @@ def _query_ashrae_meteo(latitude, longitude, timeout_seconds):
     version = _ashrae_version()
     places = _fetch_ashrae_meteo_places(latitude, longitude, timeout_seconds, ashrae_version=version)
     diagnostics = {"request_places": _payload_structure(places)}
-    nearest = _nearest_meteo_station(latitude, longitude, places)
-    if nearest is None:
+    candidates = _ordered_meteo_stations(latitude, longitude, places)
+    if not candidates:
         failure = _failure(
             "station data missing",
             lookup_method="ASHRAE_web",
@@ -358,31 +361,48 @@ def _query_ashrae_meteo(latitude, longitude, timeout_seconds):
         )
         failure["ashrae_raw_diagnostics"] = diagnostics
         return failure
-    parameters = _fetch_ashrae_meteo_parameters(nearest["station_id"], timeout_seconds, ashrae_version=version)
-    diagnostics["request_meteo_parametres"] = _payload_structure(parameters)
-    parameter_stations = _meteo_stations(parameters)
-    if not parameter_stations:
-        failure = _failure(
-            "station data missing",
-            lookup_method="ASHRAE_web",
-            endpoint=ASHRAE_METEO_PARAMETERS_ENDPOINT,
+    parameter_diagnostics = []
+    failure_reasons = []
+    for candidate in candidates:
+        parameters = _fetch_ashrae_meteo_parameters(
+            candidate["station_id"], timeout_seconds, ashrae_version=version
         )
-        failure["ashrae_raw_diagnostics"] = diagnostics
-        return failure
-    normalized = _normalize_ashrae_meteo_station(parameter_stations[0], latitude, longitude)
-    if normalized is None:
-        failure = _failure(
-            _station_failure_reason(parameter_stations[0]),
-            lookup_method="ASHRAE_web",
-            endpoint=ASHRAE_METEO_PARAMETERS_ENDPOINT,
-        )
-        failure["ashrae_raw_diagnostics"] = diagnostics
-        return failure
-    normalized["distance_km"] = nearest["distance_km"]
-    normalized["lookup_method"] = "ASHRAE_web"
-    normalized["lookup_endpoint"] = ASHRAE_METEO_PARAMETERS_ENDPOINT
-    normalized["ashrae_raw_diagnostics"] = diagnostics
-    return normalized
+        structure = _payload_structure(parameters)
+        structure["station_id"] = candidate["station_id"]
+        parameter_diagnostics.append(structure)
+        parameter_stations = _meteo_stations(parameters)
+        if not parameter_stations:
+            failure_reasons.append("station data missing")
+            continue
+        normalized = _normalize_ashrae_meteo_station(parameter_stations[0], latitude, longitude)
+        if normalized is None:
+            failure_reasons.append(_station_failure_reason(parameter_stations[0]))
+            continue
+        normalized["distance_km"] = candidate["distance_km"]
+        normalized["lookup_method"] = "ASHRAE_web"
+        normalized["lookup_endpoint"] = ASHRAE_METEO_PARAMETERS_ENDPOINT
+        diagnostics["request_meteo_parametres"] = structure
+        diagnostics["request_meteo_parametres_attempts"] = parameter_diagnostics
+        normalized["ashrae_raw_diagnostics"] = diagnostics
+        return normalized
+
+    reason = (
+        "ASHRAE online response missing design temperature"
+        if "ASHRAE online response missing design temperature" in failure_reasons
+        else "Invalid ASHRAE response format"
+        if "Invalid ASHRAE response format" in failure_reasons
+        else "station data missing"
+    )
+    failure = _failure(
+        reason,
+        lookup_method="ASHRAE_web",
+        endpoint=ASHRAE_METEO_PARAMETERS_ENDPOINT,
+    )
+    if parameter_diagnostics:
+        diagnostics["request_meteo_parametres"] = parameter_diagnostics[-1]
+    diagnostics["request_meteo_parametres_attempts"] = parameter_diagnostics
+    failure["ashrae_raw_diagnostics"] = diagnostics
+    return failure
 
 
 def query_ashrae_online(latitude, longitude, timeout_seconds=10, endpoint=None):
