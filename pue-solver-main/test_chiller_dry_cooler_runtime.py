@@ -42,6 +42,15 @@ class ChillerDryCoolerRuntimeTest(unittest.TestCase):
         self.assertIn("dry_cooler_performance_result", row)
         self.assertIn("pump_power_kW", row)
         self.assertIn("electrical_loss_kW", row)
+        self.assertGreater(row["cdu_power_kW"], 0)
+        self.assertGreater(row["rtc_power_kW"], 0)
+        self.assertGreater(row["mau_power_kW"], 0)
+        self.assertAlmostEqual(
+            row["white_space_equipment_power_kW"],
+            row["cdu_power_kW"] + row["rtc_power_kW"] + row["mau_power_kW"],
+        )
+        self.assertAlmostEqual(row["indoor_equipment_load_ratio"], row["it_load_kW"] / 2000.0)
+        self.assertEqual(row["indoor_equipment_load_ratio_basis"], "it_project_load_ratio")
         self.assertIn("PUE", row)
         self.assertGreater(row["chiller_power_kW"], 0)
         self.assertGreater(row["dry_cooler_power_kW"], 0)
@@ -65,10 +74,33 @@ class ChillerDryCoolerRuntimeTest(unittest.TestCase):
         self.assertIn("annual_dry_cooler_energy_kWh", annual)
         self.assertIn("annual_pump_energy_kWh", annual)
         self.assertIn("annual_electrical_loss_kWh", annual)
+        for key in (
+            "annual_cdu_energy_kWh",
+            "annual_rtc_energy_kWh",
+            "annual_mau_energy_kWh",
+            "annual_white_space_equipment_energy_kWh",
+        ):
+            self.assertGreater(annual[key], 0)
         self.assertGreater(annual["annual_chiller_energy_kWh"], 0)
         self.assertGreater(annual["annual_dry_cooler_energy_kWh"], 0)
         self.assertGreater(annual["annual_pump_energy_kWh"], 0)
         self.assertGreater(annual["annual_facility_energy_kWh"], annual["annual_IT_energy_kWh"])
+        component_sum = sum(annual[key] for key in (
+            "annual_IT_energy_kWh",
+            "annual_chiller_energy_kWh",
+            "annual_dry_cooler_energy_kWh",
+            "annual_chw_pump_energy_kWh",
+            "annual_cw_pump_energy_kWh",
+            "annual_cdu_energy_kWh",
+            "annual_rtc_energy_kWh",
+            "annual_mau_energy_kWh",
+            "annual_electrical_loss_kWh",
+        ))
+        self.assertAlmostEqual(annual["annual_facility_energy_kWh"], component_sum, places=5)
+        self.assertAlmostEqual(
+            annual["annual_average_PUE"],
+            annual["annual_facility_energy_kWh"] / annual["annual_IT_energy_kWh"],
+        )
 
     def test_failure_scenario_uses_fewer_active_units_and_higher_chiller_load_ratio(self):
         normal_input = build_solver_input_from_library(
@@ -95,6 +127,10 @@ class ChillerDryCoolerRuntimeTest(unittest.TestCase):
         self.assertLess(failure_row["chiller_COP"], normal_row["chiller_COP"])
         self.assertGreater(failure_row["chiller_power_kW"], normal_row["chiller_power_kW"])
         self.assertNotEqual(failure_row["dry_cooler_power_kW"], normal_row["dry_cooler_power_kW"])
+        self.assertEqual(normal_row["indoor_active_units"], 3)
+        self.assertEqual(failure_row["indoor_active_units"], 3)
+        for key in ("cdu_power_kW", "rtc_power_kW", "mau_power_kW"):
+            self.assertAlmostEqual(normal_row[key], failure_row[key])
 
     def test_pump_power_scales_by_active_pump_units(self):
         normal_input = build_solver_input_from_library(
@@ -188,6 +224,22 @@ class ChillerDryCoolerRuntimeTest(unittest.TestCase):
         self.assertEqual(peak["peak_design_chiller_power_kW"], point["chiller_power_kW"])
         self.assertEqual(peak["peak_design_dry_cooler_power_kW"], point["dry_cooler_power_kW"])
         self.assertEqual(peak["peak_design_CHW_pump_power_kW"], point["pump_power_kW"])
+        self.assertEqual(peak["peak_design_CDU_power_kW"], point["cdu_power_kW"])
+        self.assertEqual(peak["peak_design_RTC_power_kW"], point["rtc_power_kW"])
+        self.assertEqual(peak["peak_design_MAU_power_kW"], point["mau_power_kW"])
+        self.assertEqual(peak["peak_design_project_load_ratio"], 1.0)
+        expected_peak = sum(point[key] for key in (
+            "it_load_kW",
+            "chiller_power_kW",
+            "dry_cooler_power_kW",
+            "pump_power_kW",
+            "cw_pump_power_total_kW",
+            "cdu_power_kW",
+            "rtc_power_kW",
+            "mau_power_kW",
+            "electrical_loss_kW",
+        ))
+        self.assertAlmostEqual(peak["peak_design_facility_electrical_demand_kW"], expected_peak)
         self.assertEqual(peak["peak_design_electrical_loss_kW"], point["electrical_loss_kW"])
         self.assertEqual(peak["peak_design_facility_electrical_demand_kW"], point["facility_power_kW"])
         self.assertAlmostEqual(peak["peak_PUE"], point["facility_power_kW"] / point["it_load_kW"])

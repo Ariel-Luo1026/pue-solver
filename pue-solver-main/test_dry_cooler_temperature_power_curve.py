@@ -92,7 +92,8 @@ class DryCoolerTemperaturePowerCurveTest(unittest.TestCase):
         self.assertIn("Dry Cooler Power Model", ui)
         self.assertIn("Dry Cooler Power Diagnostics", ui)
         self.assertIn("determined from outdoor dry-bulb temperature", ui)
-        self.assertIn("Engineering temperature-only power estimate", ui)
+        self.assertIn("not applied as a second runtime power calculation", ui)
+        self.assertIn("Performance_Map separately represents thermal heat-rejection capacity", ui)
 
 
 if __name__ == "__main__":

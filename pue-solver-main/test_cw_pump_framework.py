@@ -55,7 +55,8 @@ class CWPumpFrameworkTest(unittest.TestCase):
         self.assertAlmostEqual(annual["annual_pump_energy_kWh"], annual["annual_chw_pump_energy_kWh"])
         row = output["hourly_results"][0]
         expected = (row["it_load_kW"] + row["chiller_power_kW"] + row["dry_cooler_power_kW"]
-                    + row["pump_power_kW"] + row["cw_pump_power_total_kW"] + row["electrical_loss_kW"])
+                    + row["pump_power_kW"] + row["cw_pump_power_total_kW"]
+                    + row["white_space_equipment_power_kW"] + row["electrical_loss_kW"])
         self.assertAlmostEqual(row["facility_power_kW"], expected)
 
     def test_peak_design_includes_both_pumps(self):

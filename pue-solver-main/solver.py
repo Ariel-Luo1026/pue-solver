@@ -9,6 +9,8 @@
 from math import ceil, isfinite
 from copy import deepcopy
 
+from indoor_equipment import evaluate_indoor_equipment, project_it_load_ratio
+
 try:
     from ashrae_design_conditions import get_peak_design_condition
 except Exception:
@@ -2381,7 +2383,7 @@ def compute_pue_project(input_obj):
 
         load_ratio = (it_kw / design_it_load) if design_it_load and design_it_load > 0 else 0.0
         load_ratio = _clamp(load_ratio, 0.0, 1.0)
-        project_load_ratio = load_ratio
+        project_load_ratio = project_it_load_ratio(it_kw, design_it_load)
         solar_heat_gain_kw = _solar_heat_gain_kw(
             oat_c,
             annual_min_ambient_c,
@@ -2923,35 +2925,36 @@ def compute_pue_project(input_obj):
         cdu_curve_source = "legacy_non_configuration_mode"
         rtc_curve_source = "legacy_non_configuration_mode"
         mau_curve_source = "legacy_non_configuration_mode"
-        cdu_power_kw = 0.0
-        rtc_power_kw = 0.0
-        mau_power_kw = 0.0
         cdu_equipment_id, cdu_binding = _library_equipment_binding(library_fixed_power, ("CDU_2", "CDU"))
         rtc_equipment_id, rtc_binding = _library_equipment_binding(library_fixed_power, ("RTC_1&2", "RTC_2", "RTC"))
         mau_equipment_id, mau_binding = _library_equipment_binding(library_fixed_power, ("MAU_1&2", "MAU_2", "MAU"))
-        if configuration_library_direct_mode:
-            for label, display_id, equipment_id, binding in (
-                ("cdu", "CDU_2", cdu_equipment_id, cdu_binding),
-                ("rtc", "RTC_1&2", rtc_equipment_id, rtc_binding),
-                ("mau", "MAU_1&2", mau_equipment_id, mau_binding),
-            ):
+        indoor_bindings = {
+            "cdu": cdu_binding or ({"equipment_id": "CDU_2", "enabled": True} if configuration_library_direct_mode else None),
+            "rtc": rtc_binding or ({"equipment_id": "RTC_1&2", "enabled": True} if configuration_library_direct_mode else None),
+            "mau": mau_binding or ({"equipment_id": "MAU_1&2", "enabled": True} if configuration_library_direct_mode else None),
+        }
+        indoor_equipment_ids = {
+            "cdu": cdu_equipment_id or "CDU_2",
+            "rtc": rtc_equipment_id or "RTC_1&2",
+            "mau": mau_equipment_id or "MAU_1&2",
+        }
+        indoor_equipment_display_ids = {
+            "cdu": "CDU_2",
+            "rtc": "RTC_1&2",
+            "mau": "MAU_1&2",
+        }
+
+        def lookup_indoor_power_per_unit(label, equipment_id, binding, ratio):
+            display_id = indoor_equipment_display_ids[label]
+            if configuration_library_direct_mode:
                 try:
-                    power_per_unit = _lookup_library_power_per_unit_with_engine(
+                    return _lookup_library_power_per_unit_with_engine(
                         configuration_equipment_engines,
                         equipment_id or display_id,
                         binding,
-                        project_load_ratio,
+                        ratio,
                         label,
                     )
-                    if label == "cdu":
-                        cdu_power_kw = power_per_unit * indoor_active_units
-                        cdu_curve_source = "configuration_library_solver_curve"
-                    elif label == "rtc":
-                        rtc_power_kw = power_per_unit * indoor_active_units
-                        rtc_curve_source = "configuration_library_solver_curve"
-                    else:
-                        mau_power_kw = power_per_unit * indoor_active_units
-                        mau_curve_source = "configuration_library_solver_curve"
                 except Exception as exc:
                     error_message = (
                         f"{display_id} Solver_Curve missing or invalid. Configuration Library direct mode "
@@ -2961,12 +2964,27 @@ def compute_pue_project(input_obj):
                     validation.setdefault("errors", []).append(error_message)
                     result["validation"] = validation
                     result["error"] = error_message
-                    return result
-        else:
-            cdu_power_kw = _library_fixed_power_per_unit(cdu_binding, project_load_ratio) * indoor_active_units
-            rtc_power_kw = _library_fixed_power_per_unit(rtc_binding, project_load_ratio) * indoor_active_units
-            mau_power_kw = _library_fixed_power_per_unit(mau_binding, project_load_ratio) * indoor_active_units
-        white_space_equipment_power_kw = cdu_power_kw + rtc_power_kw + mau_power_kw
+                    raise
+            return _library_fixed_power_per_unit(binding, ratio)
+
+        try:
+            indoor_power = evaluate_indoor_equipment(
+                indoor_bindings,
+                project_load_ratio,
+                indoor_active_units,
+                lookup_indoor_power_per_unit,
+            )
+        except Exception:
+            if configuration_library_direct_mode:
+                return result
+            raise
+        cdu_power_kw = indoor_power["cdu_power_kW"]
+        rtc_power_kw = indoor_power["rtc_power_kW"]
+        mau_power_kw = indoor_power["mau_power_kW"]
+        white_space_equipment_power_kw = indoor_power["white_space_equipment_power_kW"]
+        cdu_curve_source = indoor_power["indoor_equipment_curve_sources"]["cdu"]
+        rtc_curve_source = indoor_power["indoor_equipment_curve_sources"]["rtc"]
+        mau_curve_source = indoor_power["indoor_equipment_curve_sources"]["mau"]
         if configuration_library_direct_mode:
             airflow_kw = 0.0
             fan_curve_value = 0.0

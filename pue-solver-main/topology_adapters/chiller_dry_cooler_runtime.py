@@ -8,6 +8,7 @@ from energy_aggregation import aggregate_annual_energy
 from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
 from equipment_performance import dispatch_performance_adapter
 from equipment_role_resolver import resolve_equipment_role_id, validate_required_equipment_roles
+from indoor_equipment import evaluate_indoor_equipment, project_it_load_ratio
 from unit_scenario_manager import resolve_unit_scenario
 from pump_load_framework import evaluate_pump_power, resolve_pump_reference_capacity
 
@@ -34,6 +35,17 @@ class ChillerDryCoolerRuntime:
         self.electrical_id = resolve_equipment_role_id(
             self.manifest, "electrical_distribution", self.selected_curves
         )
+        self.indoor_equipment_ids = (
+            resolve_equipment_role_id(self.manifest, "indoor_cooling", self.selected_curves)
+            if "indoor_cooling" in (self.manifest.get("equipment_roles") or {})
+            else []
+        ) or []
+        if not isinstance(self.indoor_equipment_ids, list):
+            self.indoor_equipment_ids = [self.indoor_equipment_ids]
+        self.indoor_bindings = {
+            self._indoor_role(equipment_id): self._equipment_binding(equipment_id)
+            for equipment_id in self.indoor_equipment_ids
+        }
 
         self.chiller_adapter = dispatch_performance_adapter(
             self._equipment_metadata(self.chiller_id, "chiller", "CHILLER", "cop_curve"),
@@ -85,6 +97,8 @@ class ChillerDryCoolerRuntime:
         active_pump_units = self._active_role_units(roles, "chw_pump_units", self._active_role_units(roles, "pump_units", unit_scenario["active_units"]))
         cw_pump_role = roles.get("cw_pump_units") or {}
         active_cw_pump_units = self._non_negative_role_units(cw_pump_role, unit_scenario["active_units"])
+        indoor_role = roles.get("indoor_units") or {}
+        indoor_active_units = self._non_negative_role_units(indoor_role, unit_scenario["installed_units"])
         dry_cooler_approach_c = self._dry_cooler_approach_c()
 
         hourly_results = []
@@ -98,6 +112,10 @@ class ChillerDryCoolerRuntime:
             "dry_cooler": 0.0,
             "pump": 0.0,
             "cw_pump": 0.0,
+            "cdu": 0.0,
+            "rtc": 0.0,
+            "mau": 0.0,
+            "white_space": 0.0,
             "electrical_loss": 0.0,
         }
 
@@ -110,6 +128,7 @@ class ChillerDryCoolerRuntime:
                 active_dry_cooler_units,
                 active_pump_units,
                 active_cw_pump_units,
+                indoor_active_units,
                 dry_cooler_approach_c,
                 hour=index + 1,
             )
@@ -129,6 +148,10 @@ class ChillerDryCoolerRuntime:
             totals["dry_cooler"] += row["dry_cooler_power_kW"]
             totals["pump"] += row["pump_power_kW"]
             totals["cw_pump"] += row["cw_pump_power_total_kW"]
+            totals["cdu"] += row["cdu_power_kW"]
+            totals["rtc"] += row["rtc_power_kW"]
+            totals["mau"] += row["mau_power_kW"]
+            totals["white_space"] += row["white_space_equipment_power_kW"]
             totals["electrical_loss"] += row["electrical_loss_kW"]
 
         annual_average_pue = totals["facility"] / totals["it"] if totals["it"] > 0 else 0.0
@@ -149,11 +172,15 @@ class ChillerDryCoolerRuntime:
             "annual_pump_energy_kWh": totals["pump"],
             "annual_chw_pump_energy_kWh": totals["pump"],
             "annual_cw_pump_energy_kWh": totals["cw_pump"],
+            "annual_cdu_energy_kWh": totals["cdu"],
+            "annual_rtc_energy_kWh": totals["rtc"],
+            "annual_mau_energy_kWh": totals["mau"],
+            "annual_white_space_equipment_energy_kWh": totals["white_space"],
             "annual_electrical_loss_kWh": totals["electrical_loss"],
             "annual_solar_heat_gain_kWh": totals["solar_heat_gain"],
             "annual_other_auxiliary_heat_gain_kWh": totals["other_auxiliary_heat_gain"],
             "annual_cooling_load_kWh": totals["cooling_load"],
-            "annual_total_cooling_system_energy_kWh": totals["chiller"] + totals["dry_cooler"] + totals["pump"] + totals["cw_pump"],
+            "annual_total_cooling_system_energy_kWh": totals["chiller"] + totals["dry_cooler"] + totals["pump"] + totals["cw_pump"] + totals["white_space"],
         }
         standard_annual_energy = aggregate_annual_energy({"hourly_results": hourly_results})
         peak_results = self._peak_design_results(
@@ -163,6 +190,7 @@ class ChillerDryCoolerRuntime:
             active_dry_cooler_units,
             active_pump_units,
             active_cw_pump_units,
+            indoor_active_units,
             dry_cooler_approach_c,
         )
         capacity_validation = self._capacity_validation(
@@ -195,6 +223,7 @@ class ChillerDryCoolerRuntime:
                     "dry_cooler": self.dry_cooler_id,
                     "chw_pump": self.pump_id,
                     "cw_pump": self.cw_pump_id,
+                    "indoor_cooling": deepcopy(self.indoor_equipment_ids),
                     "electrical_distribution": self.electrical_id,
                 },
                 "selected_curves": deepcopy(self.selected_curves),
@@ -202,7 +231,7 @@ class ChillerDryCoolerRuntime:
                     "dry_cooler_approach_C": dry_cooler_approach_c,
                     "cooling_load_model": "shared_cooling_load_model",
                     "unit_scenario": deepcopy(unit_scenario),
-                    "facility_power_formula": "IT + chiller + dry_cooler + pump + electrical_loss",
+                    "facility_power_formula": "IT + chiller + dry_cooler + CHW pump + CW pump + indoor equipment + electrical loss",
                 },
             },
         }
@@ -216,6 +245,7 @@ class ChillerDryCoolerRuntime:
         active_dry_cooler_units,
         active_pump_units,
         active_cw_pump_units,
+        indoor_active_units,
         dry_cooler_approach_c,
         hour=None,
     ):
@@ -224,6 +254,7 @@ class ChillerDryCoolerRuntime:
         ambient_c = float(load_row["ambient_dry_bulb_C"])
         cooling_load_kw = float(load_row["cooling_load_kW"])
         load_ratio = cooling_load_kw / design_it if design_it else 0.0
+        indoor_load_ratio = project_it_load_ratio(it_kw, design_it)
         ceft_c = ambient_c + dry_cooler_approach_c
         required_capacity_per_chiller_unit_kw = cooling_load_kw / active_chiller_units
         chiller_per_unit = self._chiller_performance(
@@ -246,10 +277,17 @@ class ChillerDryCoolerRuntime:
         pump_power_kw = pump["pump_power_total_kW"]
         cw_pump = self._cw_pump_power(heat_rejection_kw, active_cw_pump_units)
         cw_pump_power_kw = cw_pump["pump_power_total_kW"]
+        indoor_power = evaluate_indoor_equipment(
+            self.indoor_bindings,
+            indoor_load_ratio,
+            indoor_active_units,
+            self._lookup_indoor_power_per_unit,
+        )
+        white_space_power_kw = indoor_power["white_space_equipment_power_kW"]
         electrical_loss_kw = self._electrical_loss(
             load_ratio,
             it_kw=it_kw,
-            mep_kw=chiller_power_kw + dry_cooler_power_kw + pump_power_kw + cw_pump_power_kw,
+            mep_kw=chiller_power_kw + dry_cooler_power_kw + pump_power_kw + cw_pump_power_kw + white_space_power_kw,
         )
         facility_power_kw = (
             it_kw
@@ -257,6 +295,7 @@ class ChillerDryCoolerRuntime:
             + dry_cooler_power_kw
             + pump_power_kw
             + cw_pump_power_kw
+            + white_space_power_kw
             + electrical_loss_kw
         )
         return {
@@ -273,6 +312,7 @@ class ChillerDryCoolerRuntime:
             "active_dry_cooler_units": active_dry_cooler_units,
             "active_pump_units": active_pump_units,
             "active_cw_pump_units": active_cw_pump_units,
+            **indoor_power,
             "chiller_performance_result": chiller_per_unit.to_dict(),
             "dry_cooler_performance_result": dry_cooler_per_unit.to_dict(),
             "chiller_power_per_unit_kW": chiller_perf["power_kW"],
@@ -331,6 +371,7 @@ class ChillerDryCoolerRuntime:
         active_dry_cooler_units,
         active_pump_units,
         active_cw_pump_units,
+        indoor_active_units,
         dry_cooler_approach_c,
     ):
         """Resolve and evaluate the independent design condition."""
@@ -360,6 +401,7 @@ class ChillerDryCoolerRuntime:
             active_dry_cooler_units,
             active_pump_units,
             active_cw_pump_units,
+            indoor_active_units,
             dry_cooler_approach_c,
         )
         facility_kw = point["facility_power_kW"]
@@ -374,6 +416,12 @@ class ChillerDryCoolerRuntime:
             "peak_design_dry_cooler_power_per_unit_kW": point["dry_cooler_power_per_unit_kW"],
             "peak_design_CHW_pump_power_kW": point["pump_power_kW"],
             "peak_design_CW_pump_power_kW": point["cw_pump_power_total_kW"],
+            "peak_design_CDU_power_kW": point["cdu_power_kW"],
+            "peak_design_RTC_power_kW": point["rtc_power_kW"],
+            "peak_design_MAU_power_kW": point["mau_power_kW"],
+            "peak_design_white_space_equipment_power_kW": point["white_space_equipment_power_kW"],
+            "peak_design_indoor_active_units": point["indoor_active_units"],
+            "peak_design_project_load_ratio": point["indoor_equipment_load_ratio"],
             "peak_design_heat_rejection_kW": point["heat_rejection_kW"],
             "peak_design_electrical_loss_kW": point["electrical_loss_kW"],
             "peak_design_equipment_result": point,
@@ -422,6 +470,11 @@ class ChillerDryCoolerRuntime:
         preloaded = {
             self.pump_id: {"points": self._curve_rows(self.pump_id)},
         }
+        for equipment_id in self.indoor_equipment_ids:
+            binding = self._equipment_binding(equipment_id)
+            if binding.get("enabled") is False:
+                continue
+            preloaded[equipment_id] = {"points": self._curve_rows(equipment_id)}
         electrical_path = self._electrical_path()
         if electrical_path:
             preloaded[f"{self.electrical_id}:IT"] = {
@@ -539,6 +592,26 @@ class ChillerDryCoolerRuntime:
             curve_source=f"{self.cw_pump_id}/Solver_Curve",
         )
 
+    def _lookup_indoor_power_per_unit(self, role, equipment_id, binding, load_ratio):
+        result = self.generic_engine.lookup_power(equipment_id, load_ratio)
+        if not result.lookup_success or result.power_kW is None:
+            raise ChillerDryCoolerRuntimeError(
+                f"{equipment_id} Solver_Curve lookup failed: {'; '.join(result.errors)}"
+            )
+        return float(result.power_kW)
+
+    def _indoor_role(self, equipment_id):
+        equipment_type = str(
+            ((self.selected_curves.get(equipment_id) or {}).get("equipment_metadata") or {}).get("equipment_type")
+            or equipment_id
+        ).upper()
+        for role in ("cdu", "rtc", "mau"):
+            if equipment_type.startswith(role.upper()):
+                return role
+        raise ChillerDryCoolerRuntimeError(
+            f"Unsupported indoor_cooling equipment {equipment_id!r}; expected CDU, RTC, or MAU."
+        )
+
     def _equipment_binding(self, equipment_id):
         equipment = self.context.get("equipment") if isinstance(self.context.get("equipment"), dict) else {}
         equipment_bindings = equipment.get("equipment_bindings") if isinstance(equipment.get("equipment_bindings"), dict) else {}
@@ -557,6 +630,10 @@ class ChillerDryCoolerRuntime:
                 return value
             if isinstance(value, dict) and isinstance(value.get(equipment_id), dict):
                 return value[equipment_id]
+        auxiliary = equipment.get("auxiliary") if isinstance(equipment.get("auxiliary"), dict) else {}
+        direct_auxiliary = auxiliary.get(equipment_id)
+        if isinstance(direct_auxiliary, dict):
+            return direct_auxiliary
         return {}
 
     def _electrical_loss(self, load_ratio, it_kw, mep_kw):

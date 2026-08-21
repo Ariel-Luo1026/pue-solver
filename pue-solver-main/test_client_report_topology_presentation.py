@@ -47,6 +47,19 @@ class ClientReportTopologyPresentationTests(unittest.TestCase):
         for text in ("ACC Total Power", "CDU Power", "RTC Power", "MAU Power", "Engine Radiator Power"):
             self.assertIn(text, self.report)
 
+    def test_chiller_report_includes_configured_indoor_equipment(self):
+        peak_rows = function_source(UI, "buildPeakDemandBreakdown")
+        annual_rows = function_source(UI, "annualEquipmentEnergyRows")
+        for text in ("CDU Power", "RTC Power", "MAU Power"):
+            self.assertIn(text, peak_rows)
+        for text in ('["CDU", annual.annual_cdu_energy_kWh]', '["RTC", annual.annual_rtc_energy_kWh]', '["MAU", annual.annual_mau_energy_kWh]'):
+            self.assertIn(text, annual_rows)
+        self.assertIn('"INDOOR_EQUIPMENT"', function_source(UI, "topologyAwareAnnualEnergyBreakdown"))
+
+    def test_grid_chiller_report_suppresses_engine_notes(self):
+        self.assertIn("const engineApplicable", self.report)
+        self.assertIn("engineApplicable ?", self.report)
+
     def test_acc_client_labels_are_professional(self):
         rows = function_source(UI, "annualEquipmentEnergyRows")
         self.assertIn('["Engine Radiator", annual.annual_engine_radiator_energy_kWh]', rows)
