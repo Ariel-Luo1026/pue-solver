@@ -3897,6 +3897,8 @@ def compute_pue_project(input_obj):
                     ),
                     "peak_design_facility_electrical_demand_kW": peak_design_total_facility,
                     "peak_design_it_load_kW": float(design_it_load_source),
+                    "peak_design_solar_heat_gain_kW": peak_design_hour.get("solar_heat_gain_kW"),
+                    "peak_design_other_auxiliary_heat_gain_kW": peak_design_hour.get("other_auxiliary_heat_gain_kW"),
                     "peak_design_cooling_load_kW": peak_design_hour.get("cooling_load_kW"),
                     "peak_design_weather_source": peak_design_condition.get("source"),
                     "peak_design_lookup_provider": peak_design_condition.get("lookup_provider"),
