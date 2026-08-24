@@ -14,6 +14,6 @@
   "unit_system": "SI",
   "status": "implemented",
   "data_status": "prototype",
-  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID_CDU",
+  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID",
   "notes": "Engineering temperature-only power estimate based on the supplied dry-cooler capacity data and fan-affinity assumptions. Performance_Map remains the separate thermal-capacity source."
 }

@@ -12,6 +12,6 @@
   "unit_system": "SI",
   "status": "framework_ready_data_missing",
   "data_status": "prototype",
-  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID_CDU",
+  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID",
   "notes": "Existing workbook contains COP map and Solver_Curve data. No annual chiller solver path is implemented in Phase 20H-1."
 }

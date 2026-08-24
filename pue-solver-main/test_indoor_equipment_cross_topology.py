@@ -43,7 +43,8 @@ class IndoorEquipmentCrossTopologyTest(unittest.TestCase):
         chiller = self._evaluate_configuration("CHILLER_DRYCOOLER_2MW_GRID")
         for field in ("cdu_power_kW", "rtc_power_kW", "mau_power_kW", "white_space_equipment_power_kW"):
             self.assertAlmostEqual(acc[field], chiller[field])
-        self.assertAlmostEqual(chiller["white_space_equipment_power_kW"], 91.26)
+        self.assertAlmostEqual(chiller["cdu_power_kW"], 56.61)
+        self.assertAlmostEqual(chiller["white_space_equipment_power_kW"], 108.87)
 
     def test_project_it_load_ratio_is_shared_and_clamped(self):
         self.assertEqual(project_it_load_ratio(3600, 4000), 0.9)
