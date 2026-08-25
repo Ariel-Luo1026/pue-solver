@@ -112,6 +112,10 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
     hours = len(hourly_it)
     active_units = int(project_source.get("active_units") or 1)
     indoor_active_units = int(project_source.get("indoor_active_units") or project_source.get("installed_units") or active_units)
+    engine_active_units = int(project_source.get("engine_active_units") or active_units)
+    engine_radiator_active_units = int(
+        project_source.get("engine_radiator_active_units") or engine_active_units
+    )
     capacity_kw = float(project_source.get("cooling_unit_capacity_kW") or 0.0)
 
     weather = deepcopy(library_input.get("weather")) if isinstance(library_input.get("weather"), dict) else None
@@ -163,6 +167,8 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
     project["installed_units"] = project_source.get("installed_units")
     project["active_units"] = active_units
     project["indoor_active_units"] = indoor_active_units
+    project["engine_active_units"] = engine_active_units
+    project["engine_radiator_active_units"] = engine_radiator_active_units
 
     equipment_context = library_input.get("equipment") if isinstance(library_input.get("equipment"), dict) else {}
     auxiliary_equipment = deepcopy(equipment_context.get("auxiliary"))
@@ -195,6 +201,8 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         "installed_units": project_source.get("installed_units"),
         "active_units": active_units,
         "indoor_active_units": indoor_active_units,
+        "engine_active_units": engine_active_units,
+        "engine_radiator_active_units": engine_radiator_active_units,
         "selected_curves": deepcopy(library_input.get("selected_curves", {})),
         "engine_output_reference": engine_binding,
         "engine_radiator": radiator_binding,

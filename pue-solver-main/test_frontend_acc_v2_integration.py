@@ -1,3 +1,4 @@
+import ast
 import copy
 import re
 import unittest
@@ -141,6 +142,7 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             "report_dispatcher.py",
             "configuration_manifest.py",
             "equipment_role_resolver.py",
+            "generation_side_equipment.py",
             "unit_scenario_manager.py",
             "pump_load_framework.py",
             "configuration_library_loader.py",
@@ -157,6 +159,44 @@ class FrontendACCV2IntegrationTest(unittest.TestCase):
             self.assertIn(f'"{module_name}"', self.ui)
         self.assertLess(ensure_block.index("DIRECT_MODE_PYTHON_MODULES"), ensure_block.index('fetch("./solver.py", { cache: "no-store" })'))
         self.assertLess(ensure_block.index("await loadPythonModuleIntoPyodide(moduleName)"), ensure_block.index("await pyodide.runPythonAsync(pyText)"))
+
+    def test_pyodide_bootstrap_covers_solver_direct_local_imports(self):
+        module_block = self.ui[
+            self.ui.index("const DIRECT_MODE_PYTHON_MODULES"):
+            self.ui.index("function log")
+        ]
+        root = Path(__file__).resolve().parent
+        solver_tree = ast.parse((root / "solver.py").read_text(encoding="utf-8"))
+        local_modules = {
+            path.stem
+            for path in root.glob("*.py")
+            if not path.name.startswith("test_")
+        }
+        direct_local_imports = {
+            node.module.split(".", 1)[0]
+            for node in ast.walk(solver_tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.split(".", 1)[0] in local_modules
+        }
+        direct_local_imports.update(
+            alias.name.split(".", 1)[0]
+            for node in ast.walk(solver_tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name.split(".", 1)[0] in local_modules
+        )
+        self.assertIn("generation_side_equipment", direct_local_imports)
+        for module_name in direct_local_imports:
+            self.assertIn(f'"{module_name}.py"', module_block)
+        self.assertLess(
+            module_block.index('"equipment_role_resolver.py"'),
+            module_block.index('"generation_side_equipment.py"'),
+        )
+        self.assertLess(
+            module_block.index('"generation_side_equipment.py"'),
+            module_block.index('"solver.py"'),
+        )
 
     def test_pyodide_loads_configuration_manifest_before_configuration_library_loader(self):
         module_block = self.ui[

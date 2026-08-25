@@ -62,12 +62,12 @@ class FinalCrossTopologyReportCleanupTest(unittest.TestCase):
         report = function_source(UI, "buildHtmlReportFromSections")
         self.assertIn("Listed pPUE reconciliation", report)
 
-    def test_topology_filter_keeps_radiator_for_acc_only(self):
+    def test_topology_filter_keeps_radiator_for_gas_engine_applicability(self):
         topology = function_source(UI, "topologyAwareAnnualEnergyBreakdown")
         acc_allowed = topology[topology.index('topology === "acc_gas_engine_cdu"'):topology.index('topology === "chiller_dry_cooler"')]
         chiller_allowed = topology[topology.index('topology === "chiller_dry_cooler"'):]
         self.assertIn("ENGINE_RADIATOR", acc_allowed)
-        self.assertNotIn("ENGINE_RADIATOR", chiller_allowed)
+        self.assertIn('engineApplicable ? ["ENGINE_RADIATOR"] : []', chiller_allowed)
 
     def test_chw_wording_and_diagnostic_label_are_topology_neutral(self):
         report = function_source(UI, "buildHtmlReportFromSections")

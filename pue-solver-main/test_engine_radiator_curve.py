@@ -185,7 +185,7 @@ class EngineRadiatorCurveTest(unittest.TestCase):
         output = compute_pue_project(sample)
 
         self.assertIn("error", output)
-        self.assertIn("ENGINE_RADIATOR_1 Solver_Curve missing or invalid", output["error"])
+        self.assertIn("configured engine_radiator Solver_Curve missing or invalid", output["error"])
         self.assertEqual(output["hourly_results"], [])
 
     def test_invalid_radiator_curve_fails_in_configuration_library_mode(self):
@@ -198,7 +198,10 @@ class EngineRadiatorCurveTest(unittest.TestCase):
         output = compute_pue_project(sample)
 
         self.assertIn("error", output)
-        self.assertIn("ENGINE_RADIATOR_1 Solver_Curve missing or invalid", output["error"])
+        self.assertIn(
+            f"{sample['engine_radiator_curve']['equipment_id']} Solver_Curve missing or invalid",
+            output["error"],
+        )
         self.assertIn("Duplicate", output["error"])
         self.assertEqual(output["hourly_results"], [])
 

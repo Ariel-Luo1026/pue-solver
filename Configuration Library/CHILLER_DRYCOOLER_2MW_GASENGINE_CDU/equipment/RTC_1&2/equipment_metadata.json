@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "RTC_1&2",
+  "equipment_type": "RTC",
+  "display_name": "RTC 1&2",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "fan",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "prototype",
+  "data_status": "prototype",
+  "source_configuration": "ACC_1.5MW_GASENGINE_CDU",
+  "notes": "Workbook Metadata status is Preliminary Engineering Fit; vendor data is pending."
+}

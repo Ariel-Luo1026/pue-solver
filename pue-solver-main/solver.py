@@ -10,6 +10,12 @@ from math import ceil, isfinite
 from copy import deepcopy
 
 from indoor_equipment import evaluate_indoor_equipment, project_it_load_ratio
+from generation_side_equipment import (
+    equipment_id_from_curve,
+    evaluate_engine_generation,
+    evaluate_engine_radiator,
+    engine_radiator_load_ratio as calculate_engine_radiator_load_ratio,
+)
 
 try:
     from ashrae_design_conditions import get_peak_design_condition
@@ -1900,6 +1906,17 @@ def _lookup_library_power_per_unit_with_engine(
     return max(0.0, float(lookup_result.power_kW or 0.0))
 
 
+def _lookup_configured_radiator_power(engine, equipment_id, rows, load_ratio, ambient_c=None):
+    """Return a selected radiator workbook lookup without model-ID fallback."""
+    result = engine.lookup_power(equipment_id, load_ratio, ambient_C=ambient_c)
+    if not result.lookup_success:
+        raise ValueError("; ".join(result.errors) or "unknown lookup error")
+    return {
+        "power_kW": max(0.0, float(result.power_kW or result.power_input_kW or 0.0)),
+        "load_ratio": result.load_ratio,
+    }
+
+
 def _electrical_efficiency_curve(equipment_id, path_name, efficiency):
     """Build a generic electrical efficiency curve from loaded equipment data."""
     curve_id = f"{equipment_id}_{path_name}_efficiency"
@@ -2179,6 +2196,12 @@ def compute_pue_project(input_obj):
     library_active_units = max(1, int(ceil(float(library_active_units))))
     indoor_active_units = _num(project.get("indoor_active_units"), library_active_units)
     indoor_active_units = max(1, int(ceil(float(indoor_active_units))))
+    engine_active_units = _num(project.get("engine_active_units"), library_active_units)
+    engine_active_units = max(1, int(ceil(float(engine_active_units))))
+    engine_radiator_active_units = _num(
+        project.get("engine_radiator_active_units"), engine_active_units
+    )
+    engine_radiator_active_units = max(1, int(ceil(float(engine_radiator_active_units))))
     library_fixed_power = _get(input_obj, ["equipment", "library_fixed_power"], {})
     if not isinstance(library_fixed_power, dict) or not library_fixed_power:
         library_fixed_power = _get(input_obj, ["library_context", "auxiliary_equipment"], {})
@@ -2992,7 +3015,7 @@ def compute_pue_project(input_obj):
             terminal_fan_excluded_due_to_mau_curve = mau_power_kw > 0.0
 
         # Phase 22F-C diagnostic framework.  This parallel demand branch deliberately
-        # stops before ENGINE_RADIATOR_1 so it can support a future non-circular
+        # stops before the configured engine_radiator role to keep normalization non-circular
         # radiator load-ratio definition without changing today's curve lookup.
         non_radiator_mep_terminal_power_kw = (
             cooling_kw
@@ -3029,7 +3052,6 @@ def compute_pue_project(input_obj):
         engine_curve_type = None
         engine_radiator_curve_type = None
         engine_radiator_demand_kw = cooling_load_kw
-        engine_radiator_active_units = library_active_units
         engine_radiator_reference_capacity_kw = cooling_unit_capacity_kw
         engine_radiator_load_ratio = (
             engine_radiator_demand_kw
@@ -3042,61 +3064,53 @@ def compute_pue_project(input_obj):
         engine_radiator_load_ratio_lookup = None
         if configuration_library_direct_mode:
             try:
-                engine_binding = {
-                    "equipment_id": "ENGINE_3",
-                    "curve_data": engine_curve.get("data", []) if isinstance(engine_curve, dict) else [],
-                }
-                engine_power_per_unit = _lookup_library_power_per_unit_with_engine(
-                    configuration_equipment_engines,
-                    "ENGINE_3",
-                    engine_binding,
+                engine_evaluation = evaluate_engine_generation(
+                    engine_curve,
                     project_load_ratio,
-                    "engine",
+                    engine_active_units,
+                    lambda equipment_id, rows, ratio: _lookup_library_power_per_unit_with_engine(
+                        configuration_equipment_engines,
+                        equipment_id,
+                        {"equipment_id": equipment_id, "curve_data": rows},
+                        ratio,
+                        "engine",
+                    ),
+                    eval_curve_1d,
                 )
-                engine_output_kw = engine_power_per_unit * library_active_units
-                efficiency_points = []
-                for row in engine_binding["curve_data"]:
-                    if not isinstance(row, dict):
-                        continue
-                    x = _num(row.get("load_ratio"), None)
-                    efficiency = _num(row.get("engine_efficiency"), None)
-                    if efficiency is None:
-                        efficiency = _num(row.get("efficiency"), None)
-                    if x is not None and efficiency is not None:
-                        efficiency_points.append([x, efficiency])
-                if efficiency_points:
-                    engine_efficiency = float(eval_curve_1d(efficiency_points, project_load_ratio, "linear"))
-                else:
-                    engine_efficiency = _num(engine_curve.get("default_efficiency") if isinstance(engine_curve, dict) else None, 0.40)
-                engine_efficiency = _clamp(float(engine_efficiency), 1e-6, 1.0)
-                engine_fuel_input_kw = engine_output_kw / engine_efficiency
-                engine_waste_heat_kw = max(0.0, engine_fuel_input_kw - engine_output_kw)
+                engine_output_kw = engine_evaluation["output_kW"]
+                engine_efficiency = engine_evaluation["efficiency"]
+                engine_fuel_input_kw = engine_evaluation["fuel_input_kW"]
+                engine_waste_heat_kw = engine_evaluation["waste_heat_kW"]
                 engine_curve_source = "configuration_library_solver_curve"
                 engine_curve_type = "one_dimensional_power"
             except Exception as exc:
+                configured_engine_id = engine_curve.get("equipment_id") or "configured engine"
                 error_message = (
-                    "ENGINE_3 Solver_Curve missing or invalid. Configuration Library direct mode "
-                    f"requires ENGINE_3 load_ratio \u2192 power_kW data. Reason: {exc}"
+                    f"{configured_engine_id} Solver_Curve missing or invalid. Configuration Library direct mode "
+                    f"requires the selected engine role's load_ratio \u2192 power_kW data. Reason: {exc}"
                 )
                 validation.setdefault("errors", []).append(error_message)
                 result["validation"] = validation
                 result["error"] = error_message
                 return result
             try:
+                radiator_equipment_id = equipment_id_from_curve(
+                    engine_radiator_curve, "engine_radiator"
+                )
                 radiator_binding = {
-                    "equipment_id": "ENGINE_RADIATOR_1",
+                    "equipment_id": radiator_equipment_id,
                     "curve_data": engine_radiator_curve.get("data", []) if isinstance(engine_radiator_curve, dict) else [],
                 }
                 from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
 
-                radiator_engine_key = "engine_radiator:ENGINE_RADIATOR_1"
+                radiator_engine_key = f"engine_radiator:{radiator_equipment_id}"
                 if radiator_engine_key not in configuration_equipment_engines:
                     configuration_equipment_engines[radiator_engine_key] = ConfigurationLibraryEquipmentEngine(
                         EquipmentEngineConfig(
                             preloaded_curves={
-                                "ENGINE_RADIATOR_1": _curve_from_library_binding(
+                                radiator_equipment_id: _curve_from_library_binding(
                                     radiator_binding,
-                                    "ENGINE_RADIATOR_1_power_vs_load",
+                                    f"{radiator_equipment_id}_power_vs_load",
                                 )
                             }
                         )
@@ -3106,9 +3120,11 @@ def compute_pue_project(input_obj):
                 engine_radiator_curve_source = "configuration_library_solver_curve"
                 engine_radiator_curve_type = "one_dimensional_power"
             except Exception as exc:
+                configured_radiator_id = engine_radiator_curve.get("equipment_id") or "configured engine_radiator"
                 error_message = (
-                    "ENGINE_RADIATOR_1 Solver_Curve missing or invalid. Configuration Library direct mode "
-                    f"requires ENGINE_RADIATOR_1 load_ratio \u2192 power_kW data. Reason: {exc}"
+                    f"{configured_radiator_id} Solver_Curve missing or invalid. Configuration Library direct mode "
+                    "requires the selected engine_radiator role's load_ratio \u2192 power_kW data. "
+                    f"Reason: {exc}"
                 )
                 validation.setdefault("errors", []).append(error_message)
                 result["validation"] = validation
@@ -3116,7 +3132,7 @@ def compute_pue_project(input_obj):
                 return result
         else:
             engine_output_kw, engine_efficiency, engine_fuel_input_kw, engine_waste_heat_kw, engine_curve_source = _evaluate_engine_curve(
-                engine_curve, project_load_ratio, library_active_units
+                engine_curve, project_load_ratio, engine_active_units
             )
             engine_radiator_power_kw = 0.0
             engine_radiator_curve_source = "pending_non_radiator_facility_demand_lookup"
@@ -3350,6 +3366,7 @@ def compute_pue_project(input_obj):
             "engine_waste_heat_kW": engine_waste_heat_kw,
             "engine_curve_source": engine_curve_source,
             "engine_curve_type": engine_curve_type,
+            "engine_active_units": engine_active_units,
             "engine_3_power_boundary": engine_3_power_boundary,
             "engine_radiator_power_kW": engine_radiator_power_kw,
             "engine_radiator_load_ratio": engine_radiator_load_ratio,
@@ -3378,7 +3395,7 @@ def compute_pue_project(input_obj):
     # Phase 22F-D second stage: the annual peak can only be known after every
     # pre-radiator hourly demand has been evaluated.  Re-evaluate radiator power
     # from that fixed series, then refresh downstream facility fields.  Radiator
-    # power and ENGINE_3 output are absent from both numerator and denominator.
+    # power and configured Engine output are absent from both numerator and denominator.
     peak_non_radiator_facility_power_kw = max(
         (
             item.get("non_radiator_facility_power_kW", 0.0)
@@ -3454,7 +3471,8 @@ def compute_pue_project(input_obj):
                 failure_reference_hour["non_radiator_facility_power_kW"]
             )
         except Exception as exc:
-            error_message = f"ENGINE_RADIATOR_1 Failure peak reference calculation failed. Reason: {exc}"
+            radiator_equipment_id = engine_radiator_curve.get("equipment_id") or "Configured engine_radiator"
+            error_message = f"{radiator_equipment_id} Failure peak reference calculation failed. Reason: {exc}"
             validation.setdefault("errors", []).append(error_message)
             result["validation"] = validation
             result["error"] = error_message
@@ -3468,40 +3486,46 @@ def compute_pue_project(input_obj):
             if peak_non_radiator_facility_power_kw > 0
             else 0.0
         )
-        engine_radiator_load_ratio = (
-            non_radiator_facility_power_kw / failure_peak_non_radiator_facility_power_kw
-            if failure_peak_non_radiator_facility_power_kw > 0
-            else 0.0
+        engine_radiator_load_ratio = calculate_engine_radiator_load_ratio(
+            non_radiator_facility_power_kw,
+            failure_peak_non_radiator_facility_power_kw,
         )
         if configuration_library_direct_mode:
-            radiator_result = configuration_equipment_engines[
-                "engine_radiator:ENGINE_RADIATOR_1"
-            ].lookup_power(
-                "ENGINE_RADIATOR_1",
-                engine_radiator_load_ratio,
-                ambient_C=item.get("dry_bulb_C"),
+            radiator_equipment_id = equipment_id_from_curve(
+                engine_radiator_curve, "engine_radiator"
             )
-            if not radiator_result.lookup_success:
+            radiator_engine_key = f"engine_radiator:{radiator_equipment_id}"
+            try:
+                radiator_evaluation = evaluate_engine_radiator(
+                    engine_radiator_curve,
+                    non_radiator_facility_power_kw,
+                    failure_peak_non_radiator_facility_power_kw,
+                    engine_radiator_active_units,
+                    lambda equipment_id, rows, ratio: _lookup_configured_radiator_power(
+                        configuration_equipment_engines[radiator_engine_key],
+                        equipment_id,
+                        rows,
+                        ratio,
+                        item.get("dry_bulb_C"),
+                    ),
+                )
+            except Exception as exc:
                 error_message = (
-                    "ENGINE_RADIATOR_1 Solver_Curve missing or invalid. "
+                    f"{radiator_equipment_id} Solver_Curve missing or invalid. "
                     "Non-radiator facility demand lookup failed. Reason: "
-                    + ("; ".join(radiator_result.errors) or "unknown lookup error")
+                    + str(exc)
                 )
                 validation.setdefault("errors", []).append(error_message)
                 result["validation"] = validation
                 result["error"] = error_message
                 result["hourly_results"] = []
                 return result
-            radiator_power_per_unit = max(
-                0.0,
-                float(radiator_result.power_kW or radiator_result.power_input_kW or 0.0),
-            )
-            engine_radiator_power_kw = radiator_power_per_unit * library_active_units
-            engine_radiator_load_ratio_lookup = radiator_result.load_ratio
+            engine_radiator_power_kw = radiator_evaluation["total_power_kW"]
+            engine_radiator_load_ratio_lookup = radiator_evaluation["lookup_load_ratio"]
             previous_radiator_result = configuration_equipment_engines[
-                "engine_radiator:ENGINE_RADIATOR_1"
+                radiator_engine_key
             ].lookup_power(
-                "ENGINE_RADIATOR_1",
+                radiator_equipment_id,
                 engine_radiator_previous_annual_max_load_ratio,
                 ambient_C=item.get("dry_bulb_C"),
             )
@@ -3512,19 +3536,19 @@ def compute_pue_project(input_obj):
                     or previous_radiator_result.power_input_kW
                     or 0.0
                 ),
-            ) * library_active_units
+            ) * engine_radiator_active_units
         else:
             engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
                 engine_radiator_curve,
                 engine_radiator_load_ratio,
-                library_active_units,
+                engine_radiator_active_units,
                 item.get("engine_waste_heat_kW", 0.0),
             )
             engine_radiator_load_ratio_lookup = engine_radiator_load_ratio
             engine_radiator_previous_annual_max_power_kw, _ = _evaluate_engine_radiator_curve(
                 engine_radiator_curve,
                 engine_radiator_previous_annual_max_load_ratio,
-                library_active_units,
+                engine_radiator_active_units,
                 item.get("engine_waste_heat_kW", 0.0),
             )
 

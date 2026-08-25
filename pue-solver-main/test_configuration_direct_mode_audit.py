@@ -109,6 +109,10 @@ class ConfigurationDirectModeAuditTest(unittest.TestCase):
             "ENGINE_3": lambda sample: sample.pop("engine_curve", None),
             "ENGINE_RADIATOR_1": lambda sample: sample.pop("engine_radiator_curve", None),
         }
+        expected_equipment_labels = {
+            "ENGINE_3": "configured engine",
+            "ENGINE_RADIATOR_1": "configured engine_radiator",
+        }
         for equipment_id, mutate in cases.items():
             with self.subTest(equipment_id=equipment_id):
                 sample = deepcopy(self.input)
@@ -117,7 +121,8 @@ class ConfigurationDirectModeAuditTest(unittest.TestCase):
                 output = compute_pue_project(sample)
 
                 self.assertIn("error", output)
-                self.assertIn(f"{equipment_id} Solver_Curve missing or invalid", output["error"])
+                expected_label = expected_equipment_labels.get(equipment_id, equipment_id)
+                self.assertIn(f"{expected_label} Solver_Curve missing or invalid", output["error"])
                 self.assertEqual(output["hourly_results"], [])
                 self.assertEqual(output["annual_results"], {})
 

@@ -44,6 +44,7 @@ class ChillerReportSemanticCleanupTest(unittest.TestCase):
         expected = {
             "cop_curve": "Hourly temperature and load lookup",
             "outdoor_temperature_power": "Hourly outdoor-temperature power lookup",
+            "load_ratio_engine_output": "Hourly load-ratio engine-output lookup",
             "load_ratio_power": "Hourly load-ratio power lookup",
             "electrical_path_efficiency": "Hourly electrical-path efficiency lookup",
         }
@@ -52,6 +53,30 @@ class ChillerReportSemanticCleanupTest(unittest.TestCase):
             self.assertIn(wording, basis)
         register = function_source("buildEquipmentCurveRegister")
         self.assertIn("equipmentModelBasis(curveType, variables", register)
+
+    def test_engine_model_basis_is_curve_type_driven(self):
+        basis = function_source("equipmentModelBasis")
+        self.assertIn(
+            'load_ratio_engine_output: "Hourly load-ratio engine-output lookup"',
+            basis,
+        )
+        self.assertNotIn("ENGINE_3", basis)
+        self.assertIn('load_ratio_power: "Hourly load-ratio power lookup"', basis)
+
+    def test_key_findings_wording_is_topology_and_engine_applicability_aware(self):
+        basis = function_source("reportKeyFindingsPueBasis")
+        self.assertIn('topology === "acc_gas_engine_cdu"', basis)
+        self.assertIn('topology === "chiller_dry_cooler" && engineApplicable', basis)
+        self.assertIn(
+            "modeled cooling, pumping, indoor equipment, engine radiator, and electrical distribution loads",
+            basis,
+        )
+        self.assertIn(
+            "modeled cooling, pumping, indoor equipment, and electrical distribution loads",
+            basis,
+        )
+        report = function_source("buildHtmlReportFromSections")
+        self.assertIn("reportKeyFindingsPueBasis(solverTopology, engineApplicable)", report)
 
     def test_chw_cw_and_indoor_equipment_share_load_ratio_basis(self):
         basis = function_source("equipmentModelBasis")
@@ -68,8 +93,8 @@ class ChillerReportSemanticCleanupTest(unittest.TestCase):
 
     def test_legacy_future_equipment_wording_is_absent(self):
         self.assertNotIn("future equipment", UI.lower())
-        report = function_source("buildHtmlReportFromSections")
-        self.assertIn("modeled cooling, pumping, indoor equipment, and electrical distribution loads", report)
+        basis = function_source("reportKeyFindingsPueBasis")
+        self.assertIn("modeled cooling, pumping, indoor equipment, and electrical distribution loads", basis)
 
     def test_facility_power_boundary_is_preserved(self):
         formulas = function_source("formulasHtml")
@@ -78,6 +103,16 @@ class ChillerReportSemanticCleanupTest(unittest.TestCase):
         for token in ("CDU,h", "RTC,h", "MAU,h"):
             self.assertEqual(formulas.count(token), 1)
         self.assertIn("included in the MEP terminal load before electrical-distribution loss", formulas)
+
+    def test_facility_power_formula_shows_only_applicable_engine_radiator(self):
+        formulas = function_source("formulasHtml")
+        self.assertIn("isChiller && engineApplicable", formulas)
+        self.assertIn("engine radiator,h", formulas)
+        self.assertNotIn("engine output", formulas.lower())
+        self.assertNotIn("configuration_id", formulas)
+        self.assertIn("radiator,h", formulas)  # Existing ACC Gas Engine equation.
+        report = function_source("buildHtmlReportFromSections")
+        self.assertIn("formulasHtml(solverTopology, engineApplicable)", report)
 
 
 if __name__ == "__main__":

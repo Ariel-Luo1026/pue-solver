@@ -11,6 +11,12 @@ from equipment_role_resolver import resolve_equipment_role_id, validate_required
 from indoor_equipment import evaluate_indoor_equipment, project_it_load_ratio
 from unit_scenario_manager import resolve_unit_scenario
 from pump_load_framework import evaluate_pump_power, resolve_pump_reference_capacity
+from generation_side_equipment import (
+    evaluate_engine_generation,
+    evaluate_engine_radiator,
+    gas_engine_roles_for_power_source,
+    linear_curve_value,
+)
 
 
 class ChillerDryCoolerRuntimeError(ValueError):
@@ -27,6 +33,14 @@ class ChillerDryCoolerRuntime:
         self.context = configuration_context or {}
         self.selected_curves = self.context.get("selected_curves") or {}
         validate_required_equipment_roles(self.manifest, self.selected_curves)
+        self.power_source = self.context.get("power_source") or self.manifest.get("power_source") or "Grid"
+        generation_roles = gas_engine_roles_for_power_source(
+            self.manifest, self.selected_curves, self.power_source
+        )
+        self.engine_id = generation_roles.engine if generation_roles else None
+        self.engine_radiator_id = generation_roles.engine_radiator if generation_roles else None
+        self.gas_engine_enabled = generation_roles is not None
+        self.engine_radiator_reference_kw = None
 
         self.chiller_id = resolve_equipment_role_id(self.manifest, "chiller", self.selected_curves)
         self.dry_cooler_id = resolve_equipment_role_id(self.manifest, "dry_cooler", self.selected_curves)
@@ -99,7 +113,26 @@ class ChillerDryCoolerRuntime:
         active_cw_pump_units = self._non_negative_role_units(cw_pump_role, unit_scenario["active_units"])
         indoor_role = roles.get("indoor_units") or {}
         indoor_active_units = self._non_negative_role_units(indoor_role, unit_scenario["installed_units"])
+        engine_role = roles.get("engine_units") or {}
+        engine_active_units = self._non_negative_role_units(engine_role, unit_scenario["active_units"])
+        project_engine_units = project.get("engine_active_units")
+        if project_engine_units is not None:
+            engine_active_units = self._non_negative_role_units(
+                {"active_units": project_engine_units}, engine_active_units
+            )
+        engine_radiator_active_units = engine_active_units
+        project_radiator_units = project.get("engine_radiator_active_units")
+        if project_radiator_units is not None:
+            engine_radiator_active_units = self._non_negative_role_units(
+                {"active_units": project_radiator_units}, engine_active_units
+            )
         dry_cooler_approach_c = self._dry_cooler_approach_c()
+        if self.gas_engine_enabled:
+            self.engine_radiator_reference_kw = self._failure_peak_non_radiator_reference(
+                design_it,
+                chiller_unit_capacity_kw,
+                dry_cooler_approach_c,
+            )
 
         hourly_results = []
         totals = {
@@ -117,6 +150,12 @@ class ChillerDryCoolerRuntime:
             "mau": 0.0,
             "white_space": 0.0,
             "electrical_loss": 0.0,
+            "it_electrical_loss": 0.0,
+            "mep_electrical_loss": 0.0,
+            "engine_output": 0.0,
+            "engine_fuel": 0.0,
+            "engine_waste_heat": 0.0,
+            "engine_radiator": 0.0,
         }
 
         for index, load_row in enumerate(cooling_rows):
@@ -130,6 +169,9 @@ class ChillerDryCoolerRuntime:
                 active_cw_pump_units,
                 indoor_active_units,
                 dry_cooler_approach_c,
+                engine_active_units,
+                engine_radiator_active_units,
+                self.engine_radiator_reference_kw,
                 hour=index + 1,
             )
             hourly_results.append(row)
@@ -153,6 +195,12 @@ class ChillerDryCoolerRuntime:
             totals["mau"] += row["mau_power_kW"]
             totals["white_space"] += row["white_space_equipment_power_kW"]
             totals["electrical_loss"] += row["electrical_loss_kW"]
+            totals["it_electrical_loss"] += row["it_electrical_loss_kW"]
+            totals["mep_electrical_loss"] += row["mep_electrical_loss_kW"]
+            totals["engine_output"] += row["engine_output_kW"]
+            totals["engine_fuel"] += row["engine_fuel_input_kW"]
+            totals["engine_waste_heat"] += row["engine_waste_heat_kW"]
+            totals["engine_radiator"] += row["engine_radiator_power_kW"]
 
         annual_average_pue = totals["facility"] / totals["it"] if totals["it"] > 0 else 0.0
         dry_cooler_curve_rows = self._curve_rows(self.dry_cooler_id)
@@ -177,10 +225,24 @@ class ChillerDryCoolerRuntime:
             "annual_mau_energy_kWh": totals["mau"],
             "annual_white_space_equipment_energy_kWh": totals["white_space"],
             "annual_electrical_loss_kWh": totals["electrical_loss"],
+            "annual_it_electrical_loss_kWh": totals["it_electrical_loss"],
+            "annual_mep_electrical_loss_kWh": totals["mep_electrical_loss"],
+            "annual_engine_output_kWh": totals["engine_output"],
+            "annual_engine_energy_kWh": totals["engine_output"],
+            "annual_engine_fuel_input_kWh": totals["engine_fuel"],
+            "annual_engine_waste_heat_kWh": totals["engine_waste_heat"],
+            "average_engine_efficiency": (
+                totals["engine_output"] / totals["engine_fuel"]
+                if totals["engine_fuel"] > 0 else None
+            ),
+            "annual_engine_radiator_energy_kWh": totals["engine_radiator"],
+            "max_engine_radiator_power_kW": max(
+                (row["engine_radiator_power_kW"] for row in hourly_results), default=0.0
+            ),
             "annual_solar_heat_gain_kWh": totals["solar_heat_gain"],
             "annual_other_auxiliary_heat_gain_kWh": totals["other_auxiliary_heat_gain"],
             "annual_cooling_load_kWh": totals["cooling_load"],
-            "annual_total_cooling_system_energy_kWh": totals["chiller"] + totals["dry_cooler"] + totals["pump"] + totals["cw_pump"] + totals["white_space"],
+            "annual_total_cooling_system_energy_kWh": totals["chiller"] + totals["dry_cooler"] + totals["pump"] + totals["cw_pump"] + totals["white_space"] + totals["engine_radiator"],
         }
         standard_annual_energy = aggregate_annual_energy({"hourly_results": hourly_results})
         peak_results = self._peak_design_results(
@@ -192,6 +254,9 @@ class ChillerDryCoolerRuntime:
             active_cw_pump_units,
             indoor_active_units,
             dry_cooler_approach_c,
+            engine_active_units,
+            engine_radiator_active_units,
+            self.engine_radiator_reference_kw,
         )
         capacity_validation = self._capacity_validation(
             peak_results,
@@ -206,6 +271,7 @@ class ChillerDryCoolerRuntime:
             "configuration_display_name": self.context.get("configuration_display_name")
             or self.manifest.get("display_name"),
             "cooling_system_type": self.context.get("cooling_system_type") or self.manifest.get("cooling_system_type"),
+            "power_source": self.power_source,
             "topology_id": "chiller_dry_cooler",
             "solver_dispatch_key": "chiller_dry_cooler",
             "report_profile": self.context.get("report_profile") or self.manifest.get("report_profile"),
@@ -224,6 +290,8 @@ class ChillerDryCoolerRuntime:
                     "chw_pump": self.pump_id,
                     "cw_pump": self.cw_pump_id,
                     "indoor_cooling": deepcopy(self.indoor_equipment_ids),
+                    "engine": self.engine_id,
+                    "engine_radiator": self.engine_radiator_id,
                     "electrical_distribution": self.electrical_id,
                 },
                 "selected_curves": deepcopy(self.selected_curves),
@@ -231,7 +299,9 @@ class ChillerDryCoolerRuntime:
                     "dry_cooler_approach_C": dry_cooler_approach_c,
                     "cooling_load_model": "shared_cooling_load_model",
                     "unit_scenario": deepcopy(unit_scenario),
-                    "facility_power_formula": "IT + chiller + dry_cooler + CHW pump + CW pump + indoor equipment + electrical loss",
+                    "facility_power_formula": "IT + chiller + dry_cooler + CHW pump + CW pump + indoor equipment + Engine Radiator + electrical loss",
+                    "engine_output_boundary": "generation_side_excluded_from_facility_power",
+                    "engine_radiator_reference_power_kW": self.engine_radiator_reference_kw,
                 },
             },
         }
@@ -247,6 +317,10 @@ class ChillerDryCoolerRuntime:
         active_cw_pump_units,
         indoor_active_units,
         dry_cooler_approach_c,
+        engine_active_units=0,
+        engine_radiator_active_units=0,
+        engine_radiator_reference_kw=None,
+        include_generation=True,
         hour=None,
     ):
         """Evaluate annual and peak-design points through one equipment path."""
@@ -284,11 +358,60 @@ class ChillerDryCoolerRuntime:
             self._lookup_indoor_power_per_unit,
         )
         white_space_power_kw = indoor_power["white_space_equipment_power_kW"]
-        electrical_loss_kw = self._electrical_loss(
+        non_radiator_mep_kw = (
+            chiller_power_kw + dry_cooler_power_kw + pump_power_kw
+            + cw_pump_power_kw + white_space_power_kw
+        )
+        non_radiator_electrical_loss_kw = self._electrical_loss(
             load_ratio,
             it_kw=it_kw,
-            mep_kw=chiller_power_kw + dry_cooler_power_kw + pump_power_kw + cw_pump_power_kw + white_space_power_kw,
+            mep_kw=non_radiator_mep_kw,
         )
+        non_radiator_facility_power_kw = (
+            it_kw + non_radiator_mep_kw + non_radiator_electrical_loss_kw
+        )
+        engine_result = {
+            "output_kW": 0.0,
+            "efficiency": None,
+            "fuel_input_kW": 0.0,
+            "waste_heat_kW": 0.0,
+        }
+        radiator_result = {
+            "load_ratio": 0.0,
+            "lookup_load_ratio": 0.0,
+            "power_per_unit_kW": 0.0,
+            "total_power_kW": 0.0,
+        }
+        if self.gas_engine_enabled and include_generation:
+            engine_curve = {
+                "equipment_id": self.engine_id,
+                "data": self._curve_rows(self.engine_id),
+                "default_efficiency": 0.40,
+            }
+            engine_result = evaluate_engine_generation(
+                engine_curve,
+                indoor_load_ratio,
+                engine_active_units,
+                self._lookup_generation_power_per_unit,
+                linear_curve_value,
+            )
+            radiator_result = evaluate_engine_radiator(
+                {
+                    "equipment_id": self.engine_radiator_id,
+                    "data": self._curve_rows(self.engine_radiator_id),
+                },
+                non_radiator_facility_power_kw,
+                engine_radiator_reference_kw,
+                engine_radiator_active_units,
+                self._lookup_radiator_power_per_unit,
+            )
+        engine_radiator_power_kw = radiator_result["total_power_kW"]
+        it_electrical_loss_kw, mep_electrical_loss_kw = self._electrical_loss_components(
+            load_ratio,
+            it_kw=it_kw,
+            mep_kw=non_radiator_mep_kw + engine_radiator_power_kw,
+        )
+        electrical_loss_kw = it_electrical_loss_kw + mep_electrical_loss_kw
         facility_power_kw = (
             it_kw
             + chiller_power_kw
@@ -296,6 +419,7 @@ class ChillerDryCoolerRuntime:
             + pump_power_kw
             + cw_pump_power_kw
             + white_space_power_kw
+            + engine_radiator_power_kw
             + electrical_loss_kw
         )
         return {
@@ -359,6 +483,26 @@ class ChillerDryCoolerRuntime:
             "cw_pump_curve_source": cw_pump["pump_curve_source"],
             "cw_pump_load_ratio_basis": "heat_rejection_per_active_cw_pump_over_fixed_single_pump_reference_capacity",
             "electrical_loss_kW": electrical_loss_kw,
+            "it_electrical_loss_kW": it_electrical_loss_kw,
+            "mep_electrical_loss_kW": mep_electrical_loss_kw,
+            "non_radiator_electrical_loss_kW": non_radiator_electrical_loss_kw,
+            "non_radiator_facility_power_kW": non_radiator_facility_power_kw,
+            "engine_output_kW": engine_result["output_kW"],
+            "engine_power_kW": engine_result["output_kW"],
+            "engine_efficiency": engine_result["efficiency"],
+            "engine_fuel_input_kW": engine_result["fuel_input_kW"],
+            "engine_waste_heat_kW": engine_result["waste_heat_kW"],
+            "engine_active_units": engine_active_units if self.gas_engine_enabled else 0,
+            "engine_3_power_boundary": "generation_side_excluded_from_facility_power",
+            "engine_radiator_power_kW": engine_radiator_power_kw,
+            "engine_radiator_power_per_unit_kW": radiator_result["power_per_unit_kW"],
+            "engine_radiator_load_ratio": radiator_result["load_ratio"],
+            "engine_radiator_load_ratio_lookup": radiator_result["lookup_load_ratio"],
+            "engine_radiator_load_ratio_basis": "non_radiator_facility_demand_ratio",
+            "engine_radiator_reference_power_kW": engine_radiator_reference_kw,
+            "engine_radiator_reference_basis": "failure_scenario_peak_non_radiator_facility_demand",
+            "engine_radiator_active_units": engine_radiator_active_units if self.gas_engine_enabled else 0,
+            "engine_radiator_power_boundary": "facility_auxiliary_electrical_load",
             "facility_power_kW": facility_power_kw,
             "PUE": facility_power_kw / it_kw if it_kw > 0 else 0.0,
         }
@@ -373,6 +517,9 @@ class ChillerDryCoolerRuntime:
         active_cw_pump_units,
         indoor_active_units,
         dry_cooler_approach_c,
+        engine_active_units,
+        engine_radiator_active_units,
+        engine_radiator_reference_kw,
     ):
         """Resolve and evaluate the independent design condition."""
         from solver import _peak_design_weather_condition
@@ -403,6 +550,9 @@ class ChillerDryCoolerRuntime:
             active_cw_pump_units,
             indoor_active_units,
             dry_cooler_approach_c,
+            engine_active_units,
+            engine_radiator_active_units,
+            engine_radiator_reference_kw,
         )
         facility_kw = point["facility_power_kW"]
         peak.update({
@@ -424,9 +574,65 @@ class ChillerDryCoolerRuntime:
             "peak_design_project_load_ratio": point["indoor_equipment_load_ratio"],
             "peak_design_heat_rejection_kW": point["heat_rejection_kW"],
             "peak_design_electrical_loss_kW": point["electrical_loss_kW"],
+            "peak_design_it_electrical_loss_kW": point["it_electrical_loss_kW"],
+            "peak_design_mep_electrical_loss_kW": point["mep_electrical_loss_kW"],
+            "peak_design_engine_output_kW": point["engine_output_kW"],
+            "peak_design_engine_efficiency": point["engine_efficiency"],
+            "peak_design_engine_fuel_input_kW": point["engine_fuel_input_kW"],
+            "peak_design_engine_waste_heat_kW": point["engine_waste_heat_kW"],
+            "peak_design_engine_radiator_power_kW": point["engine_radiator_power_kW"],
+            "peak_design_engine_active_units": point["engine_active_units"],
+            "peak_design_engine_radiator_active_units": point["engine_radiator_active_units"],
             "peak_design_equipment_result": point,
         })
         return peak
+
+    def _failure_peak_non_radiator_reference(
+        self,
+        design_it,
+        chiller_unit_capacity_kw,
+        dry_cooler_approach_c,
+    ):
+        """Evaluate the canonical Failure Peak Design demand before radiator power."""
+        from solver import _peak_design_weather_condition
+
+        condition = _peak_design_weather_condition(self.context)
+        peak = calculate_peak_design_condition(self.context, condition)
+        ambient_c = peak.get("peak_design_outdoor_dry_bulb_C")
+        if ambient_c is None:
+            raise ChillerDryCoolerRuntimeError(
+                "Gas Engine configuration requires a valid Peak Design outdoor dry-bulb condition "
+                "for Engine Radiator normalization."
+            )
+        failure = resolve_unit_scenario(
+            design_it,
+            chiller_unit_capacity_kw,
+            scenario_name="Failure",
+            scenario_formula="required_units",
+        )
+        roles = failure["role_quantities"]
+        point = self._evaluate_operating_point(
+            {
+                "it_load_kW": peak["peak_design_it_load_kW"],
+                "ambient_dry_bulb_C": ambient_c,
+                "solar_heat_gain_kW": peak["peak_design_solar_heat_gain_kW"],
+                "other_auxiliary_heat_gain_kW": peak["peak_design_other_auxiliary_heat_gain_kW"],
+                "cooling_load_kW": peak["peak_design_cooling_load_kW"],
+            },
+            design_it,
+            chiller_unit_capacity_kw,
+            roles["chiller_units"]["active_units"],
+            roles["dry_cooler_units"]["active_units"],
+            roles["chw_pump_units"]["active_units"],
+            roles["cw_pump_units"]["active_units"],
+            roles["indoor_units"]["active_units"],
+            dry_cooler_approach_c,
+            roles["engine_units"]["active_units"],
+            roles["engine_units"]["active_units"],
+            None,
+            include_generation=False,
+        )
+        return point["non_radiator_facility_power_kW"]
 
     def _curve_rows(self, equipment_id):
         selected = self.selected_curves.get(equipment_id) or {}
@@ -475,6 +681,9 @@ class ChillerDryCoolerRuntime:
             if binding.get("enabled") is False:
                 continue
             preloaded[equipment_id] = {"points": self._curve_rows(equipment_id)}
+        for equipment_id in (self.engine_id, self.engine_radiator_id):
+            if equipment_id:
+                preloaded[equipment_id] = {"points": self._curve_rows(equipment_id)}
         electrical_path = self._electrical_path()
         if electrical_path:
             preloaded[f"{self.electrical_id}:IT"] = {
@@ -600,6 +809,22 @@ class ChillerDryCoolerRuntime:
             )
         return float(result.power_kW)
 
+    def _lookup_generation_power_per_unit(self, equipment_id, rows, load_ratio):
+        result = self.generic_engine.lookup_power(equipment_id, load_ratio)
+        if not result.lookup_success or result.power_kW is None:
+            raise ChillerDryCoolerRuntimeError(
+                f"{equipment_id} Solver_Curve lookup failed: {'; '.join(result.errors)}"
+            )
+        return float(result.power_kW)
+
+    def _lookup_radiator_power_per_unit(self, equipment_id, rows, load_ratio):
+        result = self.generic_engine.lookup_power(equipment_id, load_ratio)
+        if not result.lookup_success or result.power_kW is None:
+            raise ChillerDryCoolerRuntimeError(
+                f"{equipment_id} Solver_Curve lookup failed: {'; '.join(result.errors)}"
+            )
+        return {"power_kW": float(result.power_kW), "load_ratio": result.load_ratio}
+
     def _indoor_role(self, equipment_id):
         equipment_type = str(
             ((self.selected_curves.get(equipment_id) or {}).get("equipment_metadata") or {}).get("equipment_type")
@@ -637,9 +862,12 @@ class ChillerDryCoolerRuntime:
         return {}
 
     def _electrical_loss(self, load_ratio, it_kw, mep_kw):
+        return sum(self._electrical_loss_components(load_ratio, it_kw, mep_kw))
+
+    def _electrical_loss_components(self, load_ratio, it_kw, mep_kw):
         electrical_path = self._electrical_path()
         if not electrical_path:
-            return 0.0
+            return 0.0, 0.0
         it_loss = self.generic_engine.lookup_electrical_loss(
             f"{self.electrical_id}:IT",
             load_ratio,
@@ -659,7 +887,7 @@ class ChillerDryCoolerRuntime:
             raise ChillerDryCoolerRuntimeError(
                 f"{self.electrical_id} electrical lookup failed: {'; '.join(errors)}"
             )
-        return float(it_loss.loss_kW or 0.0) + float(mep_loss.loss_kW or 0.0)
+        return float(it_loss.loss_kW or 0.0), float(mep_loss.loss_kW or 0.0)
 
     def _electrical_path(self):
         selected = self.selected_curves.get(self.electrical_id) or {}

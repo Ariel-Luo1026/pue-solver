@@ -423,7 +423,7 @@ def load_configuration_library(configuration_name, library_root=None, total_it_c
         it_profile = load_it_profile(configuration_dir)
     else:
         configuration = _manifest_only_configuration(configuration_name, manifest)
-        scenarios = _default_manifest_only_scenarios()
+        scenarios = _default_manifest_only_scenarios(manifest)
         it_profile = _default_manifest_only_it_profile()
     equipment = load_equipment_packages(configuration_dir, configuration["equipment_per_cooling_unit"])
     _validate_manifest_equipment_roles(manifest, equipment)
@@ -552,6 +552,11 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         auxiliary_ids = []
         if "indoor_cooling" in manifest.get("equipment_roles", {}):
             auxiliary_ids = resolve_equipment_role_id(manifest, "indoor_cooling", loaded["equipment"]) or []
+        engine_id = None
+        radiator_id = None
+        if str(loaded["power_source"] or "").strip().lower().replace("_", " ") == "gas engine":
+            engine_id = resolve_equipment_role_id(manifest, "engine", loaded["equipment"])
+            radiator_id = resolve_equipment_role_id(manifest, "engine_radiator", loaded["equipment"])
 
         electrical_path = loaded["equipment"][electrical_id]["electrical_path"]
         equipment = {
@@ -562,6 +567,8 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
                     pump_id: equipment_binding(pump_id, "chw_pump_power"),
                     cw_pump_id: equipment_binding(cw_pump_id, "cw_pump_power"),
                 },
+                **({"engine": equipment_binding(engine_id, "engine_output_reference")} if engine_id else {}),
+                **({"engine_radiator": equipment_binding(radiator_id, "engine_radiator_power")} if radiator_id else {}),
             },
             "auxiliary": {
                 equipment_id: equipment_binding(equipment_id, "white_space_auxiliary")
@@ -597,6 +604,8 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
                 "installed_units": sizing["installed_units"],
                 "active_units": active_units,
                 "indoor_active_units": sizing["normal_active_units"],
+                "engine_active_units": unit_scenario["role_quantities"]["engine_units"]["active_units"],
+                "engine_radiator_active_units": unit_scenario["role_quantities"]["engine_units"]["active_units"],
                 "redundancy_strategy": "N+1",
                 "scenario_name": scenario["scenario"],
                 "it_load": {
@@ -709,12 +718,14 @@ def _manifest_only_configuration(configuration_name, manifest):
         for equipment_id in values:
             if equipment_id and equipment_id not in equipment_ids:
                 equipment_ids.append(str(equipment_id))
-    capacity_mw = _capacity_mw_from_configuration_id(configuration_name) or 1.0
+    capacity_mw = manifest.get("cooling_unit_capacity_mw")
+    if capacity_mw is None:
+        capacity_mw = _capacity_mw_from_configuration_id(configuration_name) or 1.0
     return {
         "configuration_name": manifest.get("display_name") or configuration_name,
         "cooling_system_type": manifest.get("cooling_system_type"),
         "cooling_unit_capacity_mw": capacity_mw,
-        "power_source": _power_source_from_configuration_id(configuration_name),
+        "power_source": manifest.get("power_source") or _power_source_from_configuration_id(configuration_name),
         "white_space_type": "CDU",
         "equipment_per_cooling_unit": [
             {"equipment_id": equipment_id, "per_cooling_unit": 1}
@@ -723,7 +734,10 @@ def _manifest_only_configuration(configuration_name, manifest):
     }
 
 
-def _default_manifest_only_scenarios():
+def _default_manifest_only_scenarios(manifest=None):
+    configured = (manifest or {}).get("scenarios")
+    if isinstance(configured, list) and configured:
+        return [dict(item) for item in configured if isinstance(item, dict)]
     return [
         {
             "scenario": "Normal",

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "ENGINE_3",
+  "equipment_type": "ENGINE",
+  "display_name": "Gas Engine 3",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": 1500,
+  "power_input_type": "engine_output",
+  "curve_type": "load_ratio_engine_output",
+  "solver_curve_sheet": "Solver_Curve_Normal",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Workbook Information sheet lists 1500 kW normal continuous power requirement per engine.",
+  "source_configuration": "ACC_1.5MW_GASENGINE_CDU"
+}

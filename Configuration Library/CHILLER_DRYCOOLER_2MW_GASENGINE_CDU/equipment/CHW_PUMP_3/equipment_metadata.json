@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "CHW_PUMP_3",
+  "equipment_type": "CHW_PUMP",
+  "display_name": "CHW Pump 3",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "pump",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "prototype",
+  "data_status": "prototype",
+  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID",
+  "notes": "Single pump Solver_Curve shared by Normal and Failure scenarios. Pump load ratio uses a fixed single-pump reference capacity."
+}

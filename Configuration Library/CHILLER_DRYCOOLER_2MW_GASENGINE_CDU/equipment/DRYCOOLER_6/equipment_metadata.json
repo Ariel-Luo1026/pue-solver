@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "DRYCOOLER_6",
+  "equipment_type": "DRY_COOLER",
+  "display_name": "Dry Cooler 6",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": 3065,
+  "power_input_type": "fan",
+  "curve_type": "outdoor_temperature_power",
+  "curve_input": "outdoor_dry_bulb_C",
+  "curve_output": "power_kW",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "implemented",
+  "data_status": "prototype",
+  "source_configuration": "CHILLER_DRYCOOLER_2MW_GRID",
+  "notes": "Engineering temperature-only power estimate based on the supplied dry-cooler capacity data and fan-affinity assumptions. Performance_Map remains the separate thermal-capacity source."
+}

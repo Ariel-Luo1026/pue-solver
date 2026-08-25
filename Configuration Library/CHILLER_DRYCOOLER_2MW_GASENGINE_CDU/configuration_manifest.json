@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "configuration_id": "CHILLER_DRYCOOLER_2MW_GASENGINE_CDU",
+  "display_name": "Chiller + Dry Cooler 2 MW + Gas Engine + CDU",
+  "cooling_system_type": "chiller_dry_cooler",
+  "cooling_technology": "chiller_dry_cooler",
+  "power_source": "Gas Engine",
+  "cooling_unit_capacity_mw": 2.0,
+  "implementation_status": "implemented",
+  "description": "Chiller + Dry Cooler Configuration Library package with manifest-selected Gas Engine and Engine Radiator equipment.",
+  "equipment_roles": {
+    "chiller": "CENTRIFUGALCHILLER_1",
+    "dry_cooler": "DRYCOOLER_6",
+    "chw_pump": "CHW_PUMP_3",
+    "cw_pump": "CW_PUMP_6",
+    "indoor_cooling": [
+      "CDU_2",
+      "RTC_1&2",
+      "MAU_1&2"
+    ],
+    "engine": "ENGINE_3",
+    "engine_radiator": "ENGINE_RADIATOR_1",
+    "electrical_distribution": "ELECTRICAL_DISTRIBUTION_2"
+  },
+  "required_roles": [
+    "chiller",
+    "dry_cooler",
+    "chw_pump",
+    "cw_pump",
+    "indoor_cooling",
+    "engine",
+    "engine_radiator",
+    "electrical_distribution"
+  ],
+  "optional_roles": [],
+  "scenarios": [
+    {
+      "scenario": "Normal",
+      "running_unit_formula": "installed_units",
+      "description": "All installed cooling, Engine, and Engine Radiator units operate."
+    },
+    {
+      "scenario": "Failure",
+      "running_unit_formula": "required_units",
+      "description": "One redundant cooling, Engine, and Engine Radiator unit is unavailable."
+    }
+  ],
+  "solver_topology": "chiller_dry_cooler",
+  "report_profile": "chiller_dry_cooler"
+}

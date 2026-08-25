@@ -92,7 +92,7 @@ class ClientReportTopologyPresentationTests(unittest.TestCase):
         self.assertIn('const isChiller = String(topologyId)', formulas)
         self.assertIn("Dry Cooler Leaving Water", formulas)
         self.assertIn("...(isChiller ? [", formulas)
-        self.assertIn("formulasHtml(solverTopology)", self.report)
+        self.assertIn("formulasHtml(solverTopology, engineApplicable)", self.report)
 
     def test_solar_heat_gain_is_hourly_summed_once_and_reconciles(self):
         self.assertEqual(31_536_000 + 12_082.823 + 621_960, 32_170_042.823)

@@ -81,17 +81,20 @@ class FinalReportConsistencyCleanupTest(unittest.TestCase):
         self.assertIn('"Active CHW Pump Count"', UI)
         self.assertNotIn('["Active Pump Count"', UI)
 
-    def test_key_findings_engine_radiator_wording_is_acc_only(self):
+    def test_key_findings_engine_radiator_wording_tracks_applicability(self):
         report = function_source(UI, "buildHtmlReportFromSections")
-        self.assertIn('solverTopology === "acc_gas_engine_cdu"', report)
+        basis = function_source(UI, "reportKeyFindingsPueBasis")
+        self.assertIn('topology === "acc_gas_engine_cdu"', basis)
+        self.assertIn('topology === "chiller_dry_cooler" && engineApplicable', basis)
         self.assertIn(
             "modeled cooling, pumping, indoor equipment, engine radiator, and electrical distribution loads",
-            report,
+            basis,
         )
         self.assertIn(
             "modeled cooling, pumping, indoor equipment, and electrical distribution loads",
-            report,
+            basis,
         )
+        self.assertIn("reportKeyFindingsPueBasis(solverTopology, engineApplicable)", report)
         self.assertIn("esc(keyFindingsPueBasis)", report)
 
     def test_redundant_chw_sentence_is_removed_but_canonical_formula_remains(self):
@@ -115,7 +118,7 @@ class FinalReportConsistencyCleanupTest(unittest.TestCase):
         acc_allowed = topology[topology.index('topology === "acc_gas_engine_cdu"'):topology.index('topology === "chiller_dry_cooler"')]
         chiller_allowed = topology[topology.index('topology === "chiller_dry_cooler"'):]
         self.assertIn("ENGINE_RADIATOR", acc_allowed)
-        self.assertNotIn("ENGINE_RADIATOR", chiller_allowed)
+        self.assertIn('engineApplicable ? ["ENGINE_RADIATOR"] : []', chiller_allowed)
 
 
 if __name__ == "__main__":
