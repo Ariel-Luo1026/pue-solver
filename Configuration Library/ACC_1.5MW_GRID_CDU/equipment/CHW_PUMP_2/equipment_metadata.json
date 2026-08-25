@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "CHW_PUMP_2",
+  "equipment_type": "CHW_PUMP",
+  "display_name": "CHW Pump 2",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "pump",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve_Normal",
+  "unit_system": "SI",
+  "status": "implemented",
+  "load_ratio_basis": "Cooling load per active cooling unit divided by configured cooling-unit rated design capacity.",
+  "reference_capacity_basis": "cooling_unit_rated_capacity_kW",
+  "design_basis_limitation": "The current normalized load ratio is an engineering design-basis assumption pending vendor confirmation of design flow, head, water-side DeltaT, and pump performance data.",
+  "notes": "Workbook Metadata status is Preliminary; the curve is an engineering placeholder pending vendor data. Normal and Failure use the same Solver_Curve; the configured cooling-unit rated design capacity is unchanged while active unit count changes."
+}

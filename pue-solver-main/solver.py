@@ -15,6 +15,7 @@ from generation_side_equipment import (
     evaluate_engine_generation,
     evaluate_engine_radiator,
     engine_radiator_load_ratio as calculate_engine_radiator_load_ratio,
+    generation_is_applicable,
 )
 
 try:
@@ -2287,6 +2288,11 @@ def compute_pue_project(input_obj):
         isinstance(input_obj.get("library_context"), dict)
         or isinstance(input_obj.get("configuration_library"), dict)
     )
+    generation_applicable = (
+        generation_is_applicable(input_obj.get("power_source"))
+        if configuration_library_direct_mode
+        else True
+    )
 
     if len(hourly_it_load) == 0 or len(dry_bulb) == 0:
         # fallback to a single design snapshot
@@ -3062,7 +3068,7 @@ def compute_pue_project(input_obj):
         engine_radiator_previous_cooling_load_ratio = engine_radiator_load_ratio
         engine_radiator_load_ratio_basis = "cooling_demand_per_active_unit_over_cooling_unit_capacity"
         engine_radiator_load_ratio_lookup = None
-        if configuration_library_direct_mode:
+        if configuration_library_direct_mode and generation_applicable:
             try:
                 engine_evaluation = evaluate_engine_generation(
                     engine_curve,
@@ -3130,6 +3136,18 @@ def compute_pue_project(input_obj):
                 result["validation"] = validation
                 result["error"] = error_message
                 return result
+        elif configuration_library_direct_mode:
+            engine_output_kw = None
+            engine_efficiency = None
+            engine_fuel_input_kw = None
+            engine_waste_heat_kw = None
+            engine_curve_source = "not_applicable"
+            engine_radiator_power_kw = 0.0
+            engine_radiator_curve_source = "not_applicable"
+            engine_3_power_boundary = "not_applicable"
+            engine_radiator_power_boundary = "not_applicable"
+            engine_radiator_load_ratio = None
+            engine_radiator_load_ratio_lookup = None
         else:
             engine_output_kw, engine_efficiency, engine_fuel_input_kw, engine_waste_heat_kw, engine_curve_source = _evaluate_engine_curve(
                 engine_curve, project_load_ratio, engine_active_units
@@ -3404,7 +3422,7 @@ def compute_pue_project(input_obj):
         default=0.0,
     )
     failure_peak_non_radiator_facility_power_kw = peak_non_radiator_facility_power_kw
-    if configuration_library_direct_mode and not input_obj.get("_engine_radiator_failure_reference_mode"):
+    if configuration_library_direct_mode and generation_applicable and not input_obj.get("_engine_radiator_failure_reference_mode"):
         try:
             # Direct Mode has already loaded every curve and binding.  Derive the
             # one-hour Failure reference from that in-memory input so Pyodide does
@@ -3490,7 +3508,7 @@ def compute_pue_project(input_obj):
             non_radiator_facility_power_kw,
             failure_peak_non_radiator_facility_power_kw,
         )
-        if configuration_library_direct_mode:
+        if configuration_library_direct_mode and generation_applicable:
             radiator_equipment_id = equipment_id_from_curve(
                 engine_radiator_curve, "engine_radiator"
             )
@@ -3537,6 +3555,12 @@ def compute_pue_project(input_obj):
                     or 0.0
                 ),
             ) * engine_radiator_active_units
+        elif configuration_library_direct_mode:
+            engine_radiator_power_kw = 0.0
+            engine_radiator_curve_source = "not_applicable"
+            engine_radiator_load_ratio = None
+            engine_radiator_load_ratio_lookup = None
+            engine_radiator_previous_annual_max_power_kw = 0.0
         else:
             engine_radiator_power_kw, engine_radiator_curve_source = _evaluate_engine_radiator_curve(
                 engine_radiator_curve,
@@ -3684,9 +3708,9 @@ def compute_pue_project(input_obj):
     acc_temperature_power_factors = [item.get("acc_temperature_power_factor") for item in result["hourly_results"] if item.get("acc_temperature_power_factor") is not None]
     max_acc_power = max((item.get("acc_power_kW", 0.0) for item in result["hourly_results"]), default=0.0)
     acc_curve_sources = [item.get("acc_curve_source") for item in result["hourly_results"] if item.get("acc_curve_source") not in (None, "not_applied")]
-    annual_engine_output = sum(item.get("engine_output_kW", 0.0) for item in result["hourly_results"])
-    annual_engine_fuel = sum(item.get("engine_fuel_input_kW", 0.0) for item in result["hourly_results"])
-    annual_engine_waste_heat = sum(item.get("engine_waste_heat_kW", 0.0) for item in result["hourly_results"])
+    annual_engine_output = sum(item.get("engine_output_kW") or 0.0 for item in result["hourly_results"])
+    annual_engine_fuel = sum(item.get("engine_fuel_input_kW") or 0.0 for item in result["hourly_results"])
+    annual_engine_waste_heat = sum(item.get("engine_waste_heat_kW") or 0.0 for item in result["hourly_results"])
     engine_efficiency_values = [item.get("engine_efficiency") for item in result["hourly_results"] if item.get("engine_efficiency") is not None]
     engine_curve_sources = [item.get("engine_curve_source") for item in result["hourly_results"] if item.get("engine_curve_source") not in (None, "not_applied")]
     engine_curve_types = [item.get("engine_curve_type") for item in result["hourly_results"] if item.get("engine_curve_type") not in (None, "not_applied")]

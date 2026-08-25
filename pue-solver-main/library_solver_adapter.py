@@ -112,10 +112,12 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
     hours = len(hourly_it)
     active_units = int(project_source.get("active_units") or 1)
     indoor_active_units = int(project_source.get("indoor_active_units") or project_source.get("installed_units") or active_units)
-    engine_active_units = int(project_source.get("engine_active_units") or active_units)
-    engine_radiator_active_units = int(
-        project_source.get("engine_radiator_active_units") or engine_active_units
-    )
+    from generation_side_equipment import gas_engine_roles_for_power_source
+
+    power_source = library_input.get("power_source")
+    generation_roles = gas_engine_roles_for_power_source(manifest, library_input.get("selected_curves", {}), power_source)
+    engine_active_units = int(project_source.get("engine_active_units") or active_units) if generation_roles else None
+    engine_radiator_active_units = int(project_source.get("engine_radiator_active_units") or engine_active_units) if generation_roles else None
     capacity_kw = float(project_source.get("cooling_unit_capacity_kW") or 0.0)
 
     weather = deepcopy(library_input.get("weather")) if isinstance(library_input.get("weather"), dict) else None
@@ -139,13 +141,13 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         raise ValueError("library_input is missing configuration_manifest.equipment_roles")
     acc_equipment_id = resolve_equipment_role_id(manifest, "primary_cooling", selected_curves)
     pump_equipment_id = resolve_equipment_role_id(manifest, "chw_pump", selected_curves)
-    engine_equipment_id = resolve_equipment_role_id(manifest, "engine", selected_curves)
-    radiator_equipment_id = resolve_equipment_role_id(manifest, "engine_radiator", selected_curves)
+    engine_equipment_id = generation_roles.engine if generation_roles else None
+    radiator_equipment_id = generation_roles.engine_radiator if generation_roles else None
 
     acc_rows = _selected_curve(library_input, acc_equipment_id)
     pump_rows = _selected_curve(library_input, pump_equipment_id)
-    engine_rows = _selected_curve(library_input, engine_equipment_id)
-    radiator_rows = _selected_curve(library_input, radiator_equipment_id)
+    engine_rows = _selected_curve(library_input, engine_equipment_id) if generation_roles else None
+    radiator_rows = _selected_curve(library_input, radiator_equipment_id) if generation_roles else None
     acc_curve_id = f"{acc_equipment_id}_COP"
     pump_curve_id = f"{pump_equipment_id}_power_vs_load"
     curves = {
@@ -167,8 +169,9 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
     project["installed_units"] = project_source.get("installed_units")
     project["active_units"] = active_units
     project["indoor_active_units"] = indoor_active_units
-    project["engine_active_units"] = engine_active_units
-    project["engine_radiator_active_units"] = engine_radiator_active_units
+    if generation_roles:
+        project["engine_active_units"] = engine_active_units
+        project["engine_radiator_active_units"] = engine_radiator_active_units
 
     equipment_context = library_input.get("equipment") if isinstance(library_input.get("equipment"), dict) else {}
     auxiliary_equipment = deepcopy(equipment_context.get("auxiliary"))
@@ -201,11 +204,9 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         "installed_units": project_source.get("installed_units"),
         "active_units": active_units,
         "indoor_active_units": indoor_active_units,
-        "engine_active_units": engine_active_units,
-        "engine_radiator_active_units": engine_radiator_active_units,
+        **({"engine_active_units": engine_active_units, "engine_radiator_active_units": engine_radiator_active_units} if generation_roles else {}),
         "selected_curves": deepcopy(library_input.get("selected_curves", {})),
-        "engine_output_reference": engine_binding,
-        "engine_radiator": radiator_binding,
+        **({"engine_output_reference": engine_binding, "engine_radiator": radiator_binding} if generation_roles else {}),
         "auxiliary_equipment": auxiliary_equipment,
         "electrical_path": deepcopy(library_input.get("electrical_path")),
         "adapter_assumptions": weather.get("metadata", {}),
@@ -224,18 +225,17 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
         "power_source": library_input.get("power_source"),
         "scenario_name": library_input.get("scenario_name"),
         "acc_curve": deepcopy(library_context["acc_curve"]),
-        "engine_curve": {
+        **({"engine_curve": {
             "equipment_id": engine_equipment_id,
             "source_sheet": selected_curves.get(engine_equipment_id, {}).get("sheet_name"),
             "data": deepcopy(engine_rows),
             "default_efficiency": 0.40,
             "default_efficiency_source": "temporary_assumption_pending_vendor_fuel_map",
-        },
-        "engine_radiator_curve": {
+        }, "engine_radiator_curve": {
             "equipment_id": radiator_equipment_id,
             "source_sheet": selected_curves.get(radiator_equipment_id, {}).get("sheet_name"),
             "data": deepcopy(radiator_rows),
-        },
+        }} if generation_roles else {}),
         "project": project,
         "ashrae_design_conditions_url": ashrae_endpoint,
         "site_location": deepcopy(library_input.get("site_location", {})),

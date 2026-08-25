@@ -116,6 +116,17 @@ def validate_configuration_manifest(raw_manifest, manifest_path=None):
                 manifest_path,
                 f"missing required equipment role: {role}",
             )
+
+    power_source = manifest.get("power_source")
+    normalized_power_source = "".join(character for character in str(power_source or "").lower() if character.isalnum())
+    if normalized_power_source == "gasengine":
+        for role in ("engine", "engine_radiator"):
+            if not manifest["equipment_roles"].get(role) or role not in manifest["required_roles"]:
+                raise _error(
+                    configuration_id,
+                    manifest_path,
+                    f"Gas Engine configuration requires generation role: {role}",
+                )
     if manifest_path:
         manifest["manifest_path"] = str(manifest_path)
     return manifest

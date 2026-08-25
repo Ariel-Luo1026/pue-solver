@@ -625,10 +625,15 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
             },
         }
 
+    from generation_side_equipment import gas_engine_roles_for_power_source
+
     acc_id = resolve_equipment_role_id(manifest, "primary_cooling", loaded["equipment"])
     pump_id = resolve_equipment_role_id(manifest, "chw_pump", loaded["equipment"])
-    engine_id = resolve_equipment_role_id(manifest, "engine", loaded["equipment"])
-    radiator_id = resolve_equipment_role_id(manifest, "engine_radiator", loaded["equipment"])
+    generation_roles = gas_engine_roles_for_power_source(
+        manifest, loaded["equipment"], loaded["power_source"]
+    )
+    engine_id = generation_roles.engine if generation_roles else None
+    radiator_id = generation_roles.engine_radiator if generation_roles else None
     electrical_id = resolve_equipment_role_id(manifest, "electrical_distribution", loaded["equipment"])
     if "indoor_cooling" in manifest.get("equipment_roles", {}):
         auxiliary_ids = resolve_equipment_role_id(manifest, "indoor_cooling", loaded["equipment"])
@@ -643,8 +648,8 @@ def build_solver_input_from_library(config_name, total_it_capacity_mw, scenario_
         "cooling": {
             "ACC": equipment_binding(acc_id, "cooling_equipment"),
             "pumps": {pump_id: equipment_binding(pump_id, "pump_power")},
-            "engine": equipment_binding(engine_id, "engine_output_reference"),
-            "engine_radiator": equipment_binding(radiator_id, "engine_radiator_power"),
+            **({"engine": equipment_binding(engine_id, "engine_output_reference")} if engine_id else {}),
+            **({"engine_radiator": equipment_binding(radiator_id, "engine_radiator_power")} if radiator_id else {}),
         },
         "auxiliary": {
             equipment_id: equipment_binding(equipment_id, "white_space_auxiliary")

@@ -84,8 +84,8 @@ class FinalReportConsistencyCleanupTest(unittest.TestCase):
     def test_key_findings_engine_radiator_wording_tracks_applicability(self):
         report = function_source(UI, "buildHtmlReportFromSections")
         basis = function_source(UI, "reportKeyFindingsPueBasis")
-        self.assertIn('topology === "acc_gas_engine_cdu"', basis)
-        self.assertIn('topology === "chiller_dry_cooler" && engineApplicable', basis)
+        self.assertIn('["acc_gas_engine_cdu", "chiller_dry_cooler"].includes(topology)', basis)
+        self.assertIn("engineApplicable", basis)
         self.assertIn(
             "modeled cooling, pumping, indoor equipment, engine radiator, and electrical distribution loads",
             basis,

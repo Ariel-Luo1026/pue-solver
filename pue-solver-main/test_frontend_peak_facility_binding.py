@@ -165,7 +165,7 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
             "7. Annual Performance Charts",
         ):
             self.assertIn(heading, report)
-        self.assertIn("annualEquipmentEnergyRows(annual, solverTopology)", report)
+        self.assertIn("annualEquipmentEnergyRows(annual, solverTopology, engineApplicable)", report)
         for example in ("5167.249", "5850.222", "5152.550", "5856.754"):
             self.assertNotIn(example, report)
 

@@ -70,7 +70,9 @@ class ReportStructurePolishTest(unittest.TestCase):
         self.assertIn('"Cooling Technology"', self.report)
         self.assertIn('"System Architecture"', self.report)
         self.assertNotIn('["Solver Topology"', self.report)
-        self.assertIn('["Report Profile"', self.report[self.report.index("Appendix D — Engineering Diagnostics"):])
+        appendix = self.report[self.report.index("Appendix D — Engineering Diagnostics"):]
+        self.assertIn('["Internal Report Profile"', appendix)
+        self.assertIn('["Internal Dispatch Identifier"', appendix)
 
     @classmethod
     def _function_source(cls, name):

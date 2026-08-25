@@ -65,8 +65,8 @@ class ChillerReportSemanticCleanupTest(unittest.TestCase):
 
     def test_key_findings_wording_is_topology_and_engine_applicability_aware(self):
         basis = function_source("reportKeyFindingsPueBasis")
-        self.assertIn('topology === "acc_gas_engine_cdu"', basis)
-        self.assertIn('topology === "chiller_dry_cooler" && engineApplicable', basis)
+        self.assertIn('["acc_gas_engine_cdu", "chiller_dry_cooler"].includes(topology)', basis)
+        self.assertIn("engineApplicable", basis)
         self.assertIn(
             "modeled cooling, pumping, indoor equipment, engine radiator, and electrical distribution loads",
             basis,
@@ -106,7 +106,7 @@ class ChillerReportSemanticCleanupTest(unittest.TestCase):
 
     def test_facility_power_formula_shows_only_applicable_engine_radiator(self):
         formulas = function_source("formulasHtml")
-        self.assertIn("isChiller && engineApplicable", formulas)
+        self.assertIn("const engineRadiatorTerm = engineApplicable", formulas)
         self.assertIn("engine radiator,h", formulas)
         self.assertNotIn("engine output", formulas.lower())
         self.assertNotIn("configuration_id", formulas)

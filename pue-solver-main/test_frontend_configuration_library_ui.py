@@ -558,7 +558,7 @@ class FrontendConfigurationLibraryUITest(unittest.TestCase):
         self.assertIn('"chiller_dry_cooler"', self.ui)
         catalog_block = self._function_source("renderConfigurationLibraryCatalog")
         self.assertIn("manifest.runnable ? \"\" : \"disabled\"", catalog_block)
-        self.assertIn("Topology: ${topology.display}", catalog_block)
+        self.assertIn("Topology: ${topologyDisplay}", catalog_block)
         builder_block = self._function_source("buildGenericConfigurationLibraryPayload")
         self.assertIn('SUPPORTED_CONFIGURATION_TOPOLOGIES.includes(topologyId)', builder_block)
         self.assertIn("role_bindings: roleBindings", builder_block)

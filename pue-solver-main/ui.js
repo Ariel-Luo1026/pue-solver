@@ -506,8 +506,8 @@ function equipmentModelBasis(curveType, independentVariables = [], electricalPat
 
 function reportKeyFindingsPueBasis(topologyId, engineApplicable = false) {
     const topology = String(topologyId || "").toLowerCase();
-    const includeEngineRadiator = topology === "acc_gas_engine_cdu"
-        || (topology === "chiller_dry_cooler" && engineApplicable);
+    const includeEngineRadiator = engineApplicable
+        && ["acc_gas_engine_cdu", "chiller_dry_cooler"].includes(topology);
     return includeEngineRadiator
         ? "Annual PUE contributions are derived from the modeled cooling, pumping, indoor equipment, engine radiator, and electrical distribution loads."
         : "Annual PUE contributions are derived from the modeled cooling, pumping, indoor equipment, and electrical distribution loads.";
@@ -577,7 +577,7 @@ function topologyAwareAnnualEnergyBreakdown(topologyId, breakdown = {}, solverRe
     const topology = String(topologyId || "").toLowerCase();
     const engineApplicable = engineGenerationApplicable(solverResult);
     const allowed = topology === "acc_gas_engine_cdu"
-        ? new Set(["ACC", "CHW_PUMP", "CDU", "RTC", "MAU", "INDOOR_EQUIPMENT", "ENGINE_RADIATOR", "OTHER_ELECTRICAL_AUXILIARY", "ELECTRICAL_LOSS"])
+        ? new Set(["ACC", "CHW_PUMP", "CDU", "RTC", "MAU", "INDOOR_EQUIPMENT", ...(engineApplicable ? ["ENGINE_RADIATOR"] : []), "OTHER_ELECTRICAL_AUXILIARY", "ELECTRICAL_LOSS"])
         : topology === "chiller_dry_cooler"
             ? new Set(["CHILLER", "DRY_COOLER", "CHW_PUMP", "CW_PUMP", "CDU", "RTC", "MAU", "INDOOR_EQUIPMENT", ...(engineApplicable ? ["ENGINE_RADIATOR"] : []), "OTHER_ELECTRICAL_AUXILIARY", "ELECTRICAL_LOSS"])
             : null;
@@ -3227,14 +3227,14 @@ function epwChartSection(weatherData) {
 
 function formulasHtml(topologyId = "", engineApplicable = false) {
     const isChiller = String(topologyId).toLowerCase() === "chiller_dry_cooler";
-    const engineRadiatorTerm = isChiller && engineApplicable
+    const engineRadiatorTerm = engineApplicable
         ? ` + <i>P</i><sub>engine radiator,h</sub>`
         : "";
     const formulas = [
         ["Annual PUE", `<span class="math"><i>PUE</i><sub>annual</sub> = <span class="frac"><span>∑<sub>h=1</sub><sup>N</sup> <i>P</i><sub>facility,h</sub></span><span>∑<sub>h=1</sub><sup>N</sup> <i>P</i><sub>IT,h</sub></span></span></span>`],
         ["Facility Power Balance", isChiller
             ? `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>chiller,h</sub> + <i>P</i><sub>drycooler,h</sub> + <i>P</i><sub>CHW pump,h</sub> + <i>P</i><sub>CW pump,h</sub> + <i>P</i><sub>indoor,h</sub>${engineRadiatorTerm} + <i>P</i><sub>aux,h</sub> + <i>P</i><sub>elec,loss,h</sub></span><br><span class="math"><i>P</i><sub>indoor,h</sub> = <i>P</i><sub>CDU,h</sub> + <i>P</i><sub>RTC,h</sub> + <i>P</i><sub>MAU,h</sub></span><div class="caption">Indoor equipment power is included in the MEP terminal load before electrical-distribution loss is applied.</div>`
-            : `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>ACC,h</sub> + <i>P</i><sub>CHW pump,h</sub> + <i>P</i><sub>indoor,h</sub> + <i>P</i><sub>radiator,h</sub> + <i>P</i><sub>aux,h</sub></span>`],
+            : `<span class="math"><i>P</i><sub>facility,h</sub> = <i>P</i><sub>IT,h</sub> + <i>P</i><sub>elec,h</sub> + <i>P</i><sub>ACC,h</sub> + <i>P</i><sub>CHW pump,h</sub> + <i>P</i><sub>indoor,h</sub>${engineRadiatorTerm} + <i>P</i><sub>aux,h</sub></span>`],
         ["UPS Efficiency Loss", `<span class="math"><i>P</i><sub>UPS,loss</sub> = <i>P</i><sub>IT</sub> · (η<sub>UPS</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
         ["Transformer Loss", `<span class="math"><i>P</i><sub>TR,loss</sub> = <i>P</i><sub>out</sub> · (η<sub>TR</sub>(<i>LR</i>)<sup>−1</sup> − 1)</span>`],
         ["Cooling Load Assembly", `<span class="math"><i>Q</i><sub>cooling,h</sub> = <i>Q</i><sub>IT,h</sub> + <i>Q</i><sub>solar,h</sub> + <i>Q</i><sub>other_aux,h</sub></span>`],
@@ -3290,7 +3290,6 @@ function buildHtmlReportFromSections(context) {
     const hasVariableItLoad = itLoadValues.length > 1 && itLoadVariation > 1e-6;
     const monthlyPue = report.visualization_data.monthly_pue;
     const reportCurves = collectReportCurves();
-    const curveGroups = groupReportCurves(reportCurves);
     const tempDistribution = buildTemperatureDistribution(weatherData);
     const drySummary = summarizeNumericArray(dry);
     const annualEnergyBreakdown = report.annual_energy_breakdown || {};
@@ -3344,11 +3343,11 @@ function buildHtmlReportFromSections(context) {
     const coolingTechnology = solverTopology === "acc_gas_engine_cdu" ? "ACC" : solverTopology === "chiller_dry_cooler" ? "Chiller + Dry Cooler" : (report.cooling_system_type || context.input?.cooling_system_type || "N/A");
     const powerSource = context.input?.power_source || output.power_source || (solverTopology === "acc_gas_engine_cdu" ? "Gas Engine" : solverTopology === "chiller_dry_cooler" ? "Grid" : "N/A");
     const engineApplicable = engineGenerationApplicable(output, context.input || {});
-    const systemArchitecture = solverTopology === "acc_gas_engine_cdu" ? "ACC + Gas Engine + CDU" : solverTopology === "chiller_dry_cooler" ? `Chiller + Dry Cooler + ${engineApplicable ? "Gas Engine" : "Grid"}` : (report.cooling_system_type || context.input?.cooling_system_type || "N/A");
+    const systemArchitecture = solverTopology === "acc_gas_engine_cdu" ? `ACC + ${engineApplicable ? "Gas Engine" : "Grid"} + CDU` : solverTopology === "chiller_dry_cooler" ? `Chiller + Dry Cooler + ${engineApplicable ? "Gas Engine" : "Grid"}` : (report.cooling_system_type || context.input?.cooling_system_type || "N/A");
     const scenarioName = output.project?.scenario_name || report.operating_scenario?.scenario_name || "Normal";
     const peakSummary = report.visualization_data.peak_summary;
     const peakDemandBreakdown = buildPeakDemandBreakdown(output, peakSummary, solverTopology);
-    const reportAnnualEnergyRows = annualEquipmentEnergyRows(annual, solverTopology);
+    const reportAnnualEnergyRows = annualEquipmentEnergyRows(annual, solverTopology, engineApplicable);
     const pueContributions = pueContributionBreakdown(annualEnergyBreakdown, annual);
     const keyFindingsPueBasis = reportKeyFindingsPueBasis(solverTopology, engineApplicable);
     const reportContextRows = engineeringContextRows(output, report, context.input || {});
@@ -3405,7 +3404,7 @@ function buildHtmlReportFromSections(context) {
             ["RTC Power, kW", peak.peak_design_RTC_power_kW],
             ["CDU Power, kW", peak.peak_design_CDU_power_kW],
             ["MAU Power, kW", peak.peak_design_MAU_power_kW],
-            ["Engine Radiator Power, kW", peak.peak_design_engine_radiator_power_kW]
+            ...(engineApplicable ? [["Engine Radiator Power, kW", peak.peak_design_engine_radiator_power_kW]] : [])
         ] : (engineApplicable ? [["Engine Radiator Power, kW", peak.peak_design_engine_radiator_power_kW]] : [])),
         ["Other Active Equipment Power, kW", peak.peak_design_other_electrical_auxiliary_power_kW],
         ["Electrical Loss, kW", peak.peak_design_electrical_loss_kW]
@@ -3413,7 +3412,7 @@ function buildHtmlReportFromSections(context) {
         .map(([label, value]) => [label, reportValue(value, "", label === "Chiller COP" ? 3 : 1)]);
     const importedCurveRows = reportCurves.filter(curve => {
         const category = String(curve.category || "").toLowerCase();
-        if (solverTopology === "acc_gas_engine_cdu") return !/chiller|dry cooler|cw pump/.test(category);
+        if (solverTopology === "acc_gas_engine_cdu") return !/chiller|dry cooler|cw pump/.test(category) && (engineApplicable || !/engine radiator|engine output/.test(category));
         if (solverTopology === "chiller_dry_cooler") return !/\bacc\b|cdu|rtc|mau/.test(category) && (engineApplicable || !/engine radiator/.test(category));
         return true;
     }).map(curve => [
@@ -3427,7 +3426,7 @@ function buildHtmlReportFromSections(context) {
     ]);
     const curveApplicable = curve => {
         const family = equipmentRoleFamily(curve.equipment_id || curve.category);
-        if (solverTopology === "acc_gas_engine_cdu") return !["chiller", "dry_cooler", "cw_pump"].includes(family);
+        if (solverTopology === "acc_gas_engine_cdu") return !["chiller", "dry_cooler", "cw_pump"].includes(family) && (engineApplicable || !["engine", "engine_radiator"].includes(family));
         if (solverTopology === "chiller_dry_cooler") return !["acc", "cdu", "rtc", "mau"].includes(family) && (engineApplicable || family !== "engine_radiator");
         return true;
     };
@@ -3437,6 +3436,7 @@ function buildHtmlReportFromSections(context) {
         esc(curve.curve_type),
         esc(curve.model_basis)
     ]);
+    const curveGroups = groupReportCurves(reportCurves.filter(curveApplicable));
     const performanceRows = report.equipment_performance || [];
     const coolingLoad = report.cooling_load_breakdown || {};
     const performanceCards = performanceRows.map(row => {
@@ -3730,8 +3730,10 @@ function buildHtmlReportFromSections(context) {
     <h2>Appendix D — Engineering Diagnostics</h2>
     <table><tbody>${tableRows([
         ["Solver", esc(output.solver || output.solver_name || "dispatch_topology")],
-        ["Topology Identifier", esc(solverTopology)],
-        ["Report Profile", esc(report.profile_id || "generic_pue")]
+        ["Cooling Topology", esc(coolingTechnology)],
+        ["Power Source", esc(powerSource)],
+        ["Internal Dispatch Identifier", esc(solverTopology)],
+        ["Internal Report Profile", esc(report.profile_id || "generic_pue")]
     ])}</tbody></table>
 </section>
 </main>
@@ -5640,6 +5642,15 @@ function topologyStatusForManifest(manifest) {
     };
 }
 
+function configurationTopologyDisplay(manifest) {
+    const declared = String(manifest?.cooling_technology || "").trim();
+    if (declared) return declared;
+    const topologyId = manifest?.solver_topology || manifest?.topology_id;
+    if (topologyId === "acc_gas_engine_cdu") return "ACC";
+    if (topologyId === "chiller_dry_cooler") return "Chiller + Dry Cooler";
+    return topologyStatusForManifest(manifest).display;
+}
+
 function isConfigurationManifestRunnable(manifest) {
     const topology = topologyStatusForManifest(manifest);
     return manifest?.implementation_status === "implemented"
@@ -5648,6 +5659,13 @@ function isConfigurationManifestRunnable(manifest) {
 }
 
 function configurationLibraryLoadMode(manifest) {
+    const capacityMw = Number(manifest?.cooling_unit_capacity_mw);
+    const manifestOwnsConfiguration = Boolean(manifest?.power_source)
+        && Number.isFinite(capacityMw)
+        && capacityMw > 0
+        && Array.isArray(manifest?.scenarios)
+        && manifest.scenarios.length > 0;
+    if (manifestOwnsConfiguration) return "manifest";
     return manifest?.solver_topology === "acc_gas_engine_cdu" ? "legacy" : "manifest";
 }
 
@@ -5697,8 +5715,8 @@ function renderConfigurationLibraryCatalog() {
     }
     select.innerHTML = configurationLibraryCatalog.map(manifest => {
         const statusLabel = configurationStatusLabel(manifest.implementation_status);
-        const topology = topologyStatusForManifest(manifest);
-        const label = `${manifest.display_name || manifest.configuration_id} — Topology: ${topology.display} (${statusLabel})`;
+        const topologyDisplay = configurationTopologyDisplay(manifest);
+        const label = `${manifest.display_name || manifest.configuration_id} — Topology: ${topologyDisplay} (${statusLabel})`;
         return `<option value="${esc(manifest.configuration_id)}" ${manifest.runnable ? "" : "disabled"}>${esc(label)}</option>`;
     }).join("");
     const firstRunnable = configurationLibraryCatalog.find(item => item.runnable);
@@ -6002,15 +6020,18 @@ function defaultConfigurationLibraryItLoad(configurationName, hours = 8760) {
 }
 
 function manifestPowerSource(configurationName, manifest) {
+    if (manifest?.power_source) return String(manifest.power_source);
     const text = `${configurationName || ""} ${manifest?.display_name || ""}`.toUpperCase();
     return text.includes("GASENGINE") || text.includes("GAS ENGINE") ? "Gas Engine" : "Grid";
 }
 
 function manifestCoolingSystemType(manifest) {
-    return topologyStatusForManifest(manifest).display || manifest?.cooling_system_type || "Configuration Library";
+    return configurationTopologyDisplay(manifest) || manifest?.cooling_system_type || "Configuration Library";
 }
 
 function manifestCoolingUnitCapacityMw(manifest, equipmentEntries) {
+    const declaredCapacityMw = Number(manifest?.cooling_unit_capacity_mw);
+    if (Number.isFinite(declaredCapacityMw) && declaredCapacityMw > 0) return declaredCapacityMw;
     const equipment = Object.fromEntries(equipmentEntries || []);
     const priorityRoles = ["primary_cooling", "chiller", "dry_cooler"];
     for (const roleName of priorityRoles) {
@@ -6730,7 +6751,7 @@ async function loadSelectedConfigurationLibrary() {
     if (!selectedManifest.runnable) {
         if (status) {
             const topology = topologyStatusForManifest(selectedManifest);
-            status.textContent = `Topology: ${topology.display} (Status: ${configurationStatusLabel(topology.status)}). This configuration requires validated Solver_Curve data and solver module implementation.`;
+            status.textContent = `Topology: ${configurationTopologyDisplay(selectedManifest)} (Status: ${configurationStatusLabel(topology.status)}). This configuration requires validated Solver_Curve data and solver module implementation.`;
             status.style.color = "#b45309";
         }
         return;
@@ -6775,6 +6796,9 @@ async function loadSelectedConfigurationLibrary() {
             itLoadSourceFile = "input/IT_LOAD_90_PERCENT.xlsx";
         } else {
             equipmentEntries = await loadConfigurationEquipmentEntries(configurationName, selectedManifest);
+            scenarios = Array.isArray(selectedManifest.scenarios) && selectedManifest.scenarios.length
+                ? selectedManifest.scenarios.map(scenario => ({ ...scenario }))
+                : defaultConfigurationLibraryScenarios();
             const manifestItLoad = defaultConfigurationLibraryItLoad(configurationName);
             percentages = manifestItLoad.payload.hourly_it_load_percent;
             ratios = manifestItLoad.payload.hourly_it_load_ratio;
@@ -6928,7 +6952,7 @@ function initStandardDataInputs() {
         const status = document.getElementById("configurationLibraryStatus");
         if (status && manifest) {
             const topology = topologyStatusForManifest(manifest);
-            status.textContent = `Topology: ${topology.display} (Status: ${configurationStatusLabel(topology.status)}).`;
+            status.textContent = `Topology: ${configurationTopologyDisplay(manifest)} (Status: ${configurationStatusLabel(topology.status)}).`;
             status.style.color = manifest.runnable ? "#374151" : "#b45309";
         }
         renderFrameworkDiagnosticsPanel();
@@ -7064,11 +7088,11 @@ function engineGenerationApplicable(outObj = {}, input = {}) {
     const annual = outObj.annual_results || {};
     const topology = String(outObj.topology_id || outObj.solver_dispatch_key || input.topology_id || "").toLowerCase();
     const powerSource = input.power_source || outObj.power_source || "";
+    if (/^grid$/i.test(String(powerSource).trim())) return false;
     const manifest = input.configuration_manifest || outObj.library_context?.configuration_manifest || {};
     const roleValues = Object.values(manifest.equipment_roles || {}).flatMap(value => Array.isArray(value) ? value : [value]);
     const engineConfigured = roleValues.some(equipmentId => /^ENGINE(?:_|$)/i.test(String(equipmentId)) && !/RADIATOR/i.test(String(equipmentId)));
-    return topology === "acc_gas_engine_cdu"
-        || /gas\s*engine/i.test(String(powerSource))
+    return /gas\s*engine/i.test(String(powerSource))
         || engineConfigured
         || Number(annual.annual_engine_output_kWh) > 0;
 }
@@ -7118,7 +7142,7 @@ function buildPeakDemandBreakdown(outObj, peakSummary, topologyId = outObj?.topo
         ["CDU Power", value(annualRow.cdu_power_kW), value(peak.peak_design_CDU_power_kW)],
         ["RTC Power", value(annualRow.rtc_power_kW), value(peak.peak_design_RTC_power_kW)],
         ["MAU Power", value(annualRow.mau_power_kW), value(peak.peak_design_MAU_power_kW)],
-        engineRadiatorRow
+        ...(engineGenerationApplicable(outObj) ? [engineRadiatorRow] : [])
     ];
     const rows = [
         commonRows[0], ...topologyRows, commonRows[1],
@@ -7175,7 +7199,7 @@ function annualFacilityEnergySummary(outObj = {}) {
     };
 }
 
-function annualEquipmentEnergyRows(annual = {}, topologyId = "") {
+function annualEquipmentEnergyRows(annual = {}, topologyId = "", engineApplicable = false) {
     const common = [
         ["IT", annual.annual_IT_energy_kWh],
         ["CHW Pump", annual.annual_chw_pump_energy_kWh ?? annual.annual_pump_energy_kWh]
@@ -7187,13 +7211,13 @@ function annualEquipmentEnergyRows(annual = {}, topologyId = "") {
         ["CDU", annual.annual_cdu_energy_kWh],
         ["RTC", annual.annual_rtc_energy_kWh],
         ["MAU", annual.annual_mau_energy_kWh],
-        ["Engine Radiator", annual.annual_engine_radiator_energy_kWh]
+        ...(engineApplicable ? [["Engine Radiator", annual.annual_engine_radiator_energy_kWh]] : [])
     ] : [
         ["ACC", annual.annual_acc_energy_kWh],
         ["CDU", annual.annual_cdu_energy_kWh],
         ["RTC", annual.annual_rtc_energy_kWh],
         ["MAU", annual.annual_mau_energy_kWh],
-        ["Engine Radiator", annual.annual_engine_radiator_energy_kWh]
+        ...(engineApplicable ? [["Engine Radiator", annual.annual_engine_radiator_energy_kWh]] : [])
     ];
     const rows = [
         common[0], ...topologyRows, common[1],
@@ -7300,6 +7324,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
     const project = outObj.project || {};
     const hourly = Array.isArray(outObj.hourly_results) ? outObj.hourly_results : [];
     const chwPumpDiagnostic = hourly.find(row => Number.isFinite(Number(row.chw_pump_reference_capacity_kW ?? row.pump_reference_capacity_per_unit_kW)));
+    const engineApplicable = engineGenerationApplicable(outObj, configurationLibraryData || {});
     const context = document.getElementById("engineeringContextStrip");
     const scenario = project.scenario_name || outObj.scenario_name || report?.operating_scenario?.scenario_name || "N/A";
     if (context) context.innerHTML = engineeringContextRows(outObj, report, configurationLibraryData || {})
@@ -7320,7 +7345,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
     if (equipment) {
         const facility = Number(annual.annual_facility_energy_kWh) || 0;
         const topologyId = outObj.topology_id || outObj.solver_dispatch_key || report?.topology || report?.profile_id || "";
-        const rows = annualEquipmentEnergyRows(annual, topologyId);
+        const rows = annualEquipmentEnergyRows(annual, topologyId, engineApplicable);
         equipment.innerHTML = `<table><thead><tr><th>Component</th><th>Annual Energy</th><th>% of Facility Energy</th></tr></thead><tbody>${[
             ...rows,
             ["Total Facility Energy", facility]
@@ -7352,9 +7377,11 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
         ["Maximum CHW Pump Power", Number.isFinite(maximumHourlyValue("pump_power_kW")) ? `${fmtNumber(maximumHourlyValue("pump_power_kW"), 3)} kW` : null],
         ["Maximum CW Pump Load Ratio", maximumHourlyValue("cw_pump_load_ratio_raw")],
         ["Maximum CW Pump Power", Number.isFinite(maximumHourlyValue("cw_pump_power_kW")) ? `${fmtNumber(maximumHourlyValue("cw_pump_power_kW"), 3)} kW` : null],
-        ["Maximum ENGINE_RADIATOR Load Ratio", maximumHourlyValue("engine_radiator_load_ratio")],
-        ["Maximum ENGINE_RADIATOR Fan Power", Number.isFinite(Number(annual.max_engine_radiator_power_kW)) ? `${fmtNumber(annual.max_engine_radiator_power_kW, 3)} kW` : null],
-        ["Annual ENGINE_RADIATOR Fan Energy", Number.isFinite(Number(annual.annual_engine_radiator_energy_kWh)) ? engineeringEnergyDisplay(annual.annual_engine_radiator_energy_kWh) : null]
+        ...(engineApplicable ? [
+            ["Maximum ENGINE_RADIATOR Load Ratio", maximumHourlyValue("engine_radiator_load_ratio")],
+            ["Maximum ENGINE_RADIATOR Fan Power", Number.isFinite(Number(annual.max_engine_radiator_power_kW)) ? `${fmtNumber(annual.max_engine_radiator_power_kW, 3)} kW` : null],
+            ["Annual ENGINE_RADIATOR Fan Energy", Number.isFinite(Number(annual.annual_engine_radiator_energy_kWh)) ? engineeringEnergyDisplay(annual.annual_engine_radiator_energy_kWh) : null]
+        ] : [])
     ].filter(([, value]) => value !== null && value !== undefined).map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join("")}</tbody></table>
         ${Number(annual.annual_engine_output_kWh) > 0 ? `<h4>Generation-Side Reference</h4><table><tbody>${[
             ["Annual Engine Output", engineeringEnergyDisplay(annual.annual_engine_output_kWh)],
@@ -7363,7 +7390,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
             ["Annual Waste Heat", engineeringEnergyDisplay(annual.annual_engine_waste_heat_kWh)]
         ].filter(([, value]) => value !== null && value !== undefined && value !== "N/A").map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join("")}</tbody></table>` : ""}
         ${chwPumpDiagnostic?.chw_pump_design_basis_limitation ? `<div class="muted">${esc(chwPumpDiagnostic.chw_pump_design_basis_limitation)}</div>` : ""}
-        ${engineGenerationApplicable(outObj, configurationLibraryData || {}) ? `<div class="muted">ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.</div>` : ""}`;
+        ${engineApplicable ? `<div class="muted">ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.</div>` : ""}`;
 }
 
 function showProjectVisualization(outObj) {

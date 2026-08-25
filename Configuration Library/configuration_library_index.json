@@ -6,6 +6,10 @@
       "manifest_path": "ACC_1.5MW_GASENGINE_CDU/configuration_manifest.json"
     },
     {
+      "configuration_id": "ACC_1.5MW_GRID_CDU",
+      "manifest_path": "ACC_1.5MW_GRID_CDU/configuration_manifest.json"
+    },
+    {
       "configuration_id": "CHILLER_DRYCOOLER_2MW_GRID",
       "manifest_path": "CHILLER_DRYCOOLER_2MW_GRID/configuration_manifest.json"
     },

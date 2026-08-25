@@ -66,7 +66,10 @@ class ClientReportTopologyPresentationTests(unittest.TestCase):
         self.assertNotIn('["ENGINE_RADIATOR", annual.annual_engine_radiator_energy_kWh]', rows)
         self.assertIn("Electrical Distribution Loss", rows)
         appendix = self.report[self.report.index("Appendix D — Engineering Diagnostics"):]
-        self.assertIn("Topology Identifier", appendix)
+        self.assertIn("Cooling Topology", appendix)
+        self.assertIn("Power Source", appendix)
+        self.assertIn("Internal Dispatch Identifier", appendix)
+        self.assertNotIn('["Topology Identifier"', appendix)
         self.assertIn("solverTopology", appendix)
 
     def test_equipment_performance_cards_are_not_duplicated(self):

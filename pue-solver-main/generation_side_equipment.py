@@ -20,10 +20,15 @@ class GenerationRoleIds:
     engine_radiator: str
 
 
+def generation_is_applicable(power_source):
+    """Return whether the declared power source requires generation equipment."""
+    normalized = "".join(character for character in str(power_source or "").lower() if character.isalnum())
+    return normalized == "gasengine"
+
+
 def gas_engine_roles_for_power_source(manifest, loaded_equipment, power_source):
     """Activate generation roles only for an explicitly configured Gas Engine source."""
-    normalized = "".join(character for character in str(power_source or "").lower() if character.isalnum())
-    if normalized != "gasengine":
+    if not generation_is_applicable(power_source):
         return None
     return resolve_generation_role_ids(manifest, loaded_equipment)
 

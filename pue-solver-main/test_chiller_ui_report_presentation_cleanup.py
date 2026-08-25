@@ -36,7 +36,7 @@ def function_source(name):
 class ChillerUiReportPresentationCleanupTest(unittest.TestCase):
     def test_browser_annual_breakdown_passes_topology_to_shared_rows(self):
         renderer = function_source("renderEngineeringResultsSummary")
-        self.assertIn("annualEquipmentEnergyRows(annual, topologyId)", renderer)
+        self.assertIn("annualEquipmentEnergyRows(annual, topologyId, engineApplicable)", renderer)
 
     def test_chiller_annual_rows_contain_every_active_component_once(self):
         rows = function_source("annualEquipmentEnergyRows")
@@ -57,7 +57,8 @@ class ChillerUiReportPresentationCleanupTest(unittest.TestCase):
 
     def test_one_shared_engine_applicability_rule_controls_all_renderers(self):
         applicability = function_source("engineGenerationApplicable")
-        self.assertIn('topology === "acc_gas_engine_cdu"', applicability)
+        self.assertIn('/^grid$/i.test(String(powerSource).trim())', applicability)
+        self.assertNotIn('topology === "acc_gas_engine_cdu"', applicability)
         self.assertIn("gas\\s*engine", applicability)
         self.assertIn("engineConfigured", applicability)
         self.assertIn("annual_engine_output_kWh", applicability)
