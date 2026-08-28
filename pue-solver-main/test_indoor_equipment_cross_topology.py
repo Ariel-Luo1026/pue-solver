@@ -30,21 +30,36 @@ class IndoorEquipmentCrossTopologyTest(unittest.TestCase):
             bindings[role] = {"equipment_id": equipment_id, "enabled": True}
             curves[equipment_id] = {"points": selected[equipment_id]["curve"]}
         engine = ConfigurationLibraryEquipmentEngine(EquipmentEngineConfig(preloaded_curves=curves))
+        expected_per_unit_power = {}
 
         def lookup(role, equipment_id, binding, load_ratio):
             result = engine.lookup_power(equipment_id, load_ratio)
             self.assertTrue(result.lookup_success, result.errors)
+            expected_per_unit_power[role] = result.power_kW
             return result.power_kW
 
-        return evaluate_indoor_equipment(bindings, ratio, units, lookup)
+        result = evaluate_indoor_equipment(bindings, ratio, units, lookup)
+        return result, expected_per_unit_power
 
-    def test_acc_and_chiller_use_identical_indoor_curve_results(self):
-        acc = self._evaluate_configuration("ACC_1.5MW_GASENGINE_CDU")
-        chiller = self._evaluate_configuration("CHILLER_DRYCOOLER_2MW_GRID")
-        for field in ("cdu_power_kW", "rtc_power_kW", "mau_power_kW", "white_space_equipment_power_kW"):
-            self.assertAlmostEqual(acc[field], chiller[field])
-        self.assertAlmostEqual(chiller["cdu_power_kW"], 56.61)
-        self.assertAlmostEqual(chiller["white_space_equipment_power_kW"], 108.87)
+    def test_cross_topology_indoor_equipment_uses_package_curves_with_shared_basis(self):
+        acc, acc_per_unit = self._evaluate_configuration("ACC_1.5MW_GASENGINE_CDU")
+        chiller, chiller_per_unit = self._evaluate_configuration("CHILLER_DRYCOOLER_2MW_GRID")
+
+        for result, expected_per_unit in ((acc, acc_per_unit), (chiller, chiller_per_unit)):
+            self.assertEqual(result["indoor_equipment_load_ratio"], 0.9)
+            self.assertEqual(result["indoor_equipment_load_ratio_basis"], "it_project_load_ratio")
+            self.assertEqual(result["indoor_active_units"], 3)
+            self.assertEqual(result["indoor_equipment_unit_count_basis"], "normal_indoor_active_units")
+            for role in ("cdu", "rtc", "mau"):
+                self.assertAlmostEqual(result[f"{role}_power_kW"], expected_per_unit[role] * 3)
+            self.assertAlmostEqual(
+                result["white_space_equipment_power_kW"],
+                sum(expected_per_unit.values()) * 3,
+            )
+
+        self.assertAlmostEqual(acc_per_unit["rtc"], 9.25)
+        self.assertAlmostEqual(chiller_per_unit["rtc"], 12.34)
+        self.assertNotEqual(acc_per_unit["rtc"], chiller_per_unit["rtc"])
 
     def test_project_it_load_ratio_is_shared_and_clamped(self):
         self.assertEqual(project_it_load_ratio(3600, 4000), 0.9)

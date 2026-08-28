@@ -1,6 +1,9 @@
 """Shared single-curve pump load and power calculation."""
 
 PUMP_LOAD_RATIO_BASIS = "hourly cooling load / (active pump count * fixed single-pump reference capacity)"
+FAILURE_PEAK_DESIGN_LOAD_RATIO_BASIS = (
+    "failure_peak_design_cooling_load_per_active_chw_pump"
+)
 COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS = (
     "cooling_load_per_active_unit_over_cooling_unit_rated_capacity"
 )
@@ -8,6 +11,58 @@ COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS = (
 
 class PumpLoadFrameworkError(ValueError):
     pass
+
+
+def calculate_failure_peak_pump_reference(
+    design_it_load_kW,
+    peak_solar_heat_gain_kW,
+    other_auxiliary_heat_gain_kW,
+    failure_active_pump_count,
+):
+    """Return the project-specific CHW Pump reference from canonical Peak Design inputs."""
+    try:
+        active_count = int(failure_active_pump_count)
+    except (TypeError, ValueError) as exc:
+        raise PumpLoadFrameworkError(
+            "Failure active CHW Pump count must be a positive integer."
+        ) from exc
+    if active_count <= 0:
+        raise PumpLoadFrameworkError(
+            "Failure active CHW Pump count must be greater than zero."
+        )
+
+    try:
+        design_it = float(design_it_load_kW)
+        solar = float(peak_solar_heat_gain_kW or 0.0)
+        auxiliary = float(other_auxiliary_heat_gain_kW or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise PumpLoadFrameworkError(
+            "Peak Design Cooling Load is missing or invalid for CHW Pump normalization."
+        ) from exc
+    if design_it <= 0:
+        raise PumpLoadFrameworkError(
+            "Design IT load must be greater than zero for CHW Pump normalization."
+        )
+    peak_cooling = design_it + solar + auxiliary
+    if peak_cooling <= 0:
+        raise PumpLoadFrameworkError(
+            "Peak Design Cooling Load must be greater than zero for CHW Pump normalization."
+        )
+
+    reference = peak_cooling / active_count
+    if reference <= 0:
+        raise PumpLoadFrameworkError(
+            "CHW Pump reference capacity must be greater than zero."
+        )
+    return {
+        "pump_reference_capacity_kW": reference,
+        "pump_reference_basis": FAILURE_PEAK_DESIGN_LOAD_RATIO_BASIS,
+        "pump_reference_peak_cooling_load_kW": peak_cooling,
+        "pump_reference_failure_active_units": active_count,
+        "peak_design_it_load_kW": design_it,
+        "peak_design_solar_heat_gain_kW": solar,
+        "peak_design_other_auxiliary_heat_gain_kW": auxiliary,
+    }
 
 
 def resolve_pump_reference_capacity(role_metadata=None, equipment_metadata=None, associated_equipment_capacity_kW=None, cooling_unit_capacity_kW=None):

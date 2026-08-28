@@ -10,7 +10,11 @@ from equipment_performance import dispatch_performance_adapter
 from equipment_role_resolver import resolve_equipment_role_id, validate_required_equipment_roles
 from indoor_equipment import evaluate_indoor_equipment, project_it_load_ratio
 from unit_scenario_manager import resolve_unit_scenario
-from pump_load_framework import evaluate_pump_power, resolve_pump_reference_capacity
+from pump_load_framework import (
+    calculate_failure_peak_pump_reference,
+    evaluate_pump_power,
+    resolve_pump_reference_capacity,
+)
 from generation_side_equipment import (
     evaluate_engine_generation,
     evaluate_engine_radiator,
@@ -21,6 +25,10 @@ from generation_side_equipment import (
 
 class ChillerDryCoolerRuntimeError(ValueError):
     """Raised when the chiller + dry cooler runtime cannot evaluate input."""
+
+
+CHW_PUMP_ROLE = "chw_pump"
+CW_PUMP_ROLE = "cw_pump"
 
 
 class ChillerDryCoolerRuntime:
@@ -73,12 +81,9 @@ class ChillerDryCoolerRuntime:
         self.generic_engine = ConfigurationLibraryEquipmentEngine(
             EquipmentEngineConfig(preloaded_curves=self._generic_preloaded_curves())
         )
-        self.pump_reference_capacity_kw, self.pump_reference_capacity_source = resolve_pump_reference_capacity(
-            role_metadata=(self.context.get("role_bindings") or {}).get("chw_pump")
-            or (self.manifest.get("role_metadata") or {}).get("chw_pump"),
-            equipment_metadata=self._equipment_metadata(self.pump_id, "chw_pump", "CHW_PUMP", "load_ratio_power"),
-            cooling_unit_capacity_kW=(self.context.get("project") or {}).get("cooling_unit_capacity_kW"),
-        )
+        self.pump_reference_capacity_kw = None
+        self.pump_reference_capacity_source = None
+        self.pump_reference_diagnostics = None
         dry_cooler_information = self._equipment_binding(self.dry_cooler_id).get("information") or {}
         dry_cooler_metadata = self._equipment_metadata(self.dry_cooler_id, "dry_cooler", "DRY_COOLER", "ambient_capacity_power")
         self.cw_pump_reference_capacity_kw, self.cw_pump_reference_capacity_source = resolve_pump_reference_capacity(
@@ -105,6 +110,33 @@ class ChillerDryCoolerRuntime:
         if chiller_unit_capacity_kw <= 0:
             raise ChillerDryCoolerRuntimeError("project.cooling_unit_capacity_kW must be greater than 0.")
         unit_scenario = self._unit_scenario(design_it, chiller_unit_capacity_kw)
+        failure_scenario = resolve_unit_scenario(
+            design_it,
+            chiller_unit_capacity_kw,
+            scenario_name="Failure",
+            scenario_formula="required_units",
+        )
+        failure_roles = failure_scenario.get("role_quantities") or {}
+        failure_active_pump_units = self._active_role_units(
+            failure_roles,
+            "chw_pump_units",
+            self._active_role_units(
+                failure_roles, "pump_units", failure_scenario["active_units"]
+            ),
+        )
+        peak_design = calculate_peak_design_condition(self.context)
+        self.pump_reference_diagnostics = calculate_failure_peak_pump_reference(
+            design_it,
+            peak_design["peak_design_solar_heat_gain_kW"],
+            peak_design["peak_design_other_auxiliary_heat_gain_kW"],
+            failure_active_pump_units,
+        )
+        self.pump_reference_capacity_kw = self.pump_reference_diagnostics[
+            "pump_reference_capacity_kW"
+        ]
+        self.pump_reference_capacity_source = self.pump_reference_diagnostics[
+            "pump_reference_basis"
+        ]
         roles = unit_scenario.get("role_quantities") or {}
         active_chiller_units = self._active_role_units(roles, "chiller_units", unit_scenario["active_units"])
         active_dry_cooler_units = self._active_role_units(roles, "dry_cooler_units", unit_scenario["active_units"])
@@ -466,6 +498,23 @@ class ChillerDryCoolerRuntime:
             "pump_load_ratio": pump["pump_load_ratio_lookup"],
             "pump_power_per_unit_kW": pump["pump_power_per_unit_kW"],
             "pump_power_kW": pump_power_kw,
+            "chw_pump_reference_capacity_kW": self.pump_reference_capacity_kw,
+            "chw_pump_reference_capacity_source": self.pump_reference_capacity_source,
+            "chw_pump_reference_capacity_basis": "Failure Peak Design cooling load per active CHW Pump",
+            "chw_pump_reference_peak_cooling_load_kW": self.pump_reference_diagnostics[
+                "pump_reference_peak_cooling_load_kW"
+            ],
+            "chw_pump_reference_failure_active_units": self.pump_reference_diagnostics[
+                "pump_reference_failure_active_units"
+            ],
+            "chw_pump_current_load_per_unit_kW": pump["pump_required_load_per_unit_kW"],
+            "chw_pump_load_ratio_raw": pump["pump_load_ratio_raw"],
+            "chw_pump_load_ratio": pump["pump_load_ratio_lookup"],
+            "chw_pump_load_ratio_basis": self.pump_reference_capacity_source,
+            "chw_pump_load_ratio_warning": (
+                "CHW Pump load ratio exceeds the Failure Peak Design reference."
+                if pump["pump_overload"] else None
+            ),
             "cw_pump_reference_capacity_per_unit_kW": cw_pump["pump_reference_capacity_per_unit_kW"],
             "cw_pump_reference_capacity_source": self.cw_pump_reference_capacity_source,
             "cw_pump_active_unit_count": cw_pump["pump_active_unit_count"],

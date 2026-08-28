@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "ELECTRICAL_DISTRIBUTION_2",
+  "equipment_type": "ELECTRICAL_DISTRIBUTION",
+  "display_name": "Electrical Distribution 2",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "electrical_loss",
+  "curve_type": "electrical_path_efficiency",
+  "solver_curve_sheet": "Solver",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Production performance workbook is user-authored and has not been supplied. No numerical curve was generated, copied, fitted, scaled, interpolated, or modified by Codex."
+}

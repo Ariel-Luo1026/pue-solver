@@ -3,7 +3,8 @@ import unittest
 from hashlib import sha256
 from pathlib import Path
 
-from configuration_library_loader import build_solver_input_from_library
+from configuration_library_loader import _records, build_solver_input_from_library, read_xlsx_sheets
+from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
 from library_solver_adapter import convert_library_input_to_solver_input
 from solver import compute_pue_project
 
@@ -20,6 +21,7 @@ COMMON_EQUIPMENT = (
     "MAU_1&2",
     "ELECTRICAL_DISTRIBUTION_2",
 )
+CONFIGURATION_OWNED_SEMANTIC_EQUIPMENT = {"CDU_2"}
 
 
 def file_hash(path):
@@ -48,6 +50,33 @@ def executable_input(configuration_id, scenario, hours=1):
 
 
 class AccGridConfigurationActivationTest(unittest.TestCase):
+    def assert_configuration_owned_workbooks_semantically_equal(
+        self, grid_workbook, gas_workbook, equipment_id, representative_load_ratio
+    ):
+        grid_sheets = read_xlsx_sheets(grid_workbook)
+        gas_sheets = read_xlsx_sheets(gas_workbook)
+        self.assertEqual(list(grid_sheets), list(gas_sheets))
+        self.assertEqual(grid_sheets["Solver_Curve"][0], gas_sheets["Solver_Curve"][0])
+        for sheet_name in ("Metadata", "Performance_Map", "Solver_Curve", "Validation"):
+            self.assertEqual(_records(grid_sheets[sheet_name]), _records(gas_sheets[sheet_name]))
+
+        grid_information = {row["Parameter"]: row["Value"] for row in _records(grid_sheets["Information"])}
+        gas_information = {row["Parameter"]: row["Value"] for row in _records(gas_sheets["Information"])}
+        for parameter in ("Equipment Type", "Model ID", "Maximum Power", "Base Power", "Primary Read Sheet"):
+            self.assertEqual(grid_information[parameter], gas_information[parameter])
+
+        curves = {
+            "grid": {"points": _records(grid_sheets["Solver_Curve"])},
+            "gas": {"points": _records(gas_sheets["Solver_Curve"])},
+        }
+        engine = ConfigurationLibraryEquipmentEngine(EquipmentEngineConfig(preloaded_curves=curves))
+        grid_point = engine.lookup_power("grid", representative_load_ratio)
+        gas_point = engine.lookup_power("gas", representative_load_ratio)
+        self.assertTrue(grid_point.lookup_success, grid_point.errors)
+        self.assertTrue(gas_point.lookup_success, gas_point.errors)
+        self.assertAlmostEqual(grid_point.power_kW, gas_point.power_kW)
+        return grid_point.power_kW
+
     def test_manifest_and_index_activate_grid_configuration(self):
         manifest = json.loads((LIBRARY / GRID_ID / "configuration_manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["configuration_id"], GRID_ID)
@@ -73,7 +102,14 @@ class AccGridConfigurationActivationTest(unittest.TestCase):
                 gas_files = sorted(path.name for path in gas_dir.iterdir() if path.is_file() and not path.name.startswith("~$"))
                 self.assertEqual(grid_files, gas_files)
                 for filename in grid_files:
-                    self.assertEqual(file_hash(grid_dir / filename), file_hash(gas_dir / filename))
+                    if equipment_id in CONFIGURATION_OWNED_SEMANTIC_EQUIPMENT and filename.endswith(".xlsx"):
+                        power_per_unit = self.assert_configuration_owned_workbooks_semantically_equal(
+                            grid_dir / filename, gas_dir / filename, equipment_id, 0.9
+                        )
+                        self.assertAlmostEqual(power_per_unit, 18.87)
+                        self.assertAlmostEqual(power_per_unit * 3, 56.61)
+                    else:
+                        self.assertEqual(file_hash(grid_dir / filename), file_hash(gas_dir / filename))
         self.assertFalse((LIBRARY / GRID_ID / "equipment" / "ENGINE_3").exists())
         self.assertFalse((LIBRARY / GRID_ID / "equipment" / "ENGINE_RADIATOR_1").exists())
 

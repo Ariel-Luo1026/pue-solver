@@ -2,6 +2,14 @@
   "schema_version": "1.0",
   "configurations": [
     {
+      "configuration_id": "ACC_1MW_GASENGINE_CDU",
+      "manifest_path": "ACC_1MW_GASENGINE_CDU/configuration_manifest.json"
+    },
+    {
+      "configuration_id": "ACC_1MW_GRID_CDU",
+      "manifest_path": "ACC_1MW_GRID_CDU/configuration_manifest.json"
+    },
+    {
       "configuration_id": "ACC_1.5MW_GASENGINE_CDU",
       "manifest_path": "ACC_1.5MW_GASENGINE_CDU/configuration_manifest.json"
     },

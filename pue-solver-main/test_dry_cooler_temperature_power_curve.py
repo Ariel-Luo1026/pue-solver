@@ -78,13 +78,18 @@ class DryCoolerTemperaturePowerCurveTest(unittest.TestCase):
         output = dispatch_topology(payload["configuration_manifest"], payload)["annual_results"]
         expected = {
             "annual_chiller_energy_kWh": 2665424.606890732,
-            "annual_chw_pump_energy_kWh": 595504.7999999264,
             "annual_cw_pump_energy_kWh": 365736.88120780105,
             "annual_cooling_load_kWh": 31536000.0,
             "annual_IT_energy_kWh": 31536000.0,
         }
         for key, value in expected.items():
             self.assertAlmostEqual(output[key], value)
+        expected_annual_chw_pump_energy_kWh = 11.12 * 3 * 8760
+        self.assertAlmostEqual(
+            output["annual_chw_pump_energy_kWh"],
+            expected_annual_chw_pump_energy_kWh,
+            places=6,
+        )
 
     def test_frontend_schema_and_report_disclosure_use_temperature_only_model(self):
         ui = (Path(__file__).resolve().parent / "ui.js").read_text(encoding="utf-8")

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "ACC_1",
+  "equipment_type": "ACC",
+  "display_name": "ACC 1",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "compressor_and_fan",
+  "curve_type": "ambient_capacity_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Production performance workbook is user-authored. Its rectangular Solver_Curve was validated without generating, fitting, scaling, interpolating, or modifying numerical data."
+}

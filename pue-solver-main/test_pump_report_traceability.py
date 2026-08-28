@@ -5,8 +5,8 @@ from pathlib import Path
 class PumpReportTraceabilityTest(unittest.TestCase):
     def test_report_discloses_unified_pump_method_and_annual_diagnostics(self):
         ui = (Path(__file__).with_name("ui.js")).read_text(encoding="utf-8")
-        self.assertIn("Cooling Unit Rated Design Capacity", ui)
-        self.assertIn("Cooling Load per Active Unit / Cooling Unit Rated Design Capacity", ui)
+        self.assertIn("Failure Peak Design cooling load per active CHW Pump", ui)
+        self.assertIn("Current Cooling Load per Active CHW Pump / Failure Peak Design Cooling Load per Active CHW Pump", ui)
         self.assertIn("chw_pump_design_basis_limitation", ui)
         self.assertIn("Normal and Failure use the same Solver_Curve", ui)
         self.assertIn("Pump Annual Diagnostics", ui)

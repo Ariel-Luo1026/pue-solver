@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "MAU_1&2",
+  "equipment_type": "MAU",
+  "display_name": "MAU 1&2",
+  "manufacturer": "",
+  "model": "",
+  "rated_capacity_kW": null,
+  "power_input_type": "fan",
+  "curve_type": "load_ratio_power",
+  "solver_curve_sheet": "Solver_Curve",
+  "unit_system": "SI",
+  "status": "implemented",
+  "notes": "Production performance workbook is user-authored and has not been supplied. No numerical curve was generated, copied, fitted, scaled, interpolated, or modified by Codex."
+}

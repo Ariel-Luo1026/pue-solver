@@ -19,6 +19,10 @@ class ACCOperatingPoint:
     power_input_per_unit_kW: float | None = None
     capacity_clamped: bool = False
     diagnostic_load_ratio: float | None = None
+    requested_ambient_C: float | None = None
+    ambient_clamped: bool = False
+    capacity_bracket_low_kW: float | None = None
+    capacity_bracket_high_kW: float | None = None
 
 
 @dataclass(frozen=True)
@@ -47,7 +51,8 @@ def lookup_acc_curve(preview, ambient_C, load_ratio=None, required_capacity_kW=N
         return _lookup_acc_curve_by_load(rows, ambient_C, load_ratio)
     ambient_values = sorted({row["ambient_C"] for row in rows})
 
-    ambient = _clamp(_to_float(ambient_C, "ambient_C"), ambient_values[0], ambient_values[-1])
+    requested_ambient = _to_float(ambient_C, "ambient_C")
+    ambient = _clamp(requested_ambient, ambient_values[0], ambient_values[-1])
     if required_capacity_kW is None:
         raise ValueError("ACC V2 capacity lookup requires required_capacity_kW.")
     required_capacity = _to_float(required_capacity_kW, "required_capacity_kW")
@@ -80,6 +85,10 @@ def lookup_acc_curve(preview, ambient_C, load_ratio=None, required_capacity_kW=N
         power_input_per_unit_kW=power_input,
         capacity_clamped=capacity_clamped,
         diagnostic_load_ratio=diagnostic_load_ratio,
+        requested_ambient_C=requested_ambient,
+        ambient_clamped=ambient != requested_ambient,
+        capacity_bracket_low_kW=lower_point["capacity_bracket_low_kW"],
+        capacity_bracket_high_kW=lower_point["capacity_bracket_high_kW"],
     )
 
 
@@ -225,6 +234,8 @@ def _lookup_capacity_line(rows, ambient, required_capacity):
         "unit_efficiency_kW_per_kW": _linear(lower_capacity, upper_capacity, lower_row["unit_efficiency_kW_per_kW"], upper_row["unit_efficiency_kW_per_kW"], used_capacity),
         "load_ratio": _linear(lower_capacity, upper_capacity, lower_row["load_ratio"], upper_row["load_ratio"], used_capacity),
         "capacity_clamped": capacity_clamped,
+        "capacity_bracket_low_kW": lower_capacity,
+        "capacity_bracket_high_kW": upper_capacity,
     }
 
 

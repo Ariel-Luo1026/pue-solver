@@ -45,6 +45,13 @@ class ACCV2ProductionResult:
     power_input_per_unit_kW: float | None = None
     capacity_clamped: bool = False
     diagnostic_load_ratio: float | None = None
+    evaluator: str = "legacy"
+    lookup_basis: str | None = None
+    requested_ambient_C: float | None = None
+    ambient_clamped: bool = False
+    used_capacity_kW: float | None = None
+    capacity_bracket_low_kW: float | None = None
+    capacity_bracket_high_kW: float | None = None
 
 
 @dataclass

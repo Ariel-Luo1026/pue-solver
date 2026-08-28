@@ -1,0 +1,1 @@
+{"schema_version":"1.0","equipment_id":"CDU_1","equipment_type":"CDU","display_name":"CDU 1","manufacturer":"","model":"","rated_capacity_kW":null,"power_input_type":"indoor_equipment","curve_type":"load_ratio_power","solver_curve_sheet":"Solver_Curve","unit_system":"SI","status":"implemented","notes":"Bound to the authoritative user-authored CDU_1.xlsx workbook."}

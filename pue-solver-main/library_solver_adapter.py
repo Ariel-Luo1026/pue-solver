@@ -145,6 +145,8 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
     radiator_equipment_id = generation_roles.engine_radiator if generation_roles else None
 
     acc_rows = _selected_curve(library_input, acc_equipment_id)
+    acc_selected = selected_curves.get(acc_equipment_id, {}) if isinstance(selected_curves, dict) else {}
+    acc_metadata = acc_selected.get("equipment_metadata", {}) if isinstance(acc_selected, dict) else {}
     pump_rows = _selected_curve(library_input, pump_equipment_id)
     engine_rows = _selected_curve(library_input, engine_equipment_id) if generation_roles else None
     radiator_rows = _selected_curve(library_input, radiator_equipment_id) if generation_roles else None
@@ -199,6 +201,9 @@ def _build_acc_gas_engine_cdu_solver_input(library_input):
             "equipment_id": acc_equipment_id,
             "source_sheet": selected_curves.get(acc_equipment_id, {}).get("sheet_name"),
             "data": deepcopy(acc_rows),
+            "curve_type": acc_metadata.get("curve_type"),
+            "curve_schema": acc_metadata.get("curve_schema"),
+            "equipment_metadata": deepcopy(acc_metadata),
         },
         "required_units": project_source.get("required_units"),
         "installed_units": project_source.get("installed_units"),

@@ -4,7 +4,8 @@ from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
-from configuration_library_loader import build_solver_input_from_library, load_configuration_library
+from configuration_library_loader import _records, build_solver_input_from_library, load_configuration_library, read_xlsx_sheets
+from equipment_engine import ConfigurationLibraryEquipmentEngine, EquipmentEngineConfig
 from equipment_role_resolver import EquipmentRoleResolutionError
 from topology_adapters.chiller_dry_cooler_runtime import ChillerDryCoolerRuntimeError
 from topology_dispatcher import dispatch_topology
@@ -60,19 +61,69 @@ class ChillerDryCoolerGasEngineConfigurationTest(unittest.TestCase):
         target = LIBRARY / CONFIGURATION / "equipment"
         grid = LIBRARY / "CHILLER_DRYCOOLER_2MW_GRID" / "equipment"
         acc = LIBRARY / "ACC_1.5MW_GASENGINE_CDU" / "equipment"
+        semantic_cooling_side = {"CHW_PUMP_3": 0.6, "CDU_2": 0.9}
         for equipment_id in (
             "CENTRIFUGALCHILLER_1", "DRYCOOLER_6", "CHW_PUMP_3", "CW_PUMP_6",
             "CDU_2", "RTC_1&2", "MAU_1&2", "ELECTRICAL_DISTRIBUTION_2",
         ):
-            self.assertEqual(
-                digest(target / equipment_id / f"{equipment_id}.xlsx"),
-                digest(grid / equipment_id / f"{equipment_id}.xlsx"),
-            )
-        for equipment_id in ("ENGINE_3", "ENGINE_RADIATOR_1"):
-            self.assertEqual(
-                digest(target / equipment_id / f"{equipment_id}.xlsx"),
-                digest(acc / equipment_id / f"{equipment_id}.xlsx"),
-            )
+            target_workbook = target / equipment_id / f"{equipment_id}.xlsx"
+            grid_workbook = grid / equipment_id / f"{equipment_id}.xlsx"
+            if equipment_id in semantic_cooling_side:
+                target_sheets = read_xlsx_sheets(target_workbook)
+                grid_sheets = read_xlsx_sheets(grid_workbook)
+                self.assertEqual(list(target_sheets), list(grid_sheets))
+                self.assertEqual(target_sheets["Solver_Curve"][0], grid_sheets["Solver_Curve"][0])
+                for sheet_name in ("Metadata", "Performance_Map", "Solver_Curve", "Validation"):
+                    self.assertEqual(_records(target_sheets[sheet_name]), _records(grid_sheets[sheet_name]))
+                target_information = {
+                    row["Parameter"]: row["Value"] for row in _records(target_sheets["Information"])
+                }
+                grid_information = {
+                    row["Parameter"]: row["Value"] for row in _records(grid_sheets["Information"])
+                }
+                for parameter in ("Equipment Type", "Model ID"):
+                    self.assertEqual(target_information[parameter], grid_information[parameter])
+                curves = {
+                    "target": {"points": _records(target_sheets["Solver_Curve"])},
+                    "grid": {"points": _records(grid_sheets["Solver_Curve"])},
+                }
+                engine = ConfigurationLibraryEquipmentEngine(EquipmentEngineConfig(preloaded_curves=curves))
+                load_ratio = semantic_cooling_side[equipment_id]
+                target_point = engine.lookup_power("target", load_ratio)
+                grid_point = engine.lookup_power("grid", load_ratio)
+                self.assertTrue(target_point.lookup_success, target_point.errors)
+                self.assertTrue(grid_point.lookup_success, grid_point.errors)
+                self.assertAlmostEqual(target_point.power_kW, grid_point.power_kW)
+                if equipment_id == "CHW_PUMP_3":
+                    self.assertAlmostEqual(target_point.power_kW, 11.12)
+                else:
+                    self.assertAlmostEqual(target_point.power_kW, 25.73)
+            else:
+                self.assertEqual(digest(target_workbook), digest(grid_workbook))
+        self.assertEqual(
+            digest(target / "ENGINE_3" / "ENGINE_3.xlsx"),
+            digest(acc / "ENGINE_3" / "ENGINE_3.xlsx"),
+        )
+
+        target_radiator = read_xlsx_sheets(
+            target / "ENGINE_RADIATOR_1" / "ENGINE_RADIATOR_1.xlsx"
+        )
+        acc_radiator = read_xlsx_sheets(
+            acc / "ENGINE_RADIATOR_1" / "ENGINE_RADIATOR_1.xlsx"
+        )
+        radiator_curves = {
+            "chiller_2mw": {"points": _records(target_radiator["Solver_Curve"])},
+            "acc_1_5mw": {"points": _records(acc_radiator["Solver_Curve"])},
+        }
+        radiator_engine = ConfigurationLibraryEquipmentEngine(
+            EquipmentEngineConfig(preloaded_curves=radiator_curves)
+        )
+        chiller_radiator_max = radiator_engine.lookup_power("chiller_2mw", 1.0)
+        acc_radiator_max = radiator_engine.lookup_power("acc_1_5mw", 1.0)
+        self.assertTrue(chiller_radiator_max.lookup_success, chiller_radiator_max.errors)
+        self.assertTrue(acc_radiator_max.lookup_success, acc_radiator_max.errors)
+        self.assertAlmostEqual(chiller_radiator_max.power_kW, 48.0)
+        self.assertAlmostEqual(acc_radiator_max.power_kW, 36.0)
 
     def test_normal_and_failure_unit_policies_reach_runtime(self):
         expected = {"Normal": (3, 3, 3, 3), "Failure": (2, 3, 2, 2)}

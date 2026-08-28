@@ -408,6 +408,7 @@ def resolve_acc_operating_point(
     acc_v2_engine_error=None,
     required_capacity_per_unit_kw=None,
     nominal_unit_capacity_kw=None,
+    capacity_aware_required=False,
 ):
     """Resolve ACC operating point source with mandatory legacy fallback."""
     result, _temperature_power_factor = _resolve_acc_operating_point_for_solver(
@@ -422,6 +423,7 @@ def resolve_acc_operating_point(
         acc_v2_engine_error=acc_v2_engine_error,
         required_capacity_per_unit_kw=required_capacity_per_unit_kw,
         nominal_unit_capacity_kw=nominal_unit_capacity_kw,
+        capacity_aware_required=capacity_aware_required,
     )
     return result
 
@@ -437,39 +439,48 @@ def _resolve_acc_operating_point_for_solver(
     acc_v2_engine_error=None,
     required_capacity_per_unit_kw=None,
     nominal_unit_capacity_kw=None,
+    capacity_aware_required=False,
 ):
     from acc_v2_engine import ACCV2ProductionResult, ENGINE_VERSION, is_acc_v2_enabled
 
-    legacy_power, legacy_cop, legacy_source, legacy_ambient, legacy_temperature_power_factor = _evaluate_acc_equipment_curve(
-        acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=oat_c
-    )
-    legacy_result = ACCV2ProductionResult(
-        source=legacy_source,
-        lookup_success=False,
-        fallback_used=False,
-        engine_version="legacy",
-        ambient_C=legacy_ambient,
-        load_ratio=load_ratio,
-        capacity_kW=None,
-        power_input_kW=legacy_power,
-        cop=legacy_cop,
-        diagnostics=None,
-        required_capacity_kW=required_capacity_per_unit_kw,
-        power_input_per_unit_kW=legacy_power / max(1, int(active_units)) if legacy_power is not None else None,
-        capacity_clamped=False,
-        diagnostic_load_ratio=load_ratio,
-    )
-
-    if not is_acc_v2_enabled(project_input):
-        return legacy_result, legacy_temperature_power_factor
+    explicit_acc_v2_enabled = is_acc_v2_enabled(project_input)
+    capacity_aware_active = bool(capacity_aware_required or explicit_acc_v2_enabled)
+    if not capacity_aware_active:
+        return _legacy_acc_operating_point(
+            ACCV2ProductionResult, acc_curve, load_ratio, cooling_load_kw, active_units,
+            oat_c, required_capacity_per_unit_kw,
+        )
     if configuration_path is None:
-        configuration_path = _get(project_input, ["acc_v2", "configuration_path"])
+        configuration_path = _get(project_input, ["acc_v2", "configuration_path"]) or project_input.get("configuration_path")
     if required_capacity_per_unit_kw is None and cooling_load_kw is not None:
         required_capacity_per_unit_kw = float(cooling_load_kw) / max(1, int(active_units))
     if configuration_path is None or oat_c is None or required_capacity_per_unit_kw is None:
-        return _fallback_acc_v2_result(legacy_result), legacy_temperature_power_factor
+        if capacity_aware_required:
+            if oat_c is not None and required_capacity_per_unit_kw is not None:
+                return _evaluate_preloaded_acc_capacity_surface(
+                    ACCV2ProductionResult, acc_curve, oat_c, load_ratio,
+                    required_capacity_per_unit_kw, nominal_unit_capacity_kw, active_units,
+                ), None
+            return _capacity_surface_error_result(
+                ACCV2ProductionResult,
+                "ambient_capacity_power ACC curve requires ambient_C and required_capacity_kW.",
+                oat_c, load_ratio, required_capacity_per_unit_kw,
+            ), None
+        legacy_result, legacy_factor = _legacy_acc_operating_point(ACCV2ProductionResult, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c, required_capacity_per_unit_kw)
+        return _fallback_acc_v2_result(legacy_result), legacy_factor
     if acc_v2_engine_error is not None:
-        return _fallback_acc_v2_result(legacy_result, diagnostics=str(acc_v2_engine_error)), legacy_temperature_power_factor
+        if capacity_aware_required:
+            if not explicit_acc_v2_enabled:
+                return _evaluate_preloaded_acc_capacity_surface(
+                    ACCV2ProductionResult, acc_curve, oat_c, load_ratio,
+                    required_capacity_per_unit_kw, nominal_unit_capacity_kw, active_units,
+                ), None
+            return _capacity_surface_error_result(
+                ACCV2ProductionResult, str(acc_v2_engine_error), oat_c, load_ratio,
+                required_capacity_per_unit_kw,
+            ), None
+        legacy_result, legacy_factor = _legacy_acc_operating_point(ACCV2ProductionResult, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c, required_capacity_per_unit_kw)
+        return _fallback_acc_v2_result(legacy_result, diagnostics=str(acc_v2_engine_error)), legacy_factor
     try:
         engine = acc_v2_engine
         if engine is None:
@@ -498,9 +509,92 @@ def _resolve_acc_operating_point_for_solver(
             power_input_per_unit_kW=point.power_input_kW,
             capacity_clamped=point.capacity_clamped,
             diagnostic_load_ratio=point.diagnostic_load_ratio,
+            evaluator="acc_v2_capacity_surface",
+            lookup_basis="ambient_C+required_capacity_per_unit_kW",
+            requested_ambient_C=point.requested_ambient_C,
+            ambient_clamped=point.ambient_clamped,
+            used_capacity_kW=point.capacity_kW,
+            capacity_bracket_low_kW=point.capacity_bracket_low_kW,
+            capacity_bracket_high_kW=point.capacity_bracket_high_kW,
         ), None
     except Exception as exc:
-        return _fallback_acc_v2_result(legacy_result, diagnostics=str(exc)), legacy_temperature_power_factor
+        if capacity_aware_required:
+            if not explicit_acc_v2_enabled:
+                try:
+                    return _evaluate_preloaded_acc_capacity_surface(
+                        ACCV2ProductionResult, acc_curve, oat_c, load_ratio,
+                        required_capacity_per_unit_kw, nominal_unit_capacity_kw, active_units,
+                    ), None
+                except Exception as preloaded_exc:
+                    exc = preloaded_exc
+            return _capacity_surface_error_result(
+                ACCV2ProductionResult, str(exc), oat_c, load_ratio,
+                required_capacity_per_unit_kw,
+            ), None
+        legacy_result, legacy_factor = _legacy_acc_operating_point(ACCV2ProductionResult, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c, required_capacity_per_unit_kw)
+        return _fallback_acc_v2_result(legacy_result, diagnostics=str(exc)), legacy_factor
+
+
+def _legacy_acc_operating_point(result_type, acc_curve, load_ratio, cooling_load_kw, active_units, oat_c, required_capacity_per_unit_kw):
+    legacy_power, legacy_cop, legacy_source, legacy_ambient, legacy_temperature_power_factor = _evaluate_acc_equipment_curve(
+        acc_curve, load_ratio, cooling_load_kw, active_units, oat_c=oat_c
+    )
+    return result_type(
+        source=legacy_source, lookup_success=False, fallback_used=False, engine_version="legacy",
+        ambient_C=legacy_ambient, load_ratio=load_ratio, capacity_kW=None,
+        power_input_kW=legacy_power, cop=legacy_cop, diagnostics=None,
+        required_capacity_kW=required_capacity_per_unit_kw,
+        power_input_per_unit_kW=legacy_power / max(1, int(active_units)) if legacy_power is not None else None,
+        capacity_clamped=False, diagnostic_load_ratio=load_ratio,
+        evaluator="legacy", lookup_basis="legacy_1d",
+        requested_ambient_C=oat_c, ambient_clamped=False,
+    ), legacy_temperature_power_factor
+
+
+def _evaluate_preloaded_acc_capacity_surface(result_type, acc_curve, oat_c, load_ratio, required_capacity_kw, nominal_capacity_kw, active_units):
+    """Evaluate validated Configuration Library rows without requiring filesystem access."""
+    from types import SimpleNamespace
+    from acc_v2_curve_lookup import lookup_acc_curve
+
+    point = lookup_acc_curve(
+        SimpleNamespace(solver_curve_rows=acc_curve.get("data", [])),
+        ambient_C=oat_c,
+        load_ratio=load_ratio,
+        required_capacity_kW=required_capacity_kw,
+        nominal_unit_capacity_kW=nominal_capacity_kw,
+    )
+    return result_type(
+        source="acc_v2", lookup_success=True, fallback_used=False,
+        engine_version="acc_v2_preloaded_capacity_surface",
+        ambient_C=point.ambient_C, load_ratio=point.load_ratio,
+        capacity_kW=point.capacity_kW,
+        power_input_kW=point.power_input_kW * max(1, int(active_units)),
+        cop=point.cop, diagnostics=None,
+        required_capacity_kW=point.required_capacity_kW,
+        power_input_per_unit_kW=point.power_input_kW,
+        capacity_clamped=point.capacity_clamped,
+        diagnostic_load_ratio=point.diagnostic_load_ratio,
+        evaluator="acc_v2_capacity_surface",
+        lookup_basis="ambient_C+required_capacity_per_unit_kW",
+        requested_ambient_C=point.requested_ambient_C,
+        ambient_clamped=point.ambient_clamped,
+        used_capacity_kW=point.capacity_kW,
+        capacity_bracket_low_kW=point.capacity_bracket_low_kW,
+        capacity_bracket_high_kW=point.capacity_bracket_high_kW,
+    )
+
+
+def _capacity_surface_error_result(result_type, diagnostics, ambient_c, load_ratio, required_capacity_kw):
+    return result_type(
+        source="acc_v2", lookup_success=False, fallback_used=True,
+        engine_version="acc_v2_capacity_surface_error",
+        ambient_C=ambient_c, load_ratio=load_ratio, capacity_kW=None,
+        power_input_kW=None, cop=None, diagnostics=diagnostics,
+        required_capacity_kW=required_capacity_kw,
+        evaluator="acc_v2_capacity_surface",
+        lookup_basis="ambient_C+required_capacity_per_unit_kW",
+        requested_ambient_C=ambient_c,
+    )
 
 def _fallback_acc_v2_result(legacy_result, diagnostics=None):
     from acc_v2_engine import ACCV2ProductionResult
@@ -1938,6 +2032,11 @@ def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active
     """Return ACC power/COP using ambient interpolation, with load-ratio fallback."""
     if not isinstance(acc_curve, dict) or not isinstance(acc_curve.get("data"), list):
         return None, None, "not_applied", None, None
+    if _is_ambient_capacity_power_curve(acc_curve):
+        raise RuntimeError(
+            "ambient_capacity_power ACC curve requires capacity-aware ACC evaluation; "
+            "legacy ambient-only evaluation is not permitted."
+        )
     power_points = []
     cop_points = []
     ambient_power_points = []
@@ -2007,6 +2106,32 @@ def _evaluate_acc_equipment_curve(acc_curve, load_ratio, cooling_load_kw, active
     if curve_cop is not None and curve_cop > 0:
         return cooling_load_kw / curve_cop, curve_cop, f"{equipment_id}:{source_sheet}:COP", None, None
     return None, None, f"{equipment_id}:{source_sheet}:missing_power_and_cop", None, None
+
+
+def _is_ambient_capacity_power_curve(acc_curve):
+    """Identify a rectangular ACC ambient/capacity surface by semantics or schema."""
+    if not isinstance(acc_curve, dict):
+        return False
+    metadata = acc_curve.get("equipment_metadata") if isinstance(acc_curve.get("equipment_metadata"), dict) else {}
+    declared = str(
+        acc_curve.get("curve_type")
+        or metadata.get("curve_type")
+        or acc_curve.get("curve_schema")
+        or metadata.get("curve_schema")
+        or ""
+    ).strip().lower()
+    if declared in {"ambient_capacity_power", "ambient_capacity_power_2d"}:
+        return True
+    rows = [row for row in acc_curve.get("data", []) if isinstance(row, dict)]
+    if not rows or not all({"ambient_C", "capacity_kW", "power_input_kW"}.issubset(row) for row in rows):
+        return False
+    ambient_counts = {}
+    for row in rows:
+        ambient = _num(row.get("ambient_C"), None)
+        capacity = _num(row.get("capacity_kW"), None)
+        if ambient is not None and capacity is not None:
+            ambient_counts.setdefault(ambient, set()).add(capacity)
+    return any(len(capacities) > 1 for capacities in ambient_counts.values())
 
 
 def _evaluate_engine_curve(engine_curve, load_ratio, active_units):
@@ -2373,11 +2498,16 @@ def compute_pue_project(input_obj):
     acc_v2_engine = input_obj.get("_acc_v2_engine_override")
     acc_v2_engine_error = None
     acc_v2_direct_mode_enabled = False
-    acc_v2_configuration_path = _get(input_obj, ["acc_v2", "configuration_path"])
+    acc_capacity_surface_required = _is_ambient_capacity_power_curve(acc_curve)
+    acc_v2_configuration_path = (
+        _get(input_obj, ["acc_v2", "configuration_path"])
+        or input_obj.get("configuration_path")
+        or _get(input_obj, ["library_context", "configuration_path"])
+    )
     try:
         from acc_v2_engine import create_acc_v2_engine, is_acc_v2_enabled
 
-        acc_v2_direct_mode_enabled = is_acc_v2_enabled(input_obj)
+        acc_v2_direct_mode_enabled = bool(is_acc_v2_enabled(input_obj) or acc_capacity_surface_required)
         if acc_v2_engine is None and acc_v2_direct_mode_enabled and acc_v2_configuration_path is not None:
             acc_v2_engine = create_acc_v2_engine(acc_v2_configuration_path)
     except Exception as exc:
@@ -2387,6 +2517,20 @@ def compute_pue_project(input_obj):
         + heat_gain_config["solar_heat_gain_max_kW"]
         + heat_gain_config["other_auxiliary_heat_gain_kW"]
     )
+    chw_pump_dynamic_reference = None
+    if configuration_library_direct_mode:
+        from pump_load_framework import calculate_failure_peak_pump_reference
+
+        failure_active_pump_count = _num(
+            project.get("required_units"),
+            _num(_get(input_obj, ["library_context", "required_units"]), None),
+        )
+        chw_pump_dynamic_reference = calculate_failure_peak_pump_reference(
+            design_it_load,
+            heat_gain_config["solar_heat_gain_max_kW"],
+            heat_gain_config["other_auxiliary_heat_gain_kW"],
+            failure_active_pump_count,
+        )
     peak_design_required_capacity_per_acc_unit_kw = (
         peak_design_cooling_load_kw / max(1, int(library_active_units))
         if peak_design_cooling_load_kw > 0
@@ -2462,21 +2606,32 @@ def compute_pue_project(input_obj):
         pumps_kw = 0.01 * it_kw  # 1% of IT load
         from pump_load_framework import (
             COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS,
+            FAILURE_PEAK_DESIGN_LOAD_RATIO_BASIS,
             PUMP_LOAD_RATIO_BASIS,
             resolve_pump_reference_capacity,
         )
-        chw_pump_reference_capacity_kw, chw_pump_reference_capacity_source = resolve_pump_reference_capacity(
-            equipment_metadata=pumps_cfg.get("equipment_metadata"),
-            cooling_unit_capacity_kW=cooling_unit_capacity_kw,
-        )
+        if chw_pump_dynamic_reference is not None:
+            chw_pump_reference_capacity_kw = chw_pump_dynamic_reference[
+                "pump_reference_capacity_kW"
+            ]
+            chw_pump_reference_capacity_source = FAILURE_PEAK_DESIGN_LOAD_RATIO_BASIS
+        else:
+            chw_pump_reference_capacity_kw, chw_pump_reference_capacity_source = resolve_pump_reference_capacity(
+                equipment_metadata=pumps_cfg.get("equipment_metadata"),
+                cooling_unit_capacity_kW=cooling_unit_capacity_kw,
+            )
         pump_active_unit_count = int(library_active_units)
         pump_required_load_per_unit_kw = cooling_load_kw / pump_active_unit_count if pump_active_unit_count > 0 else 0.0
         pump_load_ratio_raw = pump_required_load_per_unit_kw / chw_pump_reference_capacity_kw
         pump_load_ratio = pump_load_ratio_raw
         chw_pump_load_ratio_basis = (
-            COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS
-            if chw_pump_reference_capacity_source == "cooling_unit_rated_capacity_kW"
-            else PUMP_LOAD_RATIO_BASIS
+            FAILURE_PEAK_DESIGN_LOAD_RATIO_BASIS
+            if chw_pump_dynamic_reference is not None
+            else (
+                COOLING_UNIT_RATED_CAPACITY_LOAD_RATIO_BASIS
+                if chw_pump_reference_capacity_source == "cooling_unit_rated_capacity_kW"
+                else PUMP_LOAD_RATIO_BASIS
+            )
         )
         chw_pump_load_ratio_warning = None
         chw_pump_power_per_unit_kw = 0.0
@@ -2848,6 +3003,7 @@ def compute_pue_project(input_obj):
             acc_v2_engine_error=acc_v2_engine_error,
             required_capacity_per_unit_kw=acc_required_capacity_per_unit_kw,
             nominal_unit_capacity_kw=cooling_unit_capacity_kw,
+            capacity_aware_required=acc_capacity_surface_required,
         )
         acc_power_kw = acc_operating_point.power_input_kW
         acc_cop = acc_operating_point.cop
@@ -2856,6 +3012,13 @@ def compute_pue_project(input_obj):
         acc_power_input_per_unit_kw = getattr(acc_operating_point, "power_input_per_unit_kW", None)
         acc_capacity_clamped = bool(getattr(acc_operating_point, "capacity_clamped", False))
         acc_diagnostic_load_ratio = getattr(acc_operating_point, "diagnostic_load_ratio", acc_capacity_load_ratio)
+        acc_evaluator = getattr(acc_operating_point, "evaluator", "legacy")
+        acc_lookup_basis = getattr(acc_operating_point, "lookup_basis", None)
+        acc_requested_ambient_c = getattr(acc_operating_point, "requested_ambient_C", oat_c)
+        acc_ambient_clamped = bool(getattr(acc_operating_point, "ambient_clamped", False))
+        acc_used_capacity_kw = getattr(acc_operating_point, "used_capacity_kW", None)
+        acc_capacity_bracket_low_kw = getattr(acc_operating_point, "capacity_bracket_low_kW", None)
+        acc_capacity_bracket_high_kw = getattr(acc_operating_point, "capacity_bracket_high_kW", None)
         if configuration_library_direct_mode:
             if getattr(acc_operating_point, "fallback_used", False):
                 error_message = (
@@ -2881,10 +3044,7 @@ def compute_pue_project(input_obj):
                 result["validation"] = validation
                 result["error"] = error_message
                 return result
-            if acc_curve_source == "acc_v2":
-                acc_curve_source = "acc_v2_solver_curve_direct"
-            else:
-                acc_curve_source = "configuration_library_solver_curve"
+            acc_curve_source = "configuration_library_solver_curve"
         if acc_power_kw is not None:
             chiller_kw = acc_power_kw
             cop = acc_cop
@@ -3270,6 +3430,15 @@ def compute_pue_project(input_obj):
             "acc_power_input_kW": acc_power_kw if acc_power_kw is not None else 0.0,
             "acc_capacity_clamped": acc_capacity_clamped,
             "acc_diagnostic_load_ratio": acc_diagnostic_load_ratio,
+            "acc_evaluator": acc_evaluator,
+            "acc_lookup_basis": acc_lookup_basis,
+            "acc_v2_active": acc_evaluator == "acc_v2_capacity_surface",
+            "acc_requested_ambient_C": acc_requested_ambient_c,
+            "acc_used_ambient_C": acc_ambient_c,
+            "acc_ambient_clamped": acc_ambient_clamped,
+            "acc_used_capacity_kW": acc_used_capacity_kw,
+            "acc_capacity_bracket_low_kW": acc_capacity_bracket_low_kw,
+            "acc_capacity_bracket_high_kW": acc_capacity_bracket_high_kw,
             "acc_cop": acc_cop,
             "acc_curve_source": acc_curve_source,
             "acc_ambient_C": acc_ambient_c,
@@ -3318,8 +3487,21 @@ def compute_pue_project(input_obj):
             "chw_pump_load_ratio_basis": chw_pump_load_ratio_basis,
             "chw_pump_reference_capacity_kW": chw_pump_reference_capacity_kw,
             "chw_pump_reference_capacity_source": chw_pump_reference_capacity_source,
+            "chw_pump_reference_peak_cooling_load_kW": (
+                chw_pump_dynamic_reference["pump_reference_peak_cooling_load_kW"]
+                if chw_pump_dynamic_reference is not None else None
+            ),
+            "chw_pump_reference_failure_active_units": (
+                chw_pump_dynamic_reference["pump_reference_failure_active_units"]
+                if chw_pump_dynamic_reference is not None else None
+            ),
+            "chw_pump_current_load_per_unit_kW": pump_required_load_per_unit_kw,
+            "chw_pump_load_ratio_raw": pump_load_ratio_raw,
+            "chw_pump_load_ratio": pump_load_ratio,
             "chw_pump_reference_capacity_basis": (
-                "Cooling Unit Rated Design Capacity"
+                "Failure Peak Design cooling load per active CHW Pump"
+                if chw_pump_dynamic_reference is not None
+                else "Cooling Unit Rated Design Capacity"
                 if chw_pump_reference_capacity_source == "cooling_unit_rated_capacity_kW"
                 else chw_pump_reference_capacity_source
             ),

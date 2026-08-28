@@ -65,7 +65,7 @@ class FinalReportConsistencyCleanupTest(unittest.TestCase):
 
     def test_chw_basis_normalizes_legacy_wording_in_both_report_paths(self):
         display = function_source(UI, "chwPumpLoadRatioBasisDisplay")
-        self.assertIn("Cooling Load per Active Unit / Cooling Unit Rated Design Capacity", display)
+        self.assertIn("Current Cooling Load per Active CHW Pump / Failure Peak Design Cooling Load per Active CHW Pump", display)
         self.assertIn("fixed single-pump reference capacity", display)
         report = function_source(UI, "buildHtmlReportFromSections")
         browser = function_source(UI, "renderEngineeringResultsSummary")
@@ -104,7 +104,7 @@ class FinalReportConsistencyCleanupTest(unittest.TestCase):
             report,
         )
         self.assertIn(
-            "CHW Pump Load Ratio = Cooling Load per Active Unit / Cooling Unit Rated Design Capacity.",
+            "CHW Pump Load Ratio = Current Cooling Load per Active CHW Pump / Failure Peak Design Cooling Load per Active CHW Pump.",
             report,
         )
 

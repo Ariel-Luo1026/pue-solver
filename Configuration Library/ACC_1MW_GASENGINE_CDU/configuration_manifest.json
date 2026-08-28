@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "configuration_id": "ACC_1MW_GASENGINE_CDU",
+  "display_name": "ACC 1 MW + Gas Engine + CDU",
+  "cooling_system_type": "acc_gas_engine_cdu",
+  "cooling_technology": "ACC",
+  "cooling_unit_capacity_mw": 1.0,
+  "power_source": "Gas Engine",
+  "implementation_status": "implemented",
+  "description": "Production-ready ACC 1 MW Gas Engine package using validated user-authored equipment workbooks.",
+  "equipment_roles": {
+    "primary_cooling": "ACC_1",
+    "chw_pump": "CHW_PUMP_1",
+    "rtc": "RTC_1&2",
+    "cdu": "CDU_1",
+    "mau": "MAU_1&2",
+    "engine": "ENGINE_2",
+    "engine_radiator": "ENGINE_RADIATOR_1",
+    "electrical_distribution": "ELECTRICAL_DISTRIBUTION_2"
+  },
+  "required_roles": [
+    "primary_cooling",
+    "chw_pump",
+    "rtc",
+    "cdu",
+    "mau",
+    "engine",
+    "engine_radiator",
+    "electrical_distribution"
+  ],
+  "optional_roles": [],
+  "scenarios": [
+    {
+      "scenario": "Normal",
+      "running_unit_formula": "installed_units",
+      "description": "All installed cooling units are active."
+    },
+    {
+      "scenario": "Failure",
+      "running_unit_formula": "installed_units - 1",
+      "description": "One cooling unit is unavailable; indoor equipment remains at installed quantity."
+    }
+  ],
+  "solver_topology": "acc_gas_engine_cdu",
+  "report_profile": "acc_gas_engine_cdu"
+}

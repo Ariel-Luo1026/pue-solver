@@ -29,7 +29,8 @@ class AccEquipmentCurveTest(unittest.TestCase):
             self.assertEqual("configuration_library_solver_curve", hour["acc_curve_source"])
             self.assertGreater(hour["acc_load_ratio"], 0)
             self.assertIsNotNone(hour["acc_ambient_C"])
-            self.assertGreater(hour["acc_temperature_power_factor"], 0)
+            self.assertIsNone(hour["acc_temperature_power_factor"])
+            self.assertEqual(hour["acc_lookup_basis"], "ambient_C+required_capacity_per_unit_kW")
 
     def test_annual_acc_metrics(self):
         for scenario in ("Normal", "Failure"):
@@ -40,7 +41,7 @@ class AccEquipmentCurveTest(unittest.TestCase):
             self.assertEqual(annual["acc_curve_source"], "configuration_library_solver_curve")
             self.assertGreater(annual["min_acc_cop"], 0)
             self.assertGreaterEqual(annual["max_acc_cop"], annual["min_acc_cop"])
-            self.assertGreater(annual["average_acc_temperature_power_factor"], 0)
+            self.assertIsNone(annual["average_acc_temperature_power_factor"])
 
     def test_explicit_acc_curve_changes_phase10b_pue(self):
         for scenario in ("Normal", "Failure"):
@@ -60,18 +61,14 @@ class AccEquipmentCurveTest(unittest.TestCase):
             energies[temperature] = output["annual_results"]["annual_acc_energy_kWh"]
         self.assertLess(energies[-10.0], energies[45.0])
 
-    def test_load_ratio_fallback_when_ambient_is_missing(self):
+    def test_capacity_surface_without_ambient_fails_instead_of_using_legacy_fallback(self):
         adapted = convert_library_input_to_solver_input(
             build_solver_input_from_library("ACC_1.5MW_GASENGINE_CDU", 4.4, "Normal")
         )
         for row in adapted["acc_curve"]["data"]:
             row.pop("ambient_C", None)
-        output = compute_pue_project(adapted)
-        hour = output["hourly_results"][0]
-        self.assertGreater(hour["acc_power_kW"], 0)
-        self.assertEqual("configuration_library_solver_curve", hour["acc_curve_source"])
-        self.assertIsNone(hour["acc_ambient_C"])
-        self.assertIsNone(hour["acc_temperature_power_factor"])
+        with self.assertRaisesRegex(ValueError, "ambient_C"):
+            compute_pue_project(adapted)
 
     def test_chw_pump_uses_configuration_library_solver_curve(self):
         output = self.results["Normal"]

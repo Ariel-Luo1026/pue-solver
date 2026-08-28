@@ -71,7 +71,7 @@ class FinalCrossTopologyReportCleanupTest(unittest.TestCase):
 
     def test_chw_wording_and_diagnostic_label_are_topology_neutral(self):
         report = function_source(UI, "buildHtmlReportFromSections")
-        self.assertIn("CHW Pump Load Ratio = Cooling Load per Active Unit / Cooling Unit Rated Design Capacity", report)
+        self.assertIn("CHW Pump Load Ratio = Current Cooling Load per Active CHW Pump / Failure Peak Design Cooling Load per Active CHW Pump", report)
         self.assertNotIn("The CHW Pump load ratio is normalized using the configured cooling-unit rated design capacity", report)
         self.assertNotIn("ACC performance-envelope maximum", report)
         self.assertIn('"Active CHW Pump Count"', report)

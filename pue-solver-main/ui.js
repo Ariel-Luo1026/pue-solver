@@ -603,10 +603,13 @@ function pueContributionBreakdown(annualEnergyBreakdown = {}, annual = {}) {
 function chwPumpLoadRatioBasisDisplay(basis) {
     const normalized = String(basis || "").trim();
     if ([
+        "failure_peak_design_cooling_load_per_active_chw_pump",
         "cooling_load_per_active_unit_over_cooling_unit_rated_capacity",
         "hourly cooling load / (active pump count * fixed single-pump reference capacity)"
     ].includes(normalized)) {
-        return "Cooling Load per Active Unit / Cooling Unit Rated Design Capacity";
+        return normalized === "failure_peak_design_cooling_load_per_active_chw_pump"
+            ? "Current Cooling Load per Active CHW Pump / Failure Peak Design Cooling Load per Active CHW Pump"
+            : "Cooling Load per Active Unit / Cooling Unit Rated Design Capacity";
     }
     return normalized || "N/A";
 }
@@ -3297,7 +3300,9 @@ function buildHtmlReportFromSections(context) {
     const pumpReference = pumpRows[0]?.pump_reference_capacity_per_unit_kW;
     const pumpReferenceSource = pumpRows[0]?.chw_pump_reference_capacity_source || pumpRows[0]?.pump_reference_capacity_source;
     const pumpReferenceBasis = pumpRows[0]?.chw_pump_reference_capacity_basis ||
-        (pumpReferenceSource === "cooling_unit_rated_capacity_kW" ? "Cooling Unit Rated Design Capacity" : pumpReferenceSource);
+        (pumpReferenceSource === "failure_peak_design_cooling_load_per_active_chw_pump"
+            ? "Failure Peak Design cooling load per active CHW Pump"
+            : (pumpReferenceSource === "cooling_unit_rated_capacity_kW" ? "Cooling Unit Rated Design Capacity" : pumpReferenceSource));
     const pumpLoadRatioBasis = pumpRows[0]?.chw_pump_load_ratio_basis || pumpRows[0]?.pump_load_ratio_basis;
     const pumpDesignBasisLimitation = pumpRows[0]?.chw_pump_design_basis_limitation;
     const pumpActiveCount = pumpRows[0]?.pump_active_unit_count ?? pumpRows[0]?.active_pump_units;
@@ -3648,7 +3653,7 @@ function buildHtmlReportFromSections(context) {
 <section>
     <h3>Simulation Methodology</h3>
     <p>Hourly cooling loads combine IT load, solar heat gain, and other auxiliary heat gain. Equipment power is obtained from the selected Configuration Library performance lookup, and annual PUE is calculated from annual facility and IT energy.</p>
-    <p>CHW Pump Load Ratio = Cooling Load per Active Unit / Cooling Unit Rated Design Capacity.</p>
+    <p>CHW Pump Load Ratio = Current Cooling Load per Active CHW Pump / Failure Peak Design Cooling Load per Active CHW Pump.</p>
     ${solverTopology === "chiller_dry_cooler" ? `<p>CW Pump Load Ratio = Heat Rejection Load per Active CW Pump ÷ Fixed Single-CW-Pump Reference Capacity.</p>` : ""}
     <p>Normal and Failure use the same Solver_Curve for each pump type; only scenario-specific active pump counts change.</p>
     ${solverTopology === "chiller_dry_cooler" ? `<p>Dry Cooler Power Model: Single-unit dry-cooler input power is determined from outdoor dry-bulb temperature using the configured Solver_Curve. Total dry-cooler power equals per-unit curve power multiplied by active dry-cooler count.</p>
