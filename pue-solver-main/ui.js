@@ -2530,27 +2530,70 @@ function buildPueContributionSummary(annual = {}) {
     const itEnergy = Number(annual.annual_IT_energy_kWh) || 0;
     const annualPue = Number(annual.annual_average_PUE) || 0;
     const nonItPue = annualPue > 1 ? annualPue - 1 : 0;
-    const ppue = (value) => itEnergy > 0 ? (Number(value) || 0) / itEnergy : null;
-    const share = (value) => nonItPue > 0 && Number.isFinite(Number(value)) ? Number(value) / nonItPue : null;
-    const drivers = [
-        { key: "cooling", label: "Cooling System", ppue: ppue(annual.annual_total_cooling_system_energy_kWh) },
-        { key: "electrical", label: "Electrical Distribution Loss", ppue: ppue(annual.annual_electrical_loss_kWh) },
-        { key: "auxiliary", label: "Other Electrical Auxiliary Power", ppue: ppue(annual.annual_other_electrical_auxiliary_energy_kWh ?? annual.annual_auxiliary_energy_kWh) }
+    const energy = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+    const ppue = value => itEnergy > 0 ? energy(value) / itEnergy : null;
+    const primaryCoolingEnergy = energy(annual.annual_acc_energy_kWh) || energy(annual.annual_chiller_energy_kWh);
+    const derivedCoolingEnergy = primaryCoolingEnergy
+        + energy(annual.annual_dry_cooler_energy_kWh)
+        + energy(annual.annual_pump_energy_kWh)
+        + energy(annual.annual_cw_pump_energy_kWh);
+    const coolingEnergy = Number.isFinite(Number(annual.annual_total_cooling_system_energy_kWh))
+        ? Number(annual.annual_total_cooling_system_energy_kWh)
+        : derivedCoolingEnergy;
+    const indoorComponentValues = [
+        annual.annual_CDU_energy_kWh ?? annual.annual_cdu_energy_kWh,
+        annual.annual_RTC_energy_kWh ?? annual.annual_rtc_energy_kWh,
+        annual.annual_MAU_energy_kWh ?? annual.annual_mau_energy_kWh
     ];
+    const indoorEnergy = indoorComponentValues.some(value => Number.isFinite(Number(value)))
+        ? indoorComponentValues.reduce((sum, value) => sum + energy(value), 0)
+        : energy(annual.annual_white_space_equipment_energy_kWh ?? annual.annual_indoor_equipment_energy_kWh);
+    const radiatorEnergy = energy(annual.annual_engine_radiator_energy_kWh);
+    const drivers = [
+        { key: "cooling", label: "Cooling Equipment", energy_kWh: coolingEnergy, ppue: ppue(coolingEnergy) },
+        { key: "indoor", label: "Indoor Equipment", energy_kWh: indoorEnergy, ppue: ppue(indoorEnergy) },
+        ...(radiatorEnergy > 0 ? [{ key: "engine_radiator", label: "Engine Radiator", energy_kWh: radiatorEnergy, ppue: ppue(radiatorEnergy) }] : []),
+        { key: "electrical", label: "Electrical Distribution Loss", energy_kWh: energy(annual.annual_electrical_loss_kWh), ppue: ppue(annual.annual_electrical_loss_kWh) },
+        { key: "auxiliary", label: "Other Electrical Auxiliary", energy_kWh: energy(annual.annual_other_electrical_auxiliary_energy_kWh ?? annual.annual_auxiliary_energy_kWh), ppue: ppue(annual.annual_other_electrical_auxiliary_energy_kWh ?? annual.annual_auxiliary_energy_kWh) }
+    ];
+    const totalNonItPue = drivers.reduce((sum, driver) => sum + (Number(driver.ppue) || 0), 0);
+    const share = value => totalNonItPue > 0 && Number.isFinite(Number(value)) ? Number(value) / totalNonItPue : null;
+    drivers.forEach(driver => { driver.share = share(driver.ppue); });
     const rankedDrivers = drivers
         .filter(driver => Number.isFinite(Number(driver.ppue)))
         .sort((a, b) => Number(b.ppue) - Number(a.ppue));
+    const driver = key => drivers.find(item => item.key === key);
     return {
         itEnergy,
         annualPue,
         nonItPue,
-        coolingPPUE: drivers[0].ppue,
-        electricalPPUE: drivers[1].ppue,
-        auxiliaryPPUE: drivers[2].ppue,
-        coolingShare: share(drivers[0].ppue),
-        electricalShare: share(drivers[1].ppue),
-        auxiliaryShare: share(drivers[2].ppue),
+        drivers,
+        totalNonItPue,
+        reconciliationError: totalNonItPue - nonItPue,
+        coolingPPUE: driver("cooling")?.ppue,
+        indoorPPUE: driver("indoor")?.ppue,
+        engineRadiatorPPUE: driver("engine_radiator")?.ppue ?? null,
+        electricalPPUE: driver("electrical")?.ppue,
+        auxiliaryPPUE: driver("auxiliary")?.ppue,
+        coolingShare: driver("cooling")?.share,
+        electricalShare: driver("electrical")?.share,
+        auxiliaryShare: driver("auxiliary")?.share,
         largestDriver: rankedDrivers[0] || null
+    };
+}
+
+function enginePresentationIdentity(outObj = {}, manifestOverride = null) {
+    const manifest = manifestOverride
+        || configurationLibraryData?.configuration_manifest
+        || outObj.configuration_manifest
+        || outObj.library_context?.configuration_manifest
+        || {};
+    const manifestEngineId = manifest.equipment_roles?.engine;
+    const sourceId = Array.isArray(manifestEngineId) ? manifestEngineId[0] : manifestEngineId;
+    const resolved = findLibraryEquipmentPackage(configurationLibraryData || {}, sourceId || outObj.engine_curve?.equipment_id || "ENGINE_2");
+    return {
+        sourceId: resolved.equipmentPackage?.source_workbook_equipment_id || sourceId || outObj.engine_curve?.source_equipment_id || "ENGINE_2",
+        runtimeId: resolved.resolvedId || outObj.engine_curve?.equipment_id || "ENGINE_3"
     };
 }
 
@@ -2576,11 +2619,10 @@ function renderPueContributionSummaryPanel(annual) {
     }
     panel.style.display = "block";
     const rows = [
-        ["Cooling System pPUE", signedPpueText(summary.coolingPPUE)],
-        ["Electrical Distribution Loss pPUE", signedPpueText(summary.electricalPPUE)],
-        ["Other Electrical Auxiliary pPUE", signedPpueText(summary.auxiliaryPPUE)],
+        ...summary.drivers.map(driver => [`${driver.label} pPUE`, signedPpueText(driver.ppue)]),
+        ["Total Non-IT pPUE", signedPpueText(summary.totalNonItPue)],
         ["Largest PUE Driver", summary.largestDriver ? summary.largestDriver.label : "N/A"],
-        ["Cooling Share of Non-IT Overhead", percentText(summary.coolingShare)]
+        ["Primary Cooling Equipment Share of Non-IT Overhead", percentText(summary.coolingShare)]
     ];
     body.innerHTML = rows.map(([label, value]) => `
         <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa;">
@@ -3267,6 +3309,7 @@ function buildHtmlReportFromSections(context) {
     const peak = output.peak_results || {};
     const hourly = Array.isArray(output.hourly_results) ? output.hourly_results : [];
     const manifest = context.input?.configuration_manifest || {};
+    const engineIdentity = enginePresentationIdentity(output, manifest);
     const solverTopology = context.input?.topology_id || context.input?.solver_dispatch_key || manifest.solver_topology || "unknown";
     const report = dispatchReportProfile(solverTopology, output);
     const reportSections = report.report_sections || buildReportSections(
@@ -3583,18 +3626,20 @@ function buildHtmlReportFromSections(context) {
         ...peakDemandBreakdown.rows,
         ["Total Facility Demand", peakDemandBreakdown.annualTotal, peakDemandBreakdown.designTotal]
     ].map(([label, observed, design]) => `<tr><th>${esc(label)}</th><td>${reportValue(observed, " kW", 3)}</td><td>${reportValue(design, " kW", 3)}</td></tr>`).join("")}</tbody></table>
-    <div class="note">Reconciliation: Annual ${peakDemandBreakdown.annualReconciles ? "PASS" : "ERROR"}; Peak Design ${peakDemandBreakdown.designReconciles ? "PASS" : "ERROR"}.${engineApplicable ? " ENGINE_3 generation output is excluded from facility electrical demand." : ""}</div>
+    <div class="note">Reconciliation: Annual ${peakDemandBreakdown.annualReconciles ? "PASS" : "ERROR"}; Peak Design ${peakDemandBreakdown.designReconciles ? "PASS" : "ERROR"}.${engineApplicable ? " Engine generation-side reference quantities are excluded from facility electrical demand." : ""}</div>
 </section>
 <section>
     <h2>6. Equipment Performance</h2>
     ${performanceCards.length ? `<div class="grid">${performanceCards.join("")}</div>` : `<div class="empty">Equipment performance summary unavailable.</div>`}
     ${Number(annual.annual_engine_output_kWh) > 0 ? `<h3>Generation-Side Reference</h3><table><tbody>${tableRows([
+        ["Engine Model", esc(engineIdentity.sourceId)],
+        ["Runtime Canonical ID", esc(engineIdentity.runtimeId)],
         ["Annual Engine Output", engineeringEnergyDisplay(annual.annual_engine_output_kWh)],
         ["Annual Fuel Input", engineeringEnergyDisplay(annual.annual_engine_fuel_input_kWh)],
         ["Average Efficiency", reportValue(annual.average_engine_efficiency, "", 3)],
         ["Annual Waste Heat", engineeringEnergyDisplay(annual.annual_engine_waste_heat_kWh)]
     ])}</tbody></table>` : ""}
-    ${engineApplicable ? `<div class="note">ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.</div>` : ""}
+    ${engineApplicable ? `<div class="note">Engine generation-side reference quantities are excluded from Facility Demand and PUE electrical consumption.</div>` : ""}
 </section>
 <section>
     <h2>7. Annual Performance Charts</h2>
@@ -5814,7 +5859,8 @@ function validateFrontendConfigurationLibrary(data) {
             if (!metadata) {
                 warnings.push(`${equipmentId}: equipment_metadata.json is missing`);
             } else {
-                if (metadata.equipment_id && metadata.equipment_id !== packageItem.equipment_id) {
+                const sourceEquipmentId = packageItem.source_workbook_equipment_id || packageItem.equipment_id;
+                if (metadata.equipment_id && metadata.equipment_id !== sourceEquipmentId) {
                     warnings.push(`${equipmentId}: equipment_metadata equipment_id does not match loaded equipment folder`);
                 }
                 ["equipment_id", "equipment_type", "display_name", "curve_type", "unit_system", "status"].forEach(field => {
@@ -7330,6 +7376,7 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
     const hourly = Array.isArray(outObj.hourly_results) ? outObj.hourly_results : [];
     const chwPumpDiagnostic = hourly.find(row => Number.isFinite(Number(row.chw_pump_reference_capacity_kW ?? row.pump_reference_capacity_per_unit_kW)));
     const engineApplicable = engineGenerationApplicable(outObj, configurationLibraryData || {});
+    const engineIdentity = enginePresentationIdentity(outObj);
     const context = document.getElementById("engineeringContextStrip");
     const scenario = project.scenario_name || outObj.scenario_name || report?.operating_scenario?.scenario_name || "N/A";
     if (context) context.innerHTML = engineeringContextRows(outObj, report, configurationLibraryData || {})
@@ -7383,19 +7430,21 @@ function renderEngineeringResultsSummary(outObj, report, peakSummary) {
         ["Maximum CW Pump Load Ratio", maximumHourlyValue("cw_pump_load_ratio_raw")],
         ["Maximum CW Pump Power", Number.isFinite(maximumHourlyValue("cw_pump_power_kW")) ? `${fmtNumber(maximumHourlyValue("cw_pump_power_kW"), 3)} kW` : null],
         ...(engineApplicable ? [
-            ["Maximum ENGINE_RADIATOR Load Ratio", maximumHourlyValue("engine_radiator_load_ratio")],
-            ["Maximum ENGINE_RADIATOR Fan Power", Number.isFinite(Number(annual.max_engine_radiator_power_kW)) ? `${fmtNumber(annual.max_engine_radiator_power_kW, 3)} kW` : null],
-            ["Annual ENGINE_RADIATOR Fan Energy", Number.isFinite(Number(annual.annual_engine_radiator_energy_kWh)) ? engineeringEnergyDisplay(annual.annual_engine_radiator_energy_kWh) : null]
+            ["Maximum Engine Radiator Load Ratio", maximumHourlyValue("engine_radiator_load_ratio")],
+            ["Maximum Total Engine Radiator Fan Power", Number.isFinite(Number(annual.max_engine_radiator_power_kW)) ? `${fmtNumber(annual.max_engine_radiator_power_kW, 3)} kW` : null],
+            ["Annual Total Engine Radiator Fan Energy", Number.isFinite(Number(annual.annual_engine_radiator_energy_kWh)) ? engineeringEnergyDisplay(annual.annual_engine_radiator_energy_kWh) : null]
         ] : [])
     ].filter(([, value]) => value !== null && value !== undefined).map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join("")}</tbody></table>
         ${Number(annual.annual_engine_output_kWh) > 0 ? `<h4>Generation-Side Reference</h4><table><tbody>${[
+            ["Engine Model", engineIdentity.sourceId],
+            ["Runtime Canonical ID", engineIdentity.runtimeId],
             ["Annual Engine Output", engineeringEnergyDisplay(annual.annual_engine_output_kWh)],
             ["Annual Fuel Input", engineeringEnergyDisplay(annual.annual_engine_fuel_input_kWh)],
             ["Average Efficiency", Number.isFinite(Number(annual.average_engine_efficiency)) ? fmtNumber(annual.average_engine_efficiency, 3) : null],
             ["Annual Waste Heat", engineeringEnergyDisplay(annual.annual_engine_waste_heat_kWh)]
         ].filter(([, value]) => value !== null && value !== undefined && value !== "N/A").map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join("")}</tbody></table>` : ""}
         ${chwPumpDiagnostic?.chw_pump_design_basis_limitation ? `<div class="muted">${esc(chwPumpDiagnostic.chw_pump_design_basis_limitation)}</div>` : ""}
-        ${engineApplicable ? `<div class="muted">ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.</div>` : ""}`;
+        ${engineApplicable ? `<div class="muted">Engine generation-side reference quantities are excluded from Facility Demand and PUE electrical consumption.</div>` : ""}`;
 }
 
 function showProjectVisualization(outObj) {
@@ -7408,6 +7457,12 @@ function showProjectVisualization(outObj) {
     const peak = outObj.peak_results || {};
     const topologyId = outObj.topology_id || outObj.report_profile || outObj.solver_dispatch_key || "unknown";
     const report = dispatchReportProfile(topologyId, outObj);
+    const calculationCoolingSystem = String(topologyId).toLowerCase() === "acc_gas_engine_cdu"
+        ? "ACC + CDU"
+        : report.cooling_system_type;
+    const calculationPowerSource = outObj.project?.power_source
+        || outObj.power_source
+        || (engineGenerationApplicable(outObj, outObj.project || {}) ? "Gas Engine" : "Grid");
     const peakSummary = report.visualization_data.peak_summary;
     const peakDemandBreakdown = buildPeakDemandBreakdown(outObj, peakSummary);
     renderEngineeringResultsSummary(outObj, report, peakSummary);
@@ -7420,7 +7475,8 @@ function showProjectVisualization(outObj) {
     if (principle) {
         principle.innerHTML =
             "<b>计算原理</b><br>" +
-            `<div style="margin:6px 0;">Cooling System: ${esc(report.cooling_system_type)}</div>` +
+            `<div style="margin:6px 0;">Cooling System: ${esc(calculationCoolingSystem)}</div>` +
+            `<div style="margin:6px 0;">Power Source: ${esc(calculationPowerSource)}</div>` +
             `<div style="margin:6px 0;">Simulation Engine: ${esc(report.simulation_engine)}</div>` +
             `<div style="margin:6px 0;">Performance Model: ${esc(report.performance_model)}</div>` +
             `<div style="margin:6px 0 8px 0;">Simulation Basis: ${esc(report.simulation_basis)}</div>`;

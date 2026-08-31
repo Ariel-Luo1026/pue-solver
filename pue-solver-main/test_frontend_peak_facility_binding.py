@@ -135,7 +135,7 @@ class FrontendPeakFacilityBindingTest(unittest.TestCase):
         self.assertIn("annual_engine_radiator_energy_kWh", energy_mapper)
         self.assertNotIn("ENGINE_3", energy_mapper)
         self.assertIn(
-            "ENGINE_3 is generation-side equipment and is excluded from Facility Demand and PUE electrical consumption.",
+            "Engine generation-side reference quantities are excluded from Facility Demand and PUE electrical consumption.",
             self.ui,
         )
         self.assertIn("Generation-Side Reference", self.ui)

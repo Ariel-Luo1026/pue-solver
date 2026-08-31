@@ -52,7 +52,8 @@ class AccGridReportSemanticCleanupTest(unittest.TestCase):
         renderer = function_source("renderEngineeringResultsSummary")
         self.assertIn("const engineApplicable = engineGenerationApplicable", renderer)
         self.assertIn('...(engineApplicable ? [', renderer)
-        self.assertIn("Maximum ENGINE_RADIATOR Load Ratio", renderer)
+        self.assertIn("Maximum Engine Radiator Load Ratio", renderer)
+        self.assertIn("Maximum Total Engine Radiator Fan Power", renderer)
 
     def test_generation_reference_remains_applicability_driven(self):
         report = function_source("buildHtmlReportFromSections")
