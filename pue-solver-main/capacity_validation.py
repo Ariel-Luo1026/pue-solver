@@ -138,6 +138,63 @@ def derive_capacity_validation_from_result(topology, solver_result):
         ),
     )
 
+    if topology == "acc_gas_engine_cdu":
+        active_units = _first_int(scenario.get("active_units"), project.get("active_units"))
+        required_per_unit = _first_number(
+            peak.get("peak_design_ACC_required_capacity_per_unit_kW"),
+            peak.get("peak_design_required_capacity_per_acc_unit_kW"),
+            peak_load / active_units if peak_load is not None and active_units else None,
+        )
+        used_per_unit = _first_number(peak.get("peak_design_ACC_used_capacity_per_unit_kW"))
+        lookup_success = peak.get("peak_design_ACC_curve_lookup_success") is True
+        capacity_clamped = peak.get("peak_design_ACC_capacity_clamped") is True
+        diagnostics_present = "peak_design_ACC_curve_lookup_success" in peak
+        if diagnostics_present:
+            tolerance = max(1e-6, abs(required_per_unit) * 1e-9) if required_per_unit is not None else 1e-6
+            curve_adequate = (
+                lookup_success
+                and required_per_unit is not None
+                and used_per_unit is not None
+                and not capacity_clamped
+                and used_per_unit + tolerance >= required_per_unit
+            )
+            nominal_unit_capacity = _first_number(
+                project.get("cooling_unit_capacity_kW"),
+                first_row.get("cooling_unit_capacity_kW"),
+            )
+            nominal_active_capacity = (
+                active_units * nominal_unit_capacity
+                if active_units is not None and nominal_unit_capacity is not None
+                else None
+            )
+            nominal_margin = _margin(nominal_active_capacity, peak_load)
+            warnings = [] if curve_adequate else [
+                "Peak ACC curve lookup did not establish adequate capacity within the valid unclamped curve domain."
+            ]
+            return {
+                "status": "valid" if curve_adequate else "error",
+                "topology": topology,
+                "scenario_name": scenario.get("scenario_name"),
+                "redundancy_mode": scenario.get("redundancy_mode"),
+                "peak_cooling_load_kW": peak_load,
+                "active_units": active_units,
+                "required_capacity_per_unit_kW": required_per_unit,
+                "used_capacity_per_unit_kW": used_per_unit,
+                "curve_lookup_success": lookup_success,
+                "capacity_clamped": capacity_clamped,
+                "capacity_adequacy_basis": "peak_design_acc_capacity_surface",
+                "installed_capacity_kW": None,
+                "active_capacity_kW": used_per_unit * active_units if used_per_unit is not None and active_units is not None else None,
+                "capacity_margin_kW": None,
+                "capacity_margin_percent": None,
+                "nominal_active_capacity_kW": nominal_active_capacity,
+                "nominal_capacity_margin_kW": nominal_margin,
+                "nominal_capacity_margin_percent": _margin_percent(nominal_margin, peak_load),
+                "failed_units": _first_int(scenario.get("failed_units")),
+                "warnings": warnings,
+                "role_validations": {},
+            }
+
     unit_capacity = _first_number(
         project.get("cooling_unit_capacity_kW"),
         first_row.get("cooling_unit_capacity_kW"),

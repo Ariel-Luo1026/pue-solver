@@ -646,6 +646,48 @@ function buildCapacityValidationSummary(topologyId, solverResult = {}, operating
     const hourly = Array.isArray(solverResult?.hourly_results) ? solverResult.hourly_results : [];
     const firstRow = hourly.find(Boolean) || {};
     const peakCoolingLoad = Number(peak.peak_design_cooling_load_kW ?? Math.max(...hourly.map(row => Number(row?.cooling_load_kW)).filter(Number.isFinite)));
+    if (topologyId === "acc_gas_engine_cdu") {
+        const activeUnits = Number(operatingScenario.active_units);
+        const requiredPerUnit = Number(peak.peak_design_ACC_required_capacity_per_unit_kW
+            ?? peak.peak_design_required_capacity_per_acc_unit_kW
+            ?? (Number.isFinite(peakCoolingLoad) && activeUnits > 0 ? peakCoolingLoad / activeUnits : NaN));
+        const usedPerUnit = Number(peak.peak_design_ACC_used_capacity_per_unit_kW);
+        const lookupSuccess = peak.peak_design_ACC_curve_lookup_success === true;
+        const capacityClamped = peak.peak_design_ACC_capacity_clamped === true;
+        const diagnosticsPresent = Object.prototype.hasOwnProperty.call(peak, "peak_design_ACC_curve_lookup_success");
+        if (diagnosticsPresent) {
+            const tolerance = Math.max(1e-6, Math.abs(requiredPerUnit) * 1e-9);
+            const curveAdequate = lookupSuccess && Number.isFinite(requiredPerUnit) && Number.isFinite(usedPerUnit)
+                && !capacityClamped && usedPerUnit + tolerance >= requiredPerUnit;
+            const nominalUnitCapacity = Number(project.cooling_unit_capacity_kW ?? firstRow.cooling_unit_capacity_kW);
+            const nominalActiveCapacity = Number.isFinite(activeUnits) && Number.isFinite(nominalUnitCapacity)
+                ? activeUnits * nominalUnitCapacity : null;
+            const nominalMargin = nominalActiveCapacity !== null && Number.isFinite(peakCoolingLoad)
+                ? nominalActiveCapacity - peakCoolingLoad : null;
+            return {
+                status: curveAdequate ? "valid" : "error",
+                topology: topologyId,
+                scenario_name: operatingScenario.scenario_name || null,
+                redundancy_mode: operatingScenario.redundancy_mode || null,
+                peak_cooling_load_kW: Number.isFinite(peakCoolingLoad) ? peakCoolingLoad : null,
+                active_units: Number.isFinite(activeUnits) ? activeUnits : null,
+                required_capacity_per_unit_kW: requiredPerUnit,
+                used_capacity_per_unit_kW: usedPerUnit,
+                curve_lookup_success: lookupSuccess,
+                capacity_clamped: capacityClamped,
+                capacity_adequacy_basis: "peak_design_acc_capacity_surface",
+                installed_capacity_kW: null,
+                active_capacity_kW: Number.isFinite(activeUnits) && Number.isFinite(usedPerUnit) ? usedPerUnit * activeUnits : null,
+                capacity_margin_kW: null,
+                capacity_margin_percent: null,
+                nominal_active_capacity_kW: nominalActiveCapacity,
+                nominal_capacity_margin_kW: nominalMargin,
+                nominal_capacity_margin_percent: nominalMargin !== null && peakCoolingLoad ? nominalMargin / peakCoolingLoad * 100 : null,
+                failed_units: operatingScenario.failed_units ?? null,
+                warnings: curveAdequate ? [] : ["Peak ACC curve lookup did not establish adequate capacity within the valid unclamped curve domain."]
+            };
+        }
+    }
     const unitCapacity = Number(project.cooling_unit_capacity_kW ?? firstRow.cooling_unit_capacity_kW ?? firstRow.chiller_unit_capacity_kW);
     const installedUnits = Number(operatingScenario.installed_units);
     const activeUnits = Number(operatingScenario.active_units);
@@ -795,7 +837,9 @@ function buildReportSections(topologyId, solverResult = {}, profile = {}, operat
 
 function buildEngineeringConclusion(capacityValidation = {}) {
     const status = String(capacityValidation.status || "warning").toLowerCase();
-    const marginPercent = Number(capacityValidation.capacity_margin_percent);
+    const marginPercent = capacityValidation.capacity_margin_percent == null
+        ? NaN
+        : Number(capacityValidation.capacity_margin_percent);
     if (status === "error") {
         return {
             status: "FAIL",
@@ -3782,8 +3826,8 @@ function buildHtmlReportFromSections(context) {
         ["Solver", esc(output.solver || output.solver_name || "dispatch_topology")],
         ["Cooling Topology", esc(coolingTechnology)],
         ["Power Source", esc(powerSource)],
-        ["Internal Dispatch Identifier", esc(solverTopology)],
-        ["Internal Report Profile", esc(report.profile_id || "generic_pue")]
+        ["Shared Solver Dispatch Key", esc(solverTopology)],
+        ["Shared ACC/CDU Report Profile", esc(report.profile_id || "generic_pue")]
     ])}</tbody></table>
 </section>
 </main>

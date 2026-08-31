@@ -5,6 +5,7 @@ from capacity_validation import (
     operating_scenario_from_result,
     validate_peak_capacity,
 )
+from report_sections.report_section_registry import engineering_conclusion
 
 
 class CapacityValidationTest(unittest.TestCase):
@@ -159,6 +160,57 @@ class CapacityValidationTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "valid")
         self.assertEqual(result["active_capacity_kW"], 6000.0)
+
+    def test_acc_curve_supported_failure_is_adequate_despite_negative_nameplate_margin(self):
+        result = derive_capacity_validation_from_result(
+            "acc_gas_engine_cdu",
+            {
+                "project": {"cooling_unit_capacity_kW": 1000.0},
+                "peak_results": {
+                    "peak_design_cooling_load_kW": 4078.0,
+                    "peak_design_ACC_required_capacity_per_unit_kW": 1019.5,
+                    "peak_design_ACC_used_capacity_per_unit_kW": 1019.5,
+                    "peak_design_ACC_curve_lookup_success": True,
+                    "peak_design_ACC_capacity_clamped": False,
+                },
+                "library_context": {"runtime_assumptions": {"unit_scenario": {
+                    "scenario_name": "Failure", "active_units": 4, "failed_units": 1,
+                }}},
+            },
+        )
+
+        self.assertEqual(result["status"], "valid")
+        self.assertEqual(result["capacity_adequacy_basis"], "peak_design_acc_capacity_surface")
+        self.assertEqual(result["active_capacity_kW"], 4078.0)
+        self.assertEqual(result["nominal_active_capacity_kW"], 4000.0)
+        self.assertEqual(result["nominal_capacity_margin_kW"], -78.0)
+        self.assertIsNone(result["capacity_margin_percent"])
+        self.assertEqual(
+            engineering_conclusion(result),
+            "Cooling system satisfies peak design cooling demand under selected operating scenario.",
+        )
+
+    def test_acc_clamped_peak_capacity_is_not_physically_adequate(self):
+        result = derive_capacity_validation_from_result(
+            "acc_gas_engine_cdu",
+            {
+                "project": {"cooling_unit_capacity_kW": 1000.0},
+                "peak_results": {
+                    "peak_design_cooling_load_kW": 4400.0,
+                    "peak_design_ACC_required_capacity_per_unit_kW": 1100.0,
+                    "peak_design_ACC_used_capacity_per_unit_kW": 1050.0,
+                    "peak_design_ACC_curve_lookup_success": True,
+                    "peak_design_ACC_capacity_clamped": True,
+                },
+                "library_context": {"runtime_assumptions": {"unit_scenario": {
+                    "scenario_name": "Failure", "active_units": 4,
+                }}},
+            },
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(result["capacity_clamped"])
+        self.assertIn("valid unclamped curve domain", result["warnings"][0])
 
 
 if __name__ == "__main__":

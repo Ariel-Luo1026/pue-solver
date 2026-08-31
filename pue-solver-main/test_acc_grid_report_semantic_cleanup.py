@@ -65,8 +65,10 @@ class AccGridReportSemanticCleanupTest(unittest.TestCase):
         appendix = report[report.index("Appendix D — Engineering Diagnostics"):]
         self.assertIn('["Cooling Topology", esc(coolingTechnology)]', appendix)
         self.assertIn('["Power Source", esc(powerSource)]', appendix)
-        self.assertIn('["Internal Dispatch Identifier", esc(solverTopology)]', appendix)
-        self.assertIn('["Internal Report Profile", esc(report.profile_id', appendix)
+        self.assertIn('["Shared Solver Dispatch Key", esc(solverTopology)]', appendix)
+        self.assertIn('["Shared ACC/CDU Report Profile", esc(report.profile_id', appendix)
+        self.assertNotIn('["Internal Dispatch Identifier"', appendix)
+        self.assertNotIn('["Internal Report Profile"', appendix)
         self.assertNotIn('["Topology Identifier"', appendix)
         self.assertNotIn('["Report Profile"', appendix)
 

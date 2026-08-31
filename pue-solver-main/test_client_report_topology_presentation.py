@@ -68,7 +68,7 @@ class ClientReportTopologyPresentationTests(unittest.TestCase):
         appendix = self.report[self.report.index("Appendix D — Engineering Diagnostics"):]
         self.assertIn("Cooling Topology", appendix)
         self.assertIn("Power Source", appendix)
-        self.assertIn("Internal Dispatch Identifier", appendix)
+        self.assertIn("Shared Solver Dispatch Key", appendix)
         self.assertNotIn('["Topology Identifier"', appendix)
         self.assertIn("solverTopology", appendix)
 

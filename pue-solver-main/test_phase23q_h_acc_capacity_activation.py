@@ -1,4 +1,5 @@
 import contextlib
+import contextlib
 import io
 import unittest
 from pathlib import Path
@@ -107,6 +108,20 @@ class Phase23QHAccCapacityActivationTests(unittest.TestCase):
         self.assertAlmostEqual(peak["peak_design_CHW_pump_reference_capacity_kW"], 1019.5)
         self.assertAlmostEqual(peak["peak_design_CHW_pump_load_ratio"], 0.8)
         self.assertAlmostEqual(peak["peak_design_ACC_required_capacity_per_unit_kW"], 815.6)
+
+    def test_failure_peak_exports_unclamped_capacity_adequacy_diagnostics(self):
+        payload = _payload("ACC_1MW_GRID_CDU", "Failure")
+        payload.pop("_skip_peak_design_pue")
+        payload.update({"solar_heat_gain_max_kW": 7, "other_auxiliary_heat_gain_kW": 71,
+                        "peak_design_weather_source": "manual", "peak_design_outdoor_dry_bulb_C": 44.0})
+        result = _run(payload)
+        self.assertNotIn("error", result)
+        peak = result["peak_results"]
+        self.assertAlmostEqual(peak["peak_design_cooling_load_kW"], 4078.0)
+        self.assertAlmostEqual(peak["peak_design_ACC_required_capacity_per_unit_kW"], 1019.5)
+        self.assertAlmostEqual(peak["peak_design_ACC_used_capacity_per_unit_kW"], 1019.5)
+        self.assertTrue(peak["peak_design_ACC_curve_lookup_success"])
+        self.assertFalse(peak["peak_design_ACC_capacity_clamped"])
 
 
 if __name__ == "__main__":

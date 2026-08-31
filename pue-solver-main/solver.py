@@ -4160,6 +4160,16 @@ def compute_pue_project(input_obj):
                     "peak_design_auxiliary_fixed_power_kW": peak_design_hour.get("auxiliary_fixed_power_kW"),
                     "peak_design_electrical_loss_kW": peak_design_hour.get("electrical_loss_kW"),
                     "peak_design_ACC_required_capacity_per_unit_kW": peak_design_hour.get("acc_required_capacity_per_unit_kW"),
+                    "peak_design_ACC_used_capacity_per_unit_kW": peak_design_hour.get("acc_used_capacity_kW"),
+                    "peak_design_ACC_capacity_clamped": peak_design_hour.get("acc_capacity_clamped"),
+                    "peak_design_ACC_curve_lookup_success": bool(
+                        peak_design_hour.get("acc_v2_active")
+                        and peak_design_hour.get("acc_used_capacity_kW") is not None
+                    ),
+                    "peak_design_ACC_evaluator": peak_design_hour.get("acc_evaluator"),
+                    "peak_design_ACC_lookup_basis": peak_design_hour.get("acc_lookup_basis"),
+                    "peak_design_ACC_capacity_bracket_low_kW": peak_design_hour.get("acc_capacity_bracket_low_kW"),
+                    "peak_design_ACC_capacity_bracket_high_kW": peak_design_hour.get("acc_capacity_bracket_high_kW"),
                     "peak_design_CHW_pump_load_ratio": peak_design_hour.get("pump_load_ratio"),
                     "peak_design_CHW_pump_reference_capacity_kW": peak_design_hour.get("chw_pump_reference_capacity_kW"),
                     "peak_design_required_capacity_per_acc_unit_kW": peak_design_hour.get("peak_design_required_capacity_per_acc_unit_kW"),
